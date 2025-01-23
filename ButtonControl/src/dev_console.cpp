@@ -58,11 +58,17 @@ local variables
 local function prototypes
  *******************************************************************************/
 void(*resetFunc)(void) = 0; //declare reset function at address 0
-st_console_menu_item * find_menu_entry(st_console_menu_item *pt, char * commandStr);
-void menuPrintHelp(st_console_menu_item * pt, char * cmd_str);
+st_console_menu_item * find_menu_entry_in_siblings(st_console_menu_item *pt, char * commandStr);
+void menuPinToggle(char ** args, int arg_cnt);
+void menuPinHi(char ** args, int arg_cnt);
+void menuPinLo(char ** args, int arg_cnt);
+void menuPrintHelp(st_console_menu_item * pt, bool useParent);
 void ParseLine(void);
 int paramsParse(char * paramStr, bool terminate);
-
+int paramsTotal(void);
+char * paramsItem(int index);
+int paramsGetCnt(void);
+bool is_next_arg_help(void);
 /*******************************************************************************
 local structure
  *******************************************************************************/
@@ -112,10 +118,10 @@ int _paramIndex;
 static st_console_menu_item devMenuItem_dump 		= { "dump", menuDumpMem,	"Dump memory (as bytes). Dump <ADDR(hex)> <LEN(dec)>"};
 static st_console_menu_item devMenuItem_Print 		= { "trace",menuTogglePrintFlags,	"Toggle print flags"};
 #ifdef MAIN_DEBUG
-static st_console_menu_item devMenuItem_DbgPin 	= {"pin",  NULL, "Manipulate Debug pins A(0 to 5)"};
-// static st_console_menu_item devMenuItem_DbgPin 	= {"toggle",  menuPinToggle, "Toggle Debug pins A(0 to 5)"};
-// static st_console_menu_item devMenuItem_DbgPin 	= {"hi",  menuPinHi, "Sets Debug pins A(0 to 5) High"};
-// static st_console_menu_item devMenuItem_DbgPin 	= {"lo",  menuPinLo, "Sets Debug pins A(0 to 5) Low"};
+static st_console_menu_item devMenuItem_DbgPin 	    = {"pin",  NULL, "Manipulate Debug pins A(0 to 5)"};
+static st_console_menu_item devMenuItem_DbgPin_tg 	= {"toggle",  menuPinToggle, "Toggle Debug pins A(0 to 5)"};
+static st_console_menu_item devMenuItem_DbgPin_hi 	= {"hi",  menuPinHi, "Sets Debug pins A(0 to 5) High"};
+static st_console_menu_item devMenuItem_DbgPin_lo 	= {"lo",  menuPinLo, "Sets Debug pins A(0 to 5) Low"};
 #endif /* MAIN_DEBUG */
 
 /*******************************************************************************
@@ -203,6 +209,10 @@ bool devConsoleInit(unsigned long baud, byte config)
 	addMenuItem(&devMenuItem_Print);
 #ifdef MAIN_DEBUG
 	addMenuItem(&devMenuItem_DbgPin);
+	addMenuItem(&devMenuItem_DbgPin_tg, &devMenuItem_DbgPin);
+	addMenuItem(&devMenuItem_DbgPin_hi, &devMenuItem_DbgPin);
+	addMenuItem(&devMenuItem_DbgPin_lo, &devMenuItem_DbgPin);
+    
 #endif /* MAIN_DEBUG */
 
 #ifdef MAIN_DEBUG
@@ -401,106 +411,136 @@ Parses the line received on the Debug port.
  *******************************************************************************/
 void ParseLine(void)
 {
-	st_console_menu_item *pt;
+	st_console_menu_item *pt = FirstMenuItem;
 	char *commandStr;
     bool help_reqested = false; // can be "help", "help XXXX" or "XXXX help"
 
+
     //Let's seperate all the parameters for the guys to use further on (max 10)
-    paramsParse(stDev_Console.RxBuff, true);
+    if (paramsParse(stDev_Console.RxBuff, true) > 0)
+    {
+        // is the first parameter a "?" or "help"?
+        if (is_next_arg_help())
+        {
+            help_reqested = true;
+            paramGetNext(); // skip the "?" or "help"
+        }
+    }
 
     // iPrintF(trCONSOLE, "%s%d parameters:\n", devConsole_tag, paramCnt());
     // for (int i = 0; i < paramCnt(); i++)
     //     iPrintF(trCONSOLE, "%s    \"%s\" \n", devConsole_tag, getParam(i));
 
-    pt = FirstMenuItem;
-	while ((pt) && (paramsGetCnt() > 0))
+	//while ((pt) && (paramsGetCnt() > 0))
+	while (pt)
     {
+        //Save the last "good" menu item we have found
+        st_console_menu_item * first_born = pt;
+
+        //Now we are looking for the next argument passed in the command line
         commandStr = strlwr(paramGetNext());
 
-        //If this is a "?", then we want to run a help on the searched command
-        if ((0 == strcasecmp("?", commandStr)) || (0 == strcasecmp("help", commandStr)))
-        {
-            help_reqested = true;
-            if (paramsGetCnt() > 0) //No more params
-                commandStr = strlwr(paramGetNext());
-            else
-                break;
-        }
+        //Checking if the next command is found in the siblings of the current menu item
+        //pt = find_menu_entry_in_siblings(pt_last_good, commandStr);
 
-        //RVN - still need to figure out the help functionality properly
-
-        pt = find_menu_entry(pt, commandStr);
-        if (!pt)
+        if (!(pt = find_menu_entry_in_siblings(first_born /*pt_last_good*/, commandStr)))
         {
-            PrintF("\"%s\" not found\n", commandStr);
+            ///Could not find the command in the siblings of the current menu item or no command passed
+            if ((commandStr != NULL) && (strlen(commandStr) > 0)) 
+            {
+                pt = first_born;
+                int i = (help_reqested)? 1 : 0;
+                int stop = pt->level + i;
+                if (i < stop)
+                {
+                    PrintF("\n\t", commandStr);
+                    for (; i < stop; i++)
+                        PrintF("%s->", paramsItem(i));
+                }
+                PrintF(" ... \"%s\" not found!!!\n\n", commandStr);
+            }
+
+            menuPrintHelp(first_born, true);
             return;
         }    
-        //Okay, we found the dude... What are our options now?
+        //iPrintF(trCONSOLE, "%sMatched \"%s\" with \"%s\" (%d)\n", devConsole_tag, commandStr, pt->Command, pt->level);
+
+        //Okay, we found the sibling... What are our options now?
         // 1) This command has no children - Call it's function
+        // 2) This command has children, but we are out of arguments - Call "help" on the next level of the menu
+        // 3) This command has children and we have more arguments - Iterate through the next level of the menu
+
+        if ((!help_reqested) && (is_next_arg_help()))
+        {
+            menuPrintHelp(pt, false);
+            return;
+        }
+
         if (pt->FirstBorn == NULL)
         {
-            iPrintF(trCONSOLE, "%sMatched with: \"%s\" (%d)\n", devConsole_tag, pt->Command, pt->level);
             // iPrintF(trCONSOLE, "%s\"%s\" called with %d parameters:\n", devConsole_tag, commandStr, paramCnt());
             // for (int i = 0; i < paramCnt(); i++)
             //     iPrintF(trCONSOLE, "%s    %s \n", devConsole_tag, getParam(i));
             if (help_reqested)
-            {
-                menuPrintHelp(pt, (char *)pt->Command);
-                return;
-            }
-            pt->Func(&_paramStr[_paramIndex], paramsGetCnt());
+                menuPrintHelp(pt, false);
+            else
+                iPrintF(trCONSOLE, "%s\"%s\" (%d) called with %d arguments(%d)\n", devConsole_tag, pt->Command, pt->level, paramsGetCnt());
+                //pt->Func(&_paramStr[_paramIndex], paramsGetCnt());
             return;
         }
-        else 
+        else // (pt->FirstBorn != NULL)
         {
             pt = (st_console_menu_item *)pt->FirstBorn;
             if (paramsGetCnt() == 0)
             {
                 // 2) This command has children, but we are out of arguments - Call "help" on the next level of the menu
-                help_reqested = true;
-                break;
+                menuPrintHelp(pt, true);//(char *)pt->Command);
+                return;
             }
             //else// 3) This command has children and we have more arguments - Iterate through the next level of the menu
         }
-        // 2) This command has children, but we are out of arguments - Call "help" on the next level of the menu
-        // 3) This command has children and we have more arguments - Iterate through the next level of the menu
 
-    }
-    if ((help_reqested) && (pt))
-    {
-        menuPrintHelp(pt, (char *)pt->Command);
-    }
-    else
-    {
-        PrintF("No command found\n");
     }
 }
 
 /*******************************************************************************
 
-Parses the line received on the Debug port.
+Look for the command string within the siblings of the passed menu item
 
  *******************************************************************************/
-st_console_menu_item * find_menu_entry(st_console_menu_item *pt, char * commandStr)
+bool is_next_arg_help(void)
+{   
+    char * commandStr = paramsItem(paramsTotal() - paramsGetCnt()); 
+    return ((0 == strcasecmp("?", commandStr)) || (0 == strcasecmp("help", commandStr)));
+}
+
+/*******************************************************************************
+
+Look for the command string within the siblings of the passed menu item
+
+ *******************************************************************************/
+st_console_menu_item * find_menu_entry_in_siblings(st_console_menu_item *pt, char * commandStr)
 {    
-    if (commandStr == NULL)
+    if ((commandStr == NULL) || (strlen(commandStr) == 0))
     {
-        iPrintF(trCONSOLE, "%sNo command found\n", devConsole_tag);
+        //This should never happen.....but just in case
+        //iPrintF(trCONSOLE, "%sNo command found\n", devConsole_tag);
         return NULL;
     }
 
     //Now we are looking for the command in the linked list
 	while (pt)
 	{
-		iPrintF(trCONSOLE, "%sComparing: \"%s\"\n", devConsole_tag, pt->Command);
+		//iPrintF(trCONSOLE, "%sComparing: \"%s\"\n", devConsole_tag, pt->Command);
 
 		if (0 == strcasecmp(pt->Command, commandStr))
-		{
-			return pt;
-		}
+            break; //Found a match
+
+        //Let's try the next sibling
 		pt = (st_console_menu_item *)pt->Next;
 	}
-	return NULL;
+
+    return pt;
 }
 
 /*******************************************************************************
@@ -525,7 +565,7 @@ st_console_menu_item * addMenuItem(st_console_menu_item * menuItem, st_console_m
     {
         //We start at the first item on the top level
 	    pt = FirstMenuItem;
-    	PrintF("%sAdd \"%s\" to the Menu Item List\n", devConsole_tag, menuItem->Command);
+    	//PrintF("%sAdd \"%s\" to the Menu Item List\n", devConsole_tag, menuItem->Command);
     }
     else if ((parent->Prev == NULL) && (parent->Next == NULL))
     {
@@ -574,7 +614,7 @@ st_console_menu_item * addMenuItem(st_console_menu_item * menuItem, st_console_m
                 //Adding menuItem->Command as the first Item in the list
                 FirstMenuItem = menuItem;
             }
-			iPrintF(trCONSOLE, "%s\"%s\" added to list\n", devConsole_tag, menuItem->Command);
+			//iPrintF(trCONSOLE, "%s\"%s\" added to list\n", devConsole_tag, menuItem->Command);
         }
         else    //SUB level menu structure
         {
@@ -628,7 +668,7 @@ int paramsParse(char * paramStr, bool terminate)
 Returns the number of paramaeters found.
 
  *******************************************************************************/
-int paramTotal(void)
+int paramsTotal(void)
 {
 	return _paramCnt;
 }
@@ -638,7 +678,7 @@ int paramTotal(void)
 Returns the parameter at the specifed index...0 = first parameter, 4 = last
 
  *******************************************************************************/
-char * paramGetItem(int index)
+char * paramsItem(int index)
 {
 	if ((index < _paramCnt) && (index >= 0))
 		return _paramStr[index];
@@ -689,17 +729,28 @@ Prints the help string for either the command in question, or for the entire
 list of commands.
 
  *******************************************************************************/
-void menuPrintHelp(st_console_menu_item * pt, char * cmd_str)//void)
+void menuPrintHelp(st_console_menu_item * pt, bool useParent)//, char * cmd_str)//void)
 {
-	if (pt->level > 0)
-    {
-    	PrintF("The list of commands available under \"%s\" are:\n\n", cmd_str);
-    }        
-    else
+    if ((!pt) || ((useParent) && (pt->level == 0)))
     {
     	PrintF("The list of available commands are:\n\n");
+        pt = FirstMenuItem;
     }
-
+    else if (useParent) // pt && pt->level > 0 && useParent
+    {
+        PrintF("The list of commands available under \"%s\" are:\n",((st_console_menu_item *)(pt->Parent))->Command);
+    }
+    else if (pt->FirstBorn)// pt && !useParent && pt->FirstBorn
+    {
+        PrintF("The list of commands available under \"%s\" are:\n",pt->Command);
+        pt = (st_console_menu_item *)pt->FirstBorn;
+    }
+    else // pt && !useParent && !pt->FirstBorn // Level > 0 && !useParent && !pt->FirstBorn
+    {
+		PrintF("% 12s - %s.\n", pt->Command, pt->HelpStr);
+        pt = 0;
+    }
+    
 	// Run through the list and print all the Help strings...
 	//pt = FirstMenuItem;
 	while (pt)
@@ -708,7 +759,7 @@ void menuPrintHelp(st_console_menu_item * pt, char * cmd_str)//void)
 		PrintF("% 12s - %s.\n", pt->Command, pt->HelpStr);
 		pt = (st_console_menu_item *)pt->Next;
 	}
-	PrintF("\nNOTE: Enter Parameters after the command, following a space.\n");
+	PrintF("\nNOTE: Enter arguments after the command.\n");
 	PrintF("       Command strings longer than %d chars are invalid.\n", CONSOLE_RX_BUFF);
 }
 
@@ -721,13 +772,13 @@ void menuDumpMem(char ** args, int arg_cnt)//void)
 {
 
 // get the address from the commandline, if any
-  if(paramGetItem(0))
+  if(paramsItem(0))
   {
-    sscanf(strupr(paramGetItem(0)), "%lX", &Dev_DumpAddr);
+    sscanf(strupr(paramsItem(0)), "%lX", &Dev_DumpAddr);
 // get the length from the commandline, if any
 
-    if(paramGetItem(1))
-      sscanf(paramGetItem(0), "%d", &Dev_DumpLen);
+    if(paramsItem(1))
+      sscanf(paramsItem(0), "%d", &Dev_DumpLen);
   }
 
 // OK, dump
@@ -748,7 +799,7 @@ char *argStr_2;
 int affectedIndex = -1;
 
 	//Get pointers to all the arguments
-	argStr_1 = paramGetItem(0);//paramStr;
+	argStr_1 = paramsItem(0);//paramStr;
 
 	if (argStr_1)
 	{
@@ -765,13 +816,13 @@ int affectedIndex = -1;
 		}
 		else //Perhaps the user passed a flag name
 		{
-			argStr_2 = paramGetItem(1);//paramStr;
+			argStr_2 = paramsItem(1);//paramStr;
 			for (int i = 0; i < 7; i++)
 			{
 				if (0 == strcasecmp(argStr_1, GetTraceName(i)))
 				{
 					affectedIndex = i;
-					if (paramTotal() > 1)
+					if (paramsTotal() > 1)
 					{
 						//Allright, we found a match
 						if (0 == strcasecmp(argStr_2, "ON"))
@@ -830,15 +881,15 @@ Provides access to the debug pins through the console
 #ifdef MAIN_DEBUG
 void menuPinToggle(char ** args, int arg_cnt)//void)
 {
-char * paramStr;
-char *argStr_1;
-char *argStr_2;
-//char *argStr_3;
-int argCnt = 0;
+    char * paramStr;
+    char *argStr_1;
+    char *argStr_2;
+    //char *argStr_3;
+    int argCnt = 0;
 
-int debugPinNum;
+    int debugPinNum;
 
-paramStr = paramGetItem(0);
+    paramStr = paramsItem(0);
 	//Get pointers to all the arguments
 	argStr_1 = nextWord(paramStr, true);
 	if (argStr_1)
@@ -902,15 +953,15 @@ paramStr = paramGetItem(0);
 }
 void menuPinHi(char ** args, int arg_cnt)//void)
 {
-char * paramStr;
-char *argStr_1;
-char *argStr_2;
-//char *argStr_3;
-int argCnt = 0;
+    char * paramStr;
+    char *argStr_1;
+    char *argStr_2;
+    //char *argStr_3;
+    int argCnt = 0;
 
-int debugPinNum;
+    int debugPinNum;
 
-paramStr = paramGetItem(0);
+    paramStr = paramsItem(0);
 	//Get pointers to all the arguments
 	argStr_1 = nextWord(paramStr, true);
 	if (argStr_1)
@@ -975,15 +1026,15 @@ paramStr = paramGetItem(0);
 }
 void menuPinLo(char ** args, int arg_cnt)//void)
 {
-char * paramStr;
-char *argStr_1;
-char *argStr_2;
-//char *argStr_3;
-int argCnt = 0;
+    char * paramStr;
+    char *argStr_1;
+    char *argStr_2;
+    //char *argStr_3;
+    int argCnt = 0;
 
-int debugPinNum;
+    int debugPinNum;
 
-paramStr = paramGetItem(0);
+    paramStr = paramsItem(0);
 	//Get pointers to all the arguments
 	argStr_1 = nextWord(paramStr, true);
 	if (argStr_1)
@@ -1128,7 +1179,7 @@ void menuReset(char ** args, int arg_cnt)//void)
 {
 	char *paramStr;
 	// if no parameter passed then just open the gate
-	paramStr = paramGetItem(0);
+	paramStr = paramsItem(0);
 
 	if (!paramStr)
 	{

@@ -74,10 +74,7 @@ void _SerialPrintf(int traceflags, const char *fmt, ...);
 st_console_menu_item * addMenuItem(st_console_menu_item * menuItem, st_console_menu_item * parent = NULL);
 
 bool Read(void);
-int paramsTotal(void);
-char * paramGetIndex(int index);
 char * paramGetNext(void);
-int paramsGetCnt(void);
 
 //void _SerialPrintf(int flags, const char *fmt, ...);
 //void DoNothing(int flags, const char *fmt, ...);

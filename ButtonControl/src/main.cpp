@@ -117,7 +117,7 @@ void setup() {
 	PrintF("[c] 2025 Zero Bad Cafe Development (Pty) Ltd\n");
 	PrintF("Version   %s.\n", PROG_VERSIONSTRING);
 	PrintF("BuildInfo %s.\n", BuildTimeData);
-	PrintF("Arduino Uno R3 (Clock %lu MHz)\n", F_CPU / 1000000L);
+	PrintF("Arduino Nano (Clock %lu MHz)\n", F_CPU / 1000000L);
 	PrintF("=====================================================\n");
 
 	//Add the Menu Items which has no owners
