@@ -28,7 +28,9 @@
 #include "defines.h"
 #include "sys_utils.h"
 #include "sys_timers.h"
-#include "task_console.h"
+#ifdef CONSOLE_ENABLED
+  #include "task_console.h"
+#endif
 #include "task_rgb_btn.h"
 
 #define PRINTF_TAG ("Main") /* This must be undefined at the end of the file*/
@@ -83,11 +85,15 @@ void app_main(void)
     for (int i = 0; i < eTaskIndexMax; i++)
     	sys_tasks[i] = NULL;
 
+#ifdef CONSOLE_ENABLED
     sys_tasks[eTaskIndexConsole]    = task_console_init();
+#endif
     sys_tasks[eTaskIndexRgb]        = task_rgb_btn_init();
     
         //typeof(_task_main_menu_items)
-	task_console_add_menu("main", _task_main_menu_items, ARRAY_SIZE(_task_main_menu_items), "Main Task");
+#ifdef CONSOLE_ENABLED
+    task_console_add_menu("main", _task_main_menu_items, ARRAY_SIZE(_task_main_menu_items), "System");
+#endif
 
     xLastWakeTime = xTaskGetTickCount();
 
@@ -118,6 +124,7 @@ void app_main(void)
     esp_restart();
 }
 
+#ifdef CONSOLE_ENABLED
 void _menu_handler_reset(void)
 {
     static bool reset_lock = false;
@@ -149,5 +156,7 @@ void _menu_handler_reset(void)
     }
     reset_lock = false;
 }
+#endif
 
 #undef PRINTF_TAG
+/****************************** END OF FILE **********************************/

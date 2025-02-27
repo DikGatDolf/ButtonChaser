@@ -14,28 +14,46 @@ Include file for drv_rgb_led_strip.c
 #define EXT extern
 #endif /* __NOT_EXTERN__ */
 
-/******************************************************************************
-includes
-******************************************************************************/
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+/******************************************************************************
+includes
+******************************************************************************/
 #include "driver/rmt_tx.h"
 #include <stdint.h>
 #include "defines.h"
+#include "colour.h"
 
 /******************************************************************************
 Macros
 ******************************************************************************/
 
-void led_strip_hsv2rgb(uint32_t h, uint32_t s, uint32_t v, uint32_t *r, uint32_t *g, uint32_t *b);
-void drv_rgb_led_strip_init(void);
+/******************************************************************************
+Struct & Unions
+******************************************************************************/
+typedef enum {
+    ledtype_Debug = 0,
+    ledtype_Button = 1,
+    /* Keep this at the end*/
+    ledtype_max,
+}rgb_led_strip_type;
+
+/******************************************************************************
+Global (public) variables
+******************************************************************************/
+
+/******************************************************************************
+Global (public) function definitions
+******************************************************************************/
+
+uint32_t drv_rgb_led_strip_init(void);
 void drv_rgb_led_strip_deinit(void);
 
-void drv_rgb_led_strip_set_rgb_pixel(uint32_t index, uint32_t red, uint32_t green, uint32_t blue);
-void drv_rgb_led_strip_clear_rgb_pixel(uint32_t index);
-//void drv_rgb_led_strip_set_hsv(uint32_t hue, uint32_t saturation, uint32_t value);
+uint32_t drv_rgb_led_strip_pixels(rgb_led_strip_type strip);
+
+void drv_rgb_led_strip_set_rgb_pixel(rgb_led_strip_type strip, uint32_t pixel_index, uint32_t rgb);
 
 #ifdef __cplusplus
 }

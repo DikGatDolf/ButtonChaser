@@ -34,6 +34,11 @@ definitions
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
 
+#define SWOP_U64(x, y) do { uint64_t(x) _z = x; x = y; y = _z; } while(0)
+#define SWOP_U32(x, y) do { uint32_t(x) _z = x; x = y; y = _z; } while(0)
+#define SWOP_U16(x, y) do { uint16_t(x) _z = x; x = y; y = _z; } while(0)
+#define SWOP_U8(x, y) do { uint8_t(x) _z = x; x = y; y = _z; } while(0)
+
 /******************************************************************************
 Macros
 ******************************************************************************/

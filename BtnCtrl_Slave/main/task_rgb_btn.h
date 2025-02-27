@@ -39,7 +39,7 @@ TaskInfo_t * task_rgb_btn_init(void);
 
 /*! Deinitialises the Console
  */
-void task_console_deinit(void);
+void task_rgb_btn_deinit(void);
 
 #undef EXT
 #endif /* __task_rgb_btn_H__ */

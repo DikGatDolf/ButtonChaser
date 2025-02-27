@@ -14,12 +14,11 @@ includes
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-//#include "led_strip_encoder.h"
+#include "esp_err.h"
  
 #include "sys_utils.h"
 #include "task_console.h"
-//#include "esp_check.h"
-#include "esp_err.h"
+#include "colour.h"
 
 #define __NOT_EXTERN__
 #include "drv_rgb_led_strip.h"
@@ -33,11 +32,20 @@ local defines and constants
 
 #define RMT_LED_STRIP_RESOLUTION_HZ 10000000 // 10MHz resolution, 1 tick = 0.1us (led strip needs a high resolution)
 
-#define RMT_LED_STRIP_GPIO_NUM      GPIO_NUM_8
+#define RMT_ticks_per_us        (RMT_LED_STRIP_RESOLUTION_HZ / 1000000L)
 
-#define EXAMPLE_LED_NUMBERS         1
+#define RMT_ns2ticks(_ns)       ( (_ns) * RMT_ticks_per_us / 1000 )
+#define RMT_ticks2ns(_ticks)    ( (_ticks) * 1000 / RMT_ticks_per_us )
 
-#define RGB_LED_STRIP_CNT_MAX 5
+// #define DBG_LED_PIXEL_CNT           1
+// #define DBG_LED_GPIO_NUM            GPIO_NUM_8
+
+// #define BUTTON_LED_PIXEL_CNT           5
+// #define BUTTON_LED_GPIO_NUM            GPIO_NUM_9
+
+//#define LedStrip(_type)     ((led_strip_t*)led_strip_list[_type])
+#define RgbBuf(_type)     ((uint8_t*)led_strip_list[_type]->rgb_buf)
+#define ColOrder(_type)   ((const char *)rgb_led_drv_cfg[led_strip_list[_type]->drv_type].col_order)
 
 /**
  * Macro which can be used to check the condition. If the condition is not 'true', it prints the message,
@@ -70,42 +78,50 @@ local structure
 typedef struct {
 //    int bytesPerPixel;
     rmt_bytes_encoder_config_t enc_cfg;     //RVN - bytes_encoder_config
-    char pixel_order[5]; /* 4 bytes (max) + null terminator. Also determines the number of bytes per pixel.
+    const char col_order[5]; /* 4 bytes (max) + null terminator. Also determines the number of bytes per pixel.
                         e.g.    "rgb" - 3 bytes per pixel, ordered Red, Green, Blue
                                 "grbw" - 4 bytes per pixel, ordered Green, Red, Blue, White
                                 */        
- } rgb_drv_config_t;
+    const char name[11];
+} rgb_drv_config_t;
   
 typedef enum {
     SK6812_V1,
     SM16703_V1,
     SK6812W_V1,
+    /* Keep this at the end */
+    RGB_DRV_MAX
 }rgb_drv_types;
   
 const rgb_drv_config_t rgb_led_drv_cfg[] = {  // Still must match order of `rgb_drv_types`
-    [SK6812_V1]  = {.enc_cfg = {.bit0 = { .level0 = 1, .duration0 = 300, /*T0H*/ .level1 = 0, .duration1 = 900, /*T0L*/ },
-                                .bit1 = { .level0 = 1, .duration0 = 700, /*T1H*/ .level1 = 0, .duration1 = 300, /*T1L*/ },
-                    .flags.msb_first = 1 /*SK6812 transfer bit order: G7...G0R7...R0B7...B0 */}, .pixel_order = "grb" },
+    [SK6812_V1]  = {.enc_cfg = {.bit0 = {   .level0 = 1, .duration0 = RMT_ns2ticks(300), /*T0H*/ 
+                                            .level1 = 0, .duration1 = RMT_ns2ticks(900), /*T0L*/ },
+                                .bit1 = {   .level0 = 1, .duration0 = RMT_ns2ticks(700), /*T1H*/ 
+                                            .level1 = 0, .duration1 = RMT_ns2ticks(300), /*T1L*/ },
+                    .flags.msb_first = 1 /*SK6812 transfer bit order: G7...G0R7...R0B7...B0 */}, .col_order = "grb", .name = "SK6812"},
 
-    [SM16703_V1] = {.enc_cfg = {.bit0 = { .level0 = 1, .duration0 = 300, /*T0H*/ .level1 = 0, .duration1 = 900, /*T0L*/ },
-                                .bit1 = { .level0 = 1, .duration0 = 900, /*T1H*/ .level1 = 0, .duration1 = 300, /*T1L*/ },
-                    .flags.msb_first = 1 /*SM16703 transfer bit order: R7...R0G7...G0B7...B0 */}, .pixel_order = "rgb" },
+    [SM16703_V1] = {.enc_cfg = {.bit0 = {   .level0 = 1, .duration0 = RMT_ns2ticks(300), /*T0H*/ 
+                                            .level1 = 0, .duration1 = RMT_ns2ticks(900), /*T0L*/ },
+                                .bit1 = {   .level0 = 1, .duration0 = RMT_ns2ticks(900), /*T1H*/ 
+                                            .level1 = 0, .duration1 = RMT_ns2ticks(300), /*T1L*/ },
+                    .flags.msb_first = 1 /*SM16703 transfer bit order: R7...R0G7...G0B7...B0 */}, .col_order = "rgb", .name = "SM16703"},
 
-    [SK6812W_V1] = {.enc_cfg = {.bit0 = { .level0 = 1, .duration0 = 300, /*T0H*/ .level1 = 0, .duration1 = 900, /*T0L*/ },
-                                .bit1 = { .level0 = 1, .duration0 = 900, /*T1H*/ .level1 = 0, .duration1 = 300, /*T1L*/ },
-                    .flags.msb_first = 1 /*SK6812W transfer bit order: R7...R0G7...G0B7...B0W7...W0 */}, .pixel_order = "rgbw" },
+    [SK6812W_V1] = {.enc_cfg = {.bit0 = {   .level0 = 1, .duration0 = RMT_ns2ticks(300), /*T0H*/ 
+                                            .level1 = 0, .duration1 = RMT_ns2ticks(900), /*T0L*/ },
+                                .bit1 = {   .level0 = 1, .duration0 = RMT_ns2ticks(900), /*T1H*/ 
+                                            .level1 = 0, .duration1 = RMT_ns2ticks(300), /*T1L*/ },
+                    .flags.msb_first = 1 /*SK6812W transfer bit order: R7...R0G7...G0B7...B0W7...W0 */}, .col_order = "rgbw", .name = "SK6812W"},
 };
 
 typedef struct {
-    rgb_drv_types drv_type;
-    uint8_t pixel_cnt;
-    uint8_t * pixel_buf; // Pointer to the pixel buffer, should be 3 or 4 bytes per pixel x pixel_cnt
-    rmt_channel_handle_t chan;                  //RVN - led_chan
-    rmt_tx_channel_config_t chan_config;
-    rmt_encoder_handle_t rmt_encoder;           //RVN - led_encoder_handle
-    // led_strip_encoder_t * led_strip_encoder;
-    gpio_num_t rmt_tx_gpio_num;        /*!< GPIO number used by RMT TX channel. Set to -1 if unused */
-    // led_strip_encoder_config_t encoder_config;
+    rgb_drv_types drv_type;                     // Type of LED strip driver (see rgb_led_drv_cfg[]), NEEDS TO BE SETUP BEFORE RMT initialisation
+    uint8_t led_cnt;                            // Number of pixels in the strip, NEEDS TO BE SETUP BEFORE RMT initialisation
+    uint8_t * rgb_buf;                        // Pointer to the pixel buffer, should be bytes_per_pixel x led_cnt NB: Allocated at initialisation!
+    rmt_channel_handle_t chan;                  // Pointer to the RMT Channel Config NB: Allocated at RMT initialisation!
+    rmt_tx_channel_config_t chan_config;        // RMT Channel Config, NEEDS TO BE SETUP BEFORE RMT initialisation
+    rmt_encoder_handle_t rmt_encoder;           // Pointer to the RMT Encoder Config NB: Allocated at RMT initialisation!
+    esp_err_t init_result;                      // Result of the initialisation, set to ESP_OK if successful
+    const char * name;                          // Name of the LED strip, assigned at initialisation
 } led_strip_t;
 
 typedef struct {
@@ -116,15 +132,22 @@ typedef struct {
     rmt_symbol_word_t reset_code;
 } led_strip_encoder_t;
 
-// typedef struct {
-//     uint32_t resolution; /*!< Encoder resolution, in Hz */
-// } led_strip_encoder_config_t;
-
 /*******************************************************************************
 local function prototypes
  *******************************************************************************/
+/*! Initialize the LED strip driver
+ * @param[in] led_strip LED strip handle
+ * @param[in] name Name of the LED strip
+ * @return number of pixels in the strip if initialisation is successful, 0 otherwise
+ */
+uint32_t _rgb_led_strip_init(led_strip_t * led_strip);
 
- 
+/*! Deinitialize the LED strip driver
+ * @param[in] led_strip LED strip handle
+ * @param[in] name Name of the LED strip
+ */
+void _rgb_led_strip_deinit(led_strip_t * led_strip);
+
 /*! Create RMT encoder for encoding LED strip pixels into RMT symbols
  * @param[in] config Encoder configuration
  * @param[out] ret_encoder Returned encoder handle
@@ -133,66 +156,50 @@ local function prototypes
  *      - ESP_ERR_NO_MEM out of memory when creating led strip encoder
  *      - ESP_OK if creating encoder successfully
  */
-esp_err_t rmt_new_led_strip_encoder(/*const led_strip_encoder_config_t *config,*/ rmt_encoder_handle_t *ret_encoder);
+esp_err_t rmt_new_led_strip_encoder(rgb_drv_types type, rmt_encoder_handle_t *ret_encoder);
 
 /*******************************************************************************
 local variables
  *******************************************************************************/
-// ConsoleMenuItem_t _task_rgb_btn_menu_items[] =
-// {
-// 										    // 01234567890123456789012345678901234567890123456789012345678901234567890123456789
-// 		// {"version", _menu_handler_version,   "Displays application version"},
-// 		// {"help",  	_menu_handler_help,      "Displays information on the available Console commands"},
-// 		// {"trace",   _menu_handler_trace,     "Displays the status, or Enables/Disables print traces"},
-// 		// {"rtos", 	_menu_handler_tasks,     "Displays RTOS information for each or a specific task"},
-// };
 
-static uint8_t led_strip_pixels[EXAMPLE_LED_NUMBERS * 3];
-
-//led_strip_t
-
-// different led strip might have its own timing requirements, following parameter is for WS2812
-rmt_bytes_encoder_config_t bytes_encoder_config = {
-    .bit0 = {
-        .level0 = 1,
-        .duration0 = 0.3 * RMT_LED_STRIP_RESOLUTION_HZ / 1000000, // T0H=0.3us
-        .level1 = 0,
-        .duration1 = 0.9 * RMT_LED_STRIP_RESOLUTION_HZ / 1000000, // T0L=0.9us
+//static uint8_t dbg_led_pixel_buf[DBG_LED_PIXEL_CNT * 3];
+static led_strip_t dbg_led = {
+    .drv_type = SK6812_V1,                              /* Must be set here (see rgb_led_drv_cfg[]) */
+    .led_cnt = 1,                                     /* Must be set here - Only 1 pixel on the Debug RGB LED */
+    .rgb_buf = NULL,                                  /* Set to NULL, will be alocated at initialisation */
+    .chan = NULL,                                       /* Set to NULL, will be assigned at initialisation */
+    .chan_config = {                                    /* RMT TX Chan Config */
+        .clk_src = RMT_CLK_SRC_DEFAULT,                 /* select source clock */
+        .gpio_num = GPIO_NUM_8,                         /*< GPIO number used by RMT TX channel. Set to -1 if unused */
+        .mem_block_symbols = SOC_RMT_MEM_WORDS_PER_CHANNEL, /* DO NOT CHANGE THIS */
+        .resolution_hz = RMT_LED_STRIP_RESOLUTION_HZ,
+        .trans_queue_depth = 4,                         /* set the number of transactions that can be pending in the background*/
     },
-    .bit1 = {
-        .level0 = 1,
-        .duration0 = 0.7 /*0.9*/ * RMT_LED_STRIP_RESOLUTION_HZ / 1000000, // T1H=0.9us
-        .level1 = 0,
-        .duration1 = 0.3 * RMT_LED_STRIP_RESOLUTION_HZ / 1000000, // T1L=0.3us
-    },
-    .flags.msb_first = 1 // WS2812 transfer bit order: G7...G0R7...R0B7...B0
+    .rmt_encoder = NULL,                                /* Set to NULL, will be assigned at initialisation */
+    .init_result = ESP_FAIL,                            /* Set to ESP_FAIL, will be assigned at initialisation, hopefully to ESP_OK */
+    .name = "Debug",
 };
 
-rmt_channel_handle_t led_chan = NULL;
-rmt_tx_channel_config_t tx_chan_config = {
-    .clk_src = RMT_CLK_SRC_DEFAULT, // select source clock
-    .gpio_num = RMT_LED_STRIP_GPIO_NUM,
-    .mem_block_symbols = 64, // increase the block size can make the LED less flickering
-    .resolution_hz = RMT_LED_STRIP_RESOLUTION_HZ,
-    .trans_queue_depth = 4, // set the number of transactions that can be pending in the background
+static led_strip_t button_led = {
+    .drv_type = SM16703_V1,                             /* Must be set here (see rgb_led_drv_cfg[]) */
+    .led_cnt = 5,                                     /* Must be set here - Let's start with 5 pixels on the Button RGB LEDs */
+    .rgb_buf = NULL,                                  /* Set to NULL, will be alocated at initialisation */
+    .chan = NULL,                                       /* Set to NULL, will be assigned at initialisation */
+    .chan_config = {                                    /* RMT TX Chan Config */
+        .clk_src = RMT_CLK_SRC_DEFAULT,                 /* select source clock */
+        .gpio_num = GPIO_NUM_9,                         /*< GPIO number used by RMT TX channel. Set to -1 if unused */
+        .mem_block_symbols = SOC_RMT_MEM_WORDS_PER_CHANNEL, /* DO NOT CHANGE THIS */
+        .resolution_hz = RMT_LED_STRIP_RESOLUTION_HZ,
+        .trans_queue_depth = 4,                         /* set the number of transactions that can be pending in the background*/
+    },
+    .rmt_encoder = NULL,                                /* Set to NULL, will be assigned at initialisation */
+    .init_result = ESP_FAIL,                            /* Set to ESP_FAIL, will be assigned at initialisation, hopefully to ESP_OK */
+    .name = "Button",
 };
 
-rmt_encoder_handle_t led_encoder_handle = NULL;
-// led_strip_encoder_config_t encoder_config = {
-//     .resolution = RMT_LED_STRIP_RESOLUTION_HZ,
-// };
-
-
-static uint8_t led_strip_pixels[EXAMPLE_LED_NUMBERS * 3];
-led_strip_t dbg_led = {
-    .drv_type = SK6812_V1,
-    .pixel_cnt = 1,
-    .pixel_buf = NULL,
-    .chan = NULL,
-    //.chan_config = {.}, //RVN tx_chan_config, //
-    .rmt_encoder = NULL, //RVN led_encoder_handle,
-    .rmt_tx_gpio_num = RMT_LED_STRIP_GPIO_NUM,
-    // .encoder_config = encoder_config,
+led_strip_t * led_strip_list[ledtype_max] = {
+    [ledtype_Debug] = &dbg_led,
+    [ledtype_Button] = &button_led,
 };
 
 /*******************************************************************************
@@ -253,9 +260,14 @@ static esp_err_t rmt_led_strip_encoder_reset(rmt_encoder_t *encoder)
     return ESP_OK;
 }
 
-esp_err_t rmt_new_led_strip_encoder(/*const led_strip_encoder_config_t *config,*/ rmt_encoder_handle_t *ret_encoder)
+esp_err_t rmt_new_led_strip_encoder(rgb_drv_types type, rmt_encoder_handle_t *ret_encoder)
 {
     esp_err_t ret = ESP_OK;
+
+    if (type >= RGB_DRV_MAX) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
     led_strip_encoder_t *led_strip_encoder = NULL;
     GOTO_ON_FALSE(/*config &&*/ ret_encoder, ESP_ERR_INVALID_ARG, err, "invalid argument");
     led_strip_encoder = rmt_alloc_encoder_mem(sizeof(led_strip_encoder_t));
@@ -263,7 +275,7 @@ esp_err_t rmt_new_led_strip_encoder(/*const led_strip_encoder_config_t *config,*
     led_strip_encoder->base.encode = rmt_encode_led_strip;
     led_strip_encoder->base.del = rmt_del_led_strip_encoder;
     led_strip_encoder->base.reset = rmt_led_strip_encoder_reset;
-    GOTO_ON_ERROR(rmt_new_bytes_encoder(&bytes_encoder_config, &led_strip_encoder->bytes_encoder), err, "create bytes encoder failed");
+    GOTO_ON_ERROR(rmt_new_bytes_encoder(&rgb_led_drv_cfg[type].enc_cfg, &led_strip_encoder->bytes_encoder), err, "create bytes encoder failed");
     rmt_copy_encoder_config_t copy_encoder_config = {};
     GOTO_ON_ERROR(rmt_new_copy_encoder(&copy_encoder_config, &led_strip_encoder->copy_encoder), err, "create copy encoder failed");
 
@@ -289,112 +301,177 @@ err:
     return ret;
 }
 
-/**
- * @brief Simple helper function, converting HSV color space to RGB color space
- *
- * Wiki: https://en.wikipedia.org/wiki/HSL_and_HSV
- *
- */
-void led_strip_hsv2rgb(uint32_t h, uint32_t s, uint32_t v, uint32_t *r, uint32_t *g, uint32_t *b)
-{
-    h %= 360; // h -> [0,360]
-    uint32_t rgb_max = v * 2.55f;
-    uint32_t rgb_min = rgb_max * (100 - s) / 100.0f;
+uint32_t _rgb_led_strip_init(led_strip_t * led_strip)
+{    
+    //dbgPrint(trRGB, "#Initialise %s RGB LED RMT Channel", led_strip->name);
+    ESP_ERROR_CHECK(rmt_new_tx_channel(&led_strip->chan_config, &led_strip->chan));
+    
+    //dbgPrint(trRGB, "#Install %s RGB LED Strip encoder", led_strip->name);
+    ESP_ERROR_CHECK(rmt_new_led_strip_encoder(led_strip->drv_type, &led_strip->rmt_encoder));
 
-    uint32_t i = h / 60;
-    uint32_t diff = h % 60;
+    //dbgPrint(trRGB, "#Enable %s RGB LED RMT TX channel", led_strip->name);
+    ESP_ERROR_CHECK(rmt_enable(led_strip->chan));
 
-    // RGB adjustment amount by hue
-    uint32_t rgb_adj = (rgb_max - rgb_min) * diff / 60;
-
-    switch (i) {
-    case 0:
-        *r = rgb_max;
-        *g = rgb_min + rgb_adj;
-        *b = rgb_min;
-        break;
-    case 1:
-        *r = rgb_max - rgb_adj;
-        *g = rgb_max;
-        *b = rgb_min;
-        break;
-    case 2:
-        *r = rgb_min;
-        *g = rgb_max;
-        *b = rgb_min + rgb_adj;
-        break;
-    case 3:
-        *r = rgb_min;
-        *g = rgb_max - rgb_adj;
-        *b = rgb_max;
-        break;
-    case 4:
-        *r = rgb_min + rgb_adj;
-        *g = rgb_min;
-        *b = rgb_max;
-        break;
-    default:
-        *r = rgb_max;
-        *g = rgb_min;
-        *b = rgb_max - rgb_adj;
-        break;
+    //allocate memory for led_strip->rgb_buf
+    int bytes_per_pixel = strlen(rgb_led_drv_cfg[led_strip->drv_type].col_order);
+    led_strip->rgb_buf = (uint8_t *)malloc(led_strip->led_cnt * bytes_per_pixel);
+    if (led_strip->rgb_buf == NULL) {
+        dbgPrint(trRGB|trALWAYS, "#No mem for %s RGB LED pixel buffer", led_strip->name);
+        led_strip->init_result = ESP_ERR_NO_MEM;
     }
+    else
+    {
+        //dbgPrint(trRGB, "#Allocated %d bytes for %s RGB LED strip (%d pixels x %d bytes)", bytes_per_pixel*led_strip->led_cnt, led_strip->name, led_strip->led_cnt, bytes_per_pixel);
+        led_strip->init_result = ESP_OK;
+    }
+    ESP_ERROR_CHECK(led_strip->init_result);
+
+    return (led_strip->init_result == ESP_OK)? led_strip->led_cnt : 0;
+}
+
+void _rgb_led_strip_deinit(led_strip_t * led_strip)
+{    
+    if (led_strip->rgb_buf != NULL) {
+        int bytes_per_pixel = strlen(rgb_led_drv_cfg[led_strip->drv_type].col_order);
+        dbgPrint(trRGB, "#Freed %d bytes for %s RGB LED strip (%d pixels x %d bytes)", bytes_per_pixel*led_strip->led_cnt, led_strip->name, led_strip->led_cnt, bytes_per_pixel);
+        free(led_strip->rgb_buf);
+        led_strip->rgb_buf = NULL;
+    }
+
+    dbgPrint(trRGB, "#Disable %s RGB LED RMT TX channel", led_strip->name);
+    ESP_ERROR_CHECK(rmt_disable(led_strip->chan));
+
+    dbgPrint(trRGB, "#Uninstall %s RGB LED Strip encoder", led_strip->name);
+    ESP_ERROR_CHECK(rmt_del_encoder(led_strip->rmt_encoder));
+
+    dbgPrint(trRGB, "#Destroy %s RGB LED RMT Channel", led_strip->name);
+    ESP_ERROR_CHECK(rmt_del_channel(led_strip->chan));
+
+    led_strip->init_result = ESP_FAIL;
+}
+
+void _print_strip_config(rgb_led_strip_type strip)
+{
+    led_strip_t * led_strip = led_strip_list[strip];
+
+    dbgPrint(trRGB, "#%s RGB LED Strip Config:", led_strip->name);
+    dbgPrint(trRGB, "#  Driver Type: %s", rgb_led_drv_cfg[led_strip->drv_type].name);
+    dbgPrint(trRGB, "#    Colour Order: %s (%d bytes per pixel)", ColOrder(strip), strlen(ColOrder(strip)));
+    dbgPrint(trRGB, "#    Bit Timing:");
+    dbgPrint(trRGB, "#      bit0: level %d, %d ticks (%dns)", rgb_led_drv_cfg[led_strip->drv_type].enc_cfg.bit0.level0, 
+                                                                rgb_led_drv_cfg[led_strip->drv_type].enc_cfg.bit0.duration0, 
+                                                                RMT_ticks2ns(rgb_led_drv_cfg[led_strip->drv_type].enc_cfg.bit0.duration0));
+    dbgPrint(trRGB, "#            level %d, %d ticks (%dns)", rgb_led_drv_cfg[led_strip->drv_type].enc_cfg.bit0.level1, 
+                                                                rgb_led_drv_cfg[led_strip->drv_type].enc_cfg.bit0.duration1, 
+                                                                RMT_ticks2ns(rgb_led_drv_cfg[led_strip->drv_type].enc_cfg.bit0.duration1));
+    dbgPrint(trRGB, "#      bit1: level %d, %d ticks (%dns)", rgb_led_drv_cfg[led_strip->drv_type].enc_cfg.bit1.level0, 
+                                                                rgb_led_drv_cfg[led_strip->drv_type].enc_cfg.bit1.duration0, 
+                                                                RMT_ticks2ns(rgb_led_drv_cfg[led_strip->drv_type].enc_cfg.bit1.duration0));
+    dbgPrint(trRGB, "#            level %d, %d ticks (%dns)", rgb_led_drv_cfg[led_strip->drv_type].enc_cfg.bit1.level1, 
+                                                                rgb_led_drv_cfg[led_strip->drv_type].enc_cfg.bit1.duration1, 
+                                                                RMT_ticks2ns(rgb_led_drv_cfg[led_strip->drv_type].enc_cfg.bit1.duration1));
+    dbgPrint(trRGB, "#  Pixel Count: %d/%d", (led_strip->init_result == ESP_OK)?led_strip->led_cnt : 0, led_strip->led_cnt);
+    dbgPrint(trRGB, "#  Pixel Buffer: %p (%d bytes)", RgbBuf(strip), strlen(ColOrder(strip)) * led_strip->led_cnt);
+    dbgPrint(trRGB, "#  RMT Channel: %p", led_strip->chan);
+    dbgPrint(trRGB, "#  RMT Encoder: %p", led_strip->rmt_encoder);
+    dbgPrint(trRGB, "#  Init Result: %s", esp_err_to_name(led_strip->init_result));
+    dbgPrint(trRGB, "");
 }
 
 /*******************************************************************************
 Global (public) Functions
 *******************************************************************************/
 
-void drv_rgb_led_strip_init(void)
+uint32_t drv_rgb_led_strip_init(void)
 {
-    dbgPrint(trRGB, "#Create RMT TX channel");
-    ESP_ERROR_CHECK(rmt_new_tx_channel(&tx_chan_config, &led_chan));
+    uint32_t led_cnt = 0;
 
-    dbgPrint(trRGB, "#Install led strip encoder");
-    ESP_ERROR_CHECK(rmt_new_led_strip_encoder(/*&encoder_config,*/ &led_encoder_handle));
+    for (rgb_led_strip_type i = 0; i < ledtype_max; i++)
+    {
+        led_cnt += _rgb_led_strip_init(led_strip_list[i]);
+        //_print_strip_config(i);
+    }
+    // led_cnt += _rgb_led_strip_init(led_strip_list[ledtype_Debug]);
+    // _print_strip_config(ledtype_Debug);
 
-    dbgPrint(trRGB, "#Enable RMT TX channel");
-    ESP_ERROR_CHECK(rmt_enable(led_chan));
+    // led_cnt += _rgb_led_strip_init(&button_led);    
+    // _print_strip_config(ledtype_Button);
+
+    return led_cnt;
 }
 
 void drv_rgb_led_strip_deinit(void)
 {
-    dbgPrint(trRGB, "#Disable RMT TX channel");
-    ESP_ERROR_CHECK(rmt_disable(led_chan));
+    for (rgb_led_strip_type i = ledtype_max; i > 0; i--)
+    {
+        _rgb_led_strip_deinit(led_strip_list[i-1]);
+    }
 
-    dbgPrint(trRGB, "#Uninstall led strip encoder");
-    ESP_ERROR_CHECK(rmt_del_encoder(led_encoder_handle));
-
-    dbgPrint(trRGB, "#Destroy RMT TX channel");
-    ESP_ERROR_CHECK(rmt_del_channel(led_chan));
+    // _rgb_led_strip_deinit(&dbg_led);
+    // _rgb_led_strip_deinit(&button_led);
 }
 
 static rmt_transmit_config_t rmt_tx_config = {
     .loop_count = 0, // no transfer loop
 };
 
-void drv_rgb_led_strip_set_rgb_pixel(uint32_t index, uint32_t red, uint32_t green, uint32_t blue)
+void drv_rgb_led_strip_set_rgb_pixel(rgb_led_strip_type strip, uint32_t pixel_index, uint32_t rgb)
 {
-    index = index % EXAMPLE_LED_NUMBERS;
+    if (strip >= ledtype_max) {
+        return;
+    }
 
-    // Build RGB pixels
-    led_strip_pixels[index * 3 + 0] = green;
-    led_strip_pixels[index * 3 + 1] = blue;
-    led_strip_pixels[index * 3 + 2] = red;
+    led_strip_t* led_strip = led_strip_list[strip];
+    
+    if (led_strip->init_result != ESP_OK) 
+    {
+        dbgPrint(trRGB, "# %s RGB LED strip not initialised", led_strip->name);
+        return;
+    }
 
+    uint8_t * rgb_buf = RgbBuf(strip);
+    const char * col_order = ColOrder(strip);
+    int bytes_per_pixel = strlen(col_order);
+    pixel_index = pixel_index % led_strip->led_cnt;
+    
+    // Build RGB pixels in the order as they are expeted for the particular driver
+    for (int i = 0; i < bytes_per_pixel; i++)
+    {
+        switch (col_order[i])
+        {
+        case 'R':
+        case 'r':
+            rgb_buf[pixel_index * bytes_per_pixel + i] = RED_from_WRGB(rgb);
+            break;
+        case 'G':
+        case 'g':
+            rgb_buf[pixel_index * bytes_per_pixel + i] = GREEN_from_WRGB(rgb);
+            break;
+        case 'B':
+        case 'b':
+            rgb_buf[pixel_index * bytes_per_pixel + i] = BLUE_from_WRGB(rgb);
+            break;
+        case 'W':
+        case 'w':
+            rgb_buf[pixel_index * bytes_per_pixel + i] = WHITE_from_WRGB(rgb);
+            break;
+        default:
+            dbgPrint(trRGB, "#Unsupported char ('%c')in pixel order str of %s RGB LED strip", col_order[i], led_strip->name);
+            break;
+        }
+    }
     // Flush RGB values to LEDs
-    ESP_ERROR_CHECK(rmt_transmit(led_chan, led_encoder_handle, led_strip_pixels, sizeof(led_strip_pixels), &rmt_tx_config));
-    ESP_ERROR_CHECK(rmt_tx_wait_all_done(led_chan, portMAX_DELAY));
+    ESP_ERROR_CHECK(rmt_transmit(led_strip->chan, led_strip->rmt_encoder, rgb_buf, bytes_per_pixel * led_strip->led_cnt, &rmt_tx_config));
+    ESP_ERROR_CHECK(rmt_tx_wait_all_done(led_strip->chan, portMAX_DELAY));
+};
 
-}
-void drv_rgb_led_strip_clear_rgb_pixel(uint32_t index)
+uint32_t drv_rgb_led_strip_pixels(rgb_led_strip_type strip)
 {
-    index = index % EXAMPLE_LED_NUMBERS;
-    memset(&led_strip_pixels[index], 0, (sizeof(led_strip_pixels)/EXAMPLE_LED_NUMBERS));
-    ESP_ERROR_CHECK(rmt_transmit(led_chan, led_encoder_handle, led_strip_pixels, sizeof(led_strip_pixels), &rmt_tx_config));
-    ESP_ERROR_CHECK(rmt_tx_wait_all_done(led_chan, portMAX_DELAY));
-}
+    if ((strip >= ledtype_max) || (led_strip_list[strip]->init_result != ESP_OK))
+        return 0;
 
+    return led_strip_list[strip]->led_cnt;
+}
 #undef PRINTF_TAG
 
 /*************************** END OF FILE *************************************/
