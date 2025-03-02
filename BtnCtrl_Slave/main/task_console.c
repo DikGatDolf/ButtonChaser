@@ -37,6 +37,7 @@ includes
 #include <strings.h>
 #include <stdint.h>
 #include "sys_utils.h"
+#include "str_helper.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -472,7 +473,7 @@ void _menu_handler_help(void)
 					continue; //With FOR-loop
 				}
                 //This point should NEVER be reached
-                dbgPrint(trALWAYS, "#This should NEVER be reached (%s, line %d)", __FILE__, __LINE__);
+                dbgPrint(trALWAYS, "This should NEVER be reached (%s, line %d)", __FILE__, __LINE__);
 			}
 			return;
 		}
@@ -697,7 +698,7 @@ void _menu_handler_tasks(void)
 
 	if (arg_cnt > 0)
 	{
-		if (isNaturalNumberStr(args[0]))
+		if (is_number_str(args[0]))
 		{
 			int index = atoi(args[0]);
 			if ((index >= eTaskIndexMax) || (index < 0))
@@ -890,7 +891,7 @@ TaskInfo_t * task_console_init(void)
 
     _menu_handler_version();
 
-	task_console_add_menu("console", _task_console_menu_items, ARRAY_SIZE(_task_console_menu_items), "Console Interface");
+	task_console_add_menu("con", _task_console_menu_items, ARRAY_SIZE(_task_console_menu_items), "Console Interface");
 
 	dbgPrint(trALWAYS, "#Init OK (Traces: 0x%02X)", _task_console.tracemask);
 
@@ -957,7 +958,7 @@ int task_console_add_menu(const char *_group_name, ConsoleMenuItem_t *_tbl, size
 			continue; // with the for loop
 		// else, this item group is alphabetically larger.
 
-        dbgPrint(trCONSOLE, "#Adding \"%s\" (%d) @ index %d", _group_name, _cnt, index);
+        //dbgPrint(trCONSOLE, "#Adding \"%s\" (%d) @ index %d", _group_name, _cnt, index);
 		// Add this items right here
 		break; // from the for-loop
 	}
@@ -978,18 +979,9 @@ int task_console_add_menu(const char *_group_name, ConsoleMenuItem_t *_tbl, size
 	//Depending on the current value of index, we may or may not need to make some space.
 	if (index < _task_console.menu_list.cnt)
 	{
-		dbgPrint(trCONSOLE, "#Opening up space at position %d/%d", index+1, _task_console.menu_list.cnt);
+		//dbgPrint(trCONSOLE, "#Opening up space at position %d/%d", index+1, _task_console.menu_list.cnt);
 		// Open up a slot by moving everything else on with one space.
         memmove(&_task_console.menu_list.group[index + 1], &_task_console.menu_list.group[index], sizeof(ConsoleMenuTableGroup_t) * (_task_console.menu_list.cnt - index));
-		// for (int j = _task_console.menu_list.cnt - 1; j >= index; j--)
-		// {
-    	// 	dbgPrint(trCONSOLE, "#Moving %d to %d\n", j, j + 1);
-        //     memcpy(&_task_console.menu_list.group[j + 1], &_task_console.menu_list.group[j], sizeof(ConsoleMenuTableGroup_t));
-		// 	// _task_console.menu_list.group[j + 1].name = _task_console.menu_list.group[j].name;
-		// 	// _task_console.menu_list.group[j + 1].description = _task_console.menu_list.group[j].description;
-		// 	// _task_console.menu_list.group[j + 1].table_ptr = _task_console.menu_list.group[j].table_ptr;
-		// 	// _task_console.menu_list.group[j + 1].item_cnt = _task_console.menu_list.group[j].item_cnt;
-		// }
 	}
 
     // dbgPrint(trCONSOLE, "#No need to move anything (%d-%d)", index, _task_console.menu_list.cnt);

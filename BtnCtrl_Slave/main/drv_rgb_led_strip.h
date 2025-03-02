@@ -34,10 +34,10 @@ Macros
 Struct & Unions
 ******************************************************************************/
 typedef enum {
-    ledtype_Debug = 0,
-    ledtype_Button = 1,
+    strip_Debug = 0,
+    strip_Buttons = 1,
     /* Keep this at the end*/
-    ledtype_max,
+    strips_Total,
 }rgb_led_strip_type;
 
 /******************************************************************************
@@ -51,10 +51,11 @@ Global (public) function definitions
 uint32_t drv_rgb_led_strip_init(void);
 void drv_rgb_led_strip_deinit(void);
 
-uint32_t drv_rgb_led_strip_pixels(rgb_led_strip_type strip);
+uint32_t drv_rgb_led_strip_count(rgb_led_strip_type strip);
 
-void drv_rgb_led_strip_set_rgb_pixel(rgb_led_strip_type strip, uint32_t pixel_index, uint32_t rgb);
+void drv_rgb_led_strip_set_led(rgb_led_strip_type strip, uint32_t led_nr, uint32_t rgb);
 
+char * drv_rgb_led_striptype2name(rgb_led_strip_type _type);
 #ifdef __cplusplus
 }
 #endif

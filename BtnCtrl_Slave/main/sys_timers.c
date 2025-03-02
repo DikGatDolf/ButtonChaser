@@ -251,7 +251,7 @@ uint32_t sys_stopwatch_ms_stop(Stopwatch_ms_t* sw)
                                     = 1193h 2m 47s 295ms 
                                     => "1193:02:47.295" 
                                     is 15 bytes (with NULL terminator) */
-bool sys_convert_ms_to_dhms0_str(char *buff, uint32_t ms)
+bool ms2dhms_str(char *buff, uint32_t ms)
 {
     uint32_t dec = ms%MS_PER_SEC;
     uint32_t sec = ms/MS_PER_SEC;

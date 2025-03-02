@@ -164,7 +164,7 @@ uint32_t sys_stopwatch_ms_stop(Stopwatch_ms_t* sw);
  * @param buff a pointer to a buffer to store the string (max 15 characters)
  * @param ms the time in ms to convert
 */
-bool sys_convert_ms_to_dhms0_str(char *buff, uint32_t ms);
+bool ms2dhms_str(char *buff, uint32_t ms);
 
 #undef EXT
 #endif /* __SYS_TIMERS_H__ */

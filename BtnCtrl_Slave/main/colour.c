@@ -15,6 +15,8 @@ includes
 #include <string.h>
 #include <strings.h>
 #include <stdint.h>
+#include "sys_utils.h"
+#include "str_helper.h"
 
 #define __NOT_EXTERN__
 #include "colour.h"
@@ -31,9 +33,8 @@ includes
 typedef struct 
 {
     char * Name;
-    uint8_t r;
-    uint8_t g;
-    uint8_t b;
+    char * shortName;
+    uint32_t rgb;
 } stColour_t;
 
 /*******************************************************************************
@@ -43,27 +44,27 @@ typedef struct
  /*******************************************************************************
  Local variables
  *******************************************************************************/
-// static stColour_t _colour[col_max] = 
-// {
-//     [colBlack]      = {.Name = "Black",   .r = 0,   .g = 0,   .b = 0},
-//     [colNavy]       = {.Name = "Navy",    .r = 0,   .g = 0,   .b = 128},
-//     [colBlue]       = {.Name = "Blue",    .r = 0,   .g = 0,   .b = 255},
-//     [colGreen]      = {.Name = "Green",   .r = 0,   .g = 128, .b = 0},
-//     [colTeal]       = {.Name = "Teal",    .r = 0,   .g = 128, .b = 128},
-//     [colLime]       = {.Name = "Lime",    .r = 0,   .g = 255, .b = 0},
-//     [colCyan]       = {.Name = "Cyan",    .r = 0,   .g = 255, .b = 255},
-//     [colMaroon]     = {.Name = "Maroon",  .r = 128, .g = 0,   .b = 0},
-//     [colPurple]     = {.Name = "Purple",  .r = 128, .g = 0,   .b = 128},
-//     [colOlive]      = {.Name = "Olive",   .r = 128, .g = 128, .b = 0},
-//     [colGray]       = {.Name = "Gray",    .r = 128, .g = 128, .b = 128},
-//     [colSilver]     = {.Name = "Silver",  .r = 192, .g = 192, .b = 192},
-//     [colMagenta]    = {.Name = "Magenta", .r = 255, .g = 0,   .b = 255},
-//     [colRed]        = {.Name = "Red",     .r = 255, .g = 0,   .b = 0},
-//     [colOrange]     = {.Name = "Orange",  .r = 255, .g = 165, .b = 0},
-//     [colPink]       = {.Name = "Pink",    .r = 255, .g = 192, .b = 203},    
-//     [colYellow]     = {.Name = "Yellow",  .r = 255, .g = 255, .b = 0},
-//     [colWhite]      = {.Name = "White",   .r = 255, .g = 255, .b = 255},
-// };
+static stColour_t _colour[] = 
+{
+    {"Black",   "Bk",   colBlack},
+    {"Navy",    "Nv",   colNavy},
+    {"Blue",    "Bl",   colBlue},
+    {"Green",   "Gn",   colGreen},
+    {"Teal",    "Tl",   colTeal},
+    {"Lime",    "Lm",   colLime},
+    {"Cyan",    "Cn",   colCyan},
+    {"Maroon",  "Mr",   colMaroon},
+    {"Purple",  "Pr",   colPurple},
+    {"Olive",   "Ol",   colOlive},
+    {"Gray",    "Gy",   colGray},
+    {"Silver",  "Sv",   colSilver},
+    {"Magenta", "Mg",   colMagenta},
+    {"Red",     "Rd",   colRed},
+    {"Orange",  "Or",   colOrange},
+    {"Pink",    "Pn",   colPink},
+    {"Yellow",  "Ye",   colYellow},
+    {"White",   "Wt",   colWhite},
+};
 
 /*******************************************************************************
  Local (private) Functions
@@ -73,7 +74,32 @@ typedef struct
  Global (public) Functions
 *******************************************************************************/
 
-//void hsv2rgb(uint32_t h, uint32_t s, uint32_t v, uint32_t *r, uint32_t *g, uint32_t *b)
+esp_err_t str2rgb(uint32_t *rgb, const char * str)
+{
+    str = str_trim_l(str);
+    uint32_t i = 0;
+
+    for (i = 0; i < ARRAY_SIZE(_colour); i++)
+    {
+        if (strlen(str) == 2)
+        {
+            if (strcasecmp(str, _colour[i].shortName) == 0)
+            {
+                *rgb = _colour[i].rgb;
+                return ESP_OK;
+            }
+        }
+        else if (strcasecmp(str, _colour[i].Name) == 0)
+        {
+            *rgb = _colour[i].rgb;
+            return ESP_OK;
+        }
+    }
+
+    return ESP_ERR_NOT_FOUND;
+
+}
+
 void hsv2rgb(uint32_t h, uint32_t s, uint32_t v, uint32_t *rgb)
 {
     uint32_t r = RED_from_WRGB(*rgb);

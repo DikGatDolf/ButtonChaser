@@ -5,8 +5,8 @@ task_rgb_btn.h
 Include file for task_rgb_btn.c
 
 ******************************************************************************/
-#ifndef __task_rgb_btn_H__
-#define __task_rgb_btn_H__
+#ifndef __task_rgb_led_H__
+#define __task_rgb_led_H__
 
 
 /******************************************************************************
@@ -42,6 +42,6 @@ TaskInfo_t * task_rgb_btn_init(void);
 void task_rgb_btn_deinit(void);
 
 #undef EXT
-#endif /* __task_rgb_btn_H__ */
+#endif /* __task_rgb_led_H__ */
 
 /****************************** END OF FILE **********************************/

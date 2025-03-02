@@ -92,7 +92,7 @@ void app_main(void)
     
         //typeof(_task_main_menu_items)
 #ifdef CONSOLE_ENABLED
-    task_console_add_menu("main", _task_main_menu_items, ARRAY_SIZE(_task_main_menu_items), "System");
+    task_console_add_menu("sys", _task_main_menu_items, ARRAY_SIZE(_task_main_menu_items), "System");
 #endif
 
     xLastWakeTime = xTaskGetTickCount();

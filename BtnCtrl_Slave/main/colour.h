@@ -34,6 +34,10 @@ Macros
 #define GREEN_from_WRGB(x)   ((uint8_t)((x >> 8) & 0xFF))
 #define BLUE_from_WRGB(x)    ((uint8_t)((x) & 0xFF))
 
+#define HUE_MAX 360
+#define SAT_MAX 100
+#define VAL_MAX 100
+
 /******************************************************************************
 Struct & Unions
 ******************************************************************************/
@@ -86,6 +90,15 @@ Global (public) variables
 /******************************************************************************
 Global (public) function definitions
 ******************************************************************************/
+/*! @brief A public function that converts a string to a 24-bit RGB value
+ * @param rgb Pointer to a uint32_t, which will contain the 24-bit RGB value
+ *  if the conversion was successful
+ * @param str The string to convert (e.g. Black, Red, etc), or its short form 
+ *  (e.g. Bk, Rd, etc)
+ * @return ESP_OK if the conversion was successful, ESP_ERR_NOT_FOUND if the 
+ *  string was not found
+ */
+esp_err_t str2rgb(uint32_t *rgb, const char * str);
 
 /*! @brief Simple helper function, converting HSV color space to RGB color space
  * Wiki: https://en.wikipedia.org/wiki/HSL_and_HSV
