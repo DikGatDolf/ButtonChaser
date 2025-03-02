@@ -55,13 +55,13 @@ static stColour_t _colour[] =
     {"Cyan",    "Cn",   colCyan},
     {"Maroon",  "Mr",   colMaroon},
     {"Purple",  "Pr",   colPurple},
-    {"Olive",   "Ol",   colOlive},
-    {"Gray",    "Gy",   colGray},
-    {"Silver",  "Sv",   colSilver},
+//    {"Olive",   "Ol",   colOlive},
+//    {"Gray",    "Gy",   colGray},
+//    {"Silver",  "Sv",   colSilver},
     {"Magenta", "Mg",   colMagenta},
     {"Red",     "Rd",   colRed},
     {"Orange",  "Or",   colOrange},
-    {"Pink",    "Pn",   colPink},
+//    {"Pink",    "Pn",   colPink},
     {"Yellow",  "Ye",   colYellow},
     {"White",   "Wt",   colWhite},
 };
@@ -73,6 +73,28 @@ static stColour_t _colour[] =
 /*******************************************************************************
  Global (public) Functions
 *******************************************************************************/
+
+const char * rgb2name(uint32_t rgb_value)
+{
+    
+    for (uint32_t i = 0; i < ARRAY_SIZE(_colour); i++)
+    {
+        if (_colour[i].rgb == rgb_value)
+        {
+            return _colour[i].Name;
+        }
+    }
+    return NULL;
+}
+
+const char *  colour_list_item(int index)
+{
+
+    if (index < 0 || index >= ARRAY_SIZE(_colour))
+        return NULL;
+
+    return _colour[index].Name;
+}
 
 esp_err_t str2rgb(uint32_t *rgb, const char * str)
 {

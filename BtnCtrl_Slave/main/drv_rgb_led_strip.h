@@ -55,7 +55,7 @@ uint32_t drv_rgb_led_strip_count(rgb_led_strip_type strip);
 
 void drv_rgb_led_strip_set_led(rgb_led_strip_type strip, uint32_t led_nr, uint32_t rgb);
 
-char * drv_rgb_led_striptype2name(rgb_led_strip_type _type);
+const char * drv_rgb_led_striptype2name(rgb_led_strip_type _type);
 #ifdef __cplusplus
 }
 #endif

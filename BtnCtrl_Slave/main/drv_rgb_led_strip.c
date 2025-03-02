@@ -464,7 +464,7 @@ uint32_t drv_rgb_led_strip_count(rgb_led_strip_type strip)
     return led_strip_list[strip]->led_cnt;
 }
 
-char * drv_rgb_led_striptype2name(rgb_led_strip_type _type)
+const char * drv_rgb_led_striptype2name(rgb_led_strip_type _type)
 {
     if (_type >= strips_Total)
         return NULL;

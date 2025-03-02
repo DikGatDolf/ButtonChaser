@@ -52,13 +52,13 @@ typedef enum
     colCyan     = AS_RGB(0,   255, 255),
     colMaroon   = AS_RGB(128, 0,   0),
     colPurple   = AS_RGB(128, 0,   128),
-    colOlive    = AS_RGB(128, 128, 0),
-    colGray     = AS_RGB(128, 128, 128),
-    colSilver   = AS_RGB(192, 192, 192),
+    // colOlive    = AS_RGB(128, 128, 0),
+    // colGray     = AS_RGB(128, 128, 128),
+    // colSilver   = AS_RGB(192, 192, 192),
     colMagenta  = AS_RGB(255, 0,   255),
     colRed      = AS_RGB(255, 0,   0),
     colOrange   = AS_RGB(255, 165, 0),
-    colPink     = AS_RGB(255, 192, 203),    
+    // colPink     = AS_RGB(255, 192, 203),    
     colYellow   = AS_RGB(255, 255, 0),
     colWhite    = AS_RGB(255, 255, 255),
 
@@ -90,6 +90,22 @@ Global (public) variables
 /******************************************************************************
 Global (public) function definitions
 ******************************************************************************/
+
+/*! @brief A public function that attempts to retrieve a valid name from the 
+ * list of predefined colours for supplied RGB value.
+ * @param rgb_value The 24-bit RGB value to convert
+ * @return A pointer to the string containing the colour name, or NULL if the
+ */
+const char * rgb2name(uint32_t rgb_value);
+
+/*! @brief A public function that retrieves the colour name from the list of 
+ * predefined colours
+ * @param index The index of the colour in the list
+ * @return A pointer to the string containing the colour name, or NULL if the
+ *  index is out of bounds
+ */
+ const char * colour_list_item(int index);
+
 /*! @brief A public function that converts a string to a 24-bit RGB value
  * @param rgb Pointer to a uint32_t, which will contain the 24-bit RGB value
  *  if the conversion was successful

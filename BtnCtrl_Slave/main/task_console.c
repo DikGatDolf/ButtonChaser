@@ -54,7 +54,7 @@ local defines and constants
 
 #define CONSOLE_STACK_SIZE 4096
 
-#define task_console_MAX_ARGS 10 /* The max amount of console arguments we can 
+#define task_console_MAX_ARGS 15 /* The max amount of console arguments we can 
                                     parse. If more than these are passed, the 
                                     last argument placed on the stack will 
                                     contain the remainder of the argument string 
@@ -126,7 +126,7 @@ typedef struct
 	{
 		ConsoleMenuTableGroup_t group[task_console_MAX_MENU_ITEMS_MAX];
 		int cnt;
-	} menu_list;
+	} menu_grp_list;
 
 	uint8_t tracemask;
 
@@ -157,6 +157,11 @@ bool _task_console_service(void);
 */
 void _task_console_parse_rx_line(void);
 
+/*! Parses the arguments in the string and places them on the argument stack
+ * @param[in] arg_str The string containing the arguments to parse
+ */
+void _task_console_parse_args(char * arg_str);
+
 /*! Prints all the arguments on the stack, with relative index to the next item 
  * to pop
 */
@@ -168,13 +173,38 @@ void _task_console_arg_stack(void);
 */
 ConsoleMenuTableGroup_t * _task_console_find_menu_group(char *_command);
 
+
+/*! Counts the number of occurrences of a command in the menu list (all groups)
+ * @param[in] _command The command string to search for
+ * @return The number of commands found in the menu list (all groups)
+*/
+uint32_t _task_console_count_menu_commands(char *_command);
+
+/*! Searches for a specific occurrences of a command in the menu list (all groups)
+ * @param[in] _command The command string to search for
+ * @param[in] _index The index of the nth item found. If less the N items are found
+ * @param[out] _menuItem A pointer to the menu command type structure pointer, if found. 
+ *              Will only be set if a valid pointer is passed
+ * @param[out] _group_base A pointer to the group_t structure pointer, if found.
+ *              Will only be set if a valid pointer is passed
+ * @return ESP_OK if the command was found, 
+ *         ESP_ERR_NOT_FOUND if less the _index items were found
+ *         ESP_ERR_INVALID_ARG if _index < 0 is NULL
+*/
+esp_err_t _task_console_find_menu_command(char *_command, uint32_t _index, ConsoleMenuItem_t ** _menuItem, ConsoleMenuTableGroup_t **_group_base);
+
 /*! Finds a pointer to the specific command (if it has been added to the list)
  * @param[in] _command The command string to search for
+ * @param[out] _menuItem A pointer to the command structure if found
  * @param[out] _tbl_index If supplied, returns index of the group in which the 
  *              command was found (undefined if _command was not found)
  * @return A pointer to the command structure if found, NULL otherwise
 */
-ConsoleMenuItem_t * _task_console_find_menu_command(char *_command, int *_tbl_index);
+
+/*! Calls the help function on a specific command (or group)
+ * @param[in] cmd The command string to search for
+ */
+void _task_console_show_help_on_command(char * cmd);
 
 /*! Prints the menu of commands available on the console or a specific group of 
  * commands, or the description of a single menu command 
@@ -292,7 +322,8 @@ void _task_console_parse_rx_line(void)
 {
 //	dbgPrint(PRINT_TR_CONSOLE, "Parseline() called for \"%s\"", _task_console.rx.buff);
 
-    char *_command;
+    ConsoleMenuTableGroup_t *_group = NULL;
+    char *_command = NULL;
     char * next_param = str_trim_l(_task_console.rx.buff);
     //Assign the 1st parameter to the command string, if it is NULL, then we have no command or arguments
 
@@ -304,6 +335,79 @@ void _task_console_parse_rx_line(void)
 		return;
 	}
 
+    _task_console_parse_args(next_param);
+
+    //Is the first argument a command or a group?
+    _group = _task_console_find_menu_group(_command);
+    if (_group != NULL)
+    {
+        //dbgPrint(trALWAYS, "\"%s\" identified as a group (%s)", _command, _group->description);
+
+        //A group, so we expect the next one to be a command (or help/?), 
+        if (task_console_arg_cnt() == 0)
+        {
+            //No command, so we will show the help for the group
+            _task_console_show_help_on_command(_command);
+            return;
+        }
+        //else ... oooh, we have more... the next one should be a command
+        _command = task_console_arg_pop();
+    }
+
+    //We suspect we have a command now, but if there are multiple commands like this in different groups, we cannot decide
+    uint32_t _cmd_cnt = _task_console_count_menu_commands(_command);
+    // dbgPrint(trCONSOLE, "#Command = \"%s\" (%d)", _command, _cmd_cnt);
+    if ((_cmd_cnt > 1) && (_group == NULL))
+    {
+        //We have more than one command with this name, we need to find out which one the user wants
+        dbgPrint(trALWAYS, "Disambiguation needed for \"%s\":", _command);
+        _task_console_show_help_on_command(_command);
+        return;
+    }
+    //Unique case where the user entered <group> help or <group> ?
+    if ((task_console_arg_cnt() == 0) && ((strcasecmp(_command, "help") == 0) || (strcasecmp(_command, "?") == 0)) && (_group != NULL))
+    {
+        //No arguments, so we will show the help for the command
+        _task_console_show_help_on_command((char *)_group->name);
+        return;
+    }
+
+    // _task_console_arg_stack();
+
+    // Righto, so we are going to run through the list of menu table groups to see if this command is not contained in one of them...
+    ConsoleMenuItem_t *menu_item = NULL;
+    ConsoleMenuTableGroup_t *group_base = NULL;
+    for (int i = 0; i < _cmd_cnt; i++)    
+    {
+        if (ESP_OK == _task_console_find_menu_command(_command, i, &menu_item, &group_base))
+        {
+            if ((_cmd_cnt > 1) && (group_base != _group))
+                continue; // with the for-loop (search for the next command in a different group)
+            //else, the group is really not relevant as this command is unique
+
+            dbgPrint(trALWAYS, "");
+            if (menu_item->func != NULL)
+                menu_item->func();
+            dbgPrint(trALWAYS, "");
+            return;
+        }
+    }    
+	dbgPrint(trALWAYS, "Unknown Command: \"%s\"", _command);
+	dbgPrint(trALWAYS, "");
+}
+
+void _task_console_show_help_on_command(char * cmd)
+{
+    //dbgPrint(trALWAYS, "Help called for group (%s):", cmd);
+    //Stick this in the argument list and call help!
+    _task_console.args.item[_task_console.args.cnt++] = cmd;
+    _task_console.args.item[_task_console.args.cnt] = NULL;
+    _menu_handler_help();
+    dbgPrint(trALWAYS, "");
+}
+
+void _task_console_parse_args(char * arg_str)
+{
     _task_console.args.cnt = 0;
 	_task_console.args.pop_index = 0;
 
@@ -311,29 +415,15 @@ void _task_console_parse_rx_line(void)
     do
     {
         /* next_param is looking at the command on 1st entry */
-        next_param = str_next_word(next_param);
+        arg_str = str_next_word(arg_str);
 
         _task_console.args.item[_task_console.args.cnt] = NULL;
 
-        if (NULL == next_param)
+        if (NULL == arg_str)
             break; //from the do-while loop
-        _task_console.args.item[_task_console.args.cnt++] = next_param;
+        _task_console.args.item[_task_console.args.cnt++] = arg_str;
     }
     while (_task_console.args.cnt < task_console_MAX_ARGS);
-
-    //dbgPrint(trCONSOLE, "#Command = \"%s\"",_command);
-    //_task_console_arg_stack();
-
-	// Righto, so we are going to run through the list of menu table groups to see if this command is not contained in one of them...
-	ConsoleMenuItem_t *menu_item = _task_console_find_menu_command(_command, NULL);
-
-	if ((menu_item != NULL) && (menu_item->func != NULL))
-		menu_item->func();
-	else
-		dbgPrint(trALWAYS, "Unknown Command: \"%s\"", _command);
-
-	dbgPrint(trALWAYS, "");
-
 }
 
 void _task_console_arg_stack(void)
@@ -378,36 +468,71 @@ int task_console_arg_cnt(void)
     return MAX(_task_console.args.cnt - _task_console.args.pop_index, 0);
 }
 
-ConsoleMenuItem_t *_task_console_find_menu_command(char *_command, int *_tbl_index_ptr)
+uint32_t _task_console_count_menu_commands(char *_command)
 {
+    uint32_t _count = 0;
+
 	// Righto, so we are going to run through the list of menu table groups to find the 
 	// 1st instance of the command that was passed to us
     //Iterate through each group 
-	for (int tbl_idx = 0; tbl_idx < _task_console.menu_list.cnt; tbl_idx++)
+	for (int tbl_idx = 0; tbl_idx < _task_console.menu_grp_list.cnt; tbl_idx++)
+	{
+        //dbgPrint(trALWAYS, "Checking group %s (\"%s\")", _task_console.menu_grp_list.group[tbl_idx].description, _task_console.menu_grp_list.group[tbl_idx].name);
+        //Iterate through each item in the group 
+		for (int i = 0; i < _task_console.menu_grp_list.group[tbl_idx].item_cnt; i++)
+		{
+            //dbgPrint(trALWAYS, "Checking cmd \"%s %s\" -> \"%s\"", _task_console.menu_grp_list.group[tbl_idx].name, _task_console.menu_grp_list.group[tbl_idx].table_ptr[i].command, _command);
+			if (!strcasecmp(_task_console.menu_grp_list.group[tbl_idx].table_ptr[i].command, _command))
+                _count++;
+		}
+	}
+    
+    return _count;
+}
+
+esp_err_t _task_console_find_menu_command(char *_command, uint32_t _index, ConsoleMenuItem_t ** _menuItem, ConsoleMenuTableGroup_t **_group_base)
+{
+    uint32_t _count = 0;
+    ConsoleMenuItem_t * _last_found_menuItem = NULL;
+    ConsoleMenuTableGroup_t *_last_found_group = NULL;
+
+	// Righto, so we are going to run through the list of menu table groups to find the 
+	// 1st instance of the command that was passed to us
+    //Iterate through each group 
+	for (int tbl_idx = 0; tbl_idx < _task_console.menu_grp_list.cnt; tbl_idx++)
 	{
         //Iterate through each item in the group 
-		for (int i = 0; i < _task_console.menu_list.group[tbl_idx].item_cnt; i++)
+		for (int i = 0; i < _task_console.menu_grp_list.group[tbl_idx].item_cnt; i++)
 		{
-			if (!strcasecmp(_task_console.menu_list.group[tbl_idx].table_ptr[i].command, _command))
+			if (!strcasecmp(_task_console.menu_grp_list.group[tbl_idx].table_ptr[i].command, _command))
 			{
-				if (_tbl_index_ptr)
-					*_tbl_index_ptr = tbl_idx;
-				return &_task_console.menu_list.group[tbl_idx].table_ptr[i];
+                _last_found_group = &_task_console.menu_grp_list.group[tbl_idx];
+                _last_found_menuItem = &_task_console.menu_grp_list.group[tbl_idx].table_ptr[i];
+                //Does the caller want us to get out now?
+                if (_count == _index)
+                {
+                    if (_group_base)
+                        *_group_base = _last_found_group;
+                    if (_menuItem)
+                        *_menuItem = _last_found_menuItem;
+                    return ESP_OK;
+                }
+                _count++;
 			}
 		}
 	}
-	// Not found!?!?!?
-	return NULL;
+
+    return ESP_ERR_NOT_FOUND;
 }
 
 ConsoleMenuTableGroup_t * _task_console_find_menu_group(char *_group)
 {
 	// Righto, so we are going to run through the list of menu table groups to 
 	// find the 1st instance of the string that was passed to us
-	for (int tbl_idx = 0; tbl_idx < _task_console.menu_list.cnt; tbl_idx++)
+	for (int tbl_idx = 0; tbl_idx < _task_console.menu_grp_list.cnt; tbl_idx++)
 	{
-		if (!strcasecmp(_task_console.menu_list.group[tbl_idx].name, _group))
-			return &_task_console.menu_list.group[tbl_idx];
+		if (!strcasecmp(_task_console.menu_grp_list.group[tbl_idx].name, _group))
+			return &_task_console.menu_grp_list.group[tbl_idx];
 	}
 	// Not found!?!?!?
 	return NULL;
@@ -431,7 +556,7 @@ void _menu_handler_help(void)
         {
 			if (_task_console_find_menu_group(arg))
 				found_grp++;
-			else if (_task_console_find_menu_command(arg, NULL))
+			else if (_task_console_count_menu_commands(arg) > 0)
 				found_cmd++;
             else
             {
@@ -456,24 +581,23 @@ void _menu_handler_help(void)
 			//Great, we can actually parse this
 			for (int i = (found_grp + found_cmd); i > 0; i--)
 			{
-                int _grp_tbl_index;
                 arg = task_console_arg_pop();
 				ConsoleMenuTableGroup_t * grp = _task_console_find_menu_group(arg);
-				if (grp)
+                ConsoleMenuItem_t * cmd;
+                uint32_t _cmd_cnt = _task_console_count_menu_commands(arg);
+
+                if (grp)
 				{
 					//dbgPrint(trALWAYS, "The %s (%s) commands are:", grp->description, grp->name);
 					for (int j = 0; j < grp->item_cnt; j++)
-						dbgPrint(trALWAYS, " %8s - %s - %s", grp->name, grp->table_ptr[j].command, grp->table_ptr[j].description);
+						dbgPrint(trALWAYS, "  %s %-8s - %s", grp->name, grp->table_ptr[j].command, grp->table_ptr[j].description);
 				}
-				ConsoleMenuItem_t * cmd =_task_console_find_menu_command(arg, &_grp_tbl_index);
-				if (cmd)
-				{
-                    grp = &_task_console.menu_list.group[_grp_tbl_index];
-                    dbgPrint(trALWAYS, " %8s - %s - %s", grp->name, cmd->command, cmd->description);
-					continue; //With FOR-loop
-				}
-                //This point should NEVER be reached
-                dbgPrint(trALWAYS, "This should NEVER be reached (%s, line %d)", __FILE__, __LINE__);
+                else // (_cmd_cnt > 0)
+                {
+                    for (int j = 0; j < _cmd_cnt; j++)
+                        if (ESP_OK == _task_console_find_menu_command(arg, j, &cmd, &grp))
+                            dbgPrint(trALWAYS, "  %s %-8s - %s", grp->name, cmd->command, cmd->description);
+                }
 			}
 			return;
 		}
@@ -483,18 +607,18 @@ void _menu_handler_help(void)
 	//Reaching this point means we are printing EVERYTHING
 	dbgPrint(trALWAYS, "The list of available commands are:");
 
-	for (int i = 0; i < _task_console.menu_list.cnt; i++)
+	for (int i = 0; i < _task_console.menu_grp_list.cnt; i++)
 	{
-		ConsoleMenuTableGroup_t * grp = &_task_console.menu_list.group[i];
+		ConsoleMenuTableGroup_t * grp = &_task_console.menu_grp_list.group[i];
 		//dbgPrint(trALWAYS, " * %s - %s *", grp->name, grp->description);
-		dbgPrint(trALWAYS, " === %s ===", grp->description);
-		//dbgPrint(trALWAYS, "   |");
+		dbgPrint(trALWAYS, " \"%s\" (%s)", grp->name, grp->description);
+		//dbgPrint(trALWAYS, "    |");
 		//dbgPrint(trALWAYS, "");
 		for (int j = 0; j < grp->item_cnt; j++)
-		    dbgPrint(trALWAYS, "    +- %-8s : %s", 
+		    dbgPrint(trALWAYS, "    + %-8s - %s", 
                 grp->table_ptr[j].command, 
                 grp->table_ptr[j].description);
-        // if (i < (_task_console.menu_list.cnt - 1))
+        // if (i < (_task_console.menu_grp_list.cnt - 1))
         //     dbgPrint(trALWAYS, "   |");
         dbgPrint(trALWAYS, "");
 	}
@@ -864,7 +988,7 @@ TaskInfo_t * task_console_init(void)
 	if (_task_console.task.handle)
 		return &_task_console.task;
 
-	_task_console.menu_list.cnt = 0;
+	_task_console.menu_grp_list.cnt = 0;
 
 	// The Console will run on the Debug port
 	// Serial.begin(115200, SERIAL_8N1);
@@ -918,24 +1042,45 @@ int task_console_add_menu(const char *_group_name, ConsoleMenuItem_t *_tbl, size
 	}
 
 	// First we need to decide if we have space?
-	if (_task_console.menu_list.cnt >= task_console_MAX_MENU_ITEMS_MAX)
+	if (_task_console.menu_grp_list.cnt >= task_console_MAX_MENU_ITEMS_MAX)
 	{
 		dbgPrint(trCONSOLE, "#menu list: %s (%d)\n",
 			   _group_name,
 			   "Out of Space",
-			   _task_console.menu_list.cnt);
+			   _task_console.menu_grp_list.cnt);
 		return 0;
 	}
+
+	//Don't add an empty table or a table with dulicate entries
+    if (_cnt == 0)
+    {
+        dbgPrint(trCONSOLE, "#Empty table for \"%s\" (%d)", _group_name, _cnt);
+        return 0;
+    }
+
+	for (int i = 0; i < _cnt-1; i++)
+	{
+        //Check every entry with every other entry in the table
+        for (int j = i+1; j < _cnt; j++)
+        {
+            if (!strcasecmp(_tbl[i].command, _tbl[j].command))
+            {
+                dbgPrint(trCONSOLE, "#Duplicate command \"%s\" in \"%s\" (%d & %d)", _tbl[i].command, _group_name, i, j);
+                return 0;
+            }
+        }
+	}
+
 
 	int index = 0;
 
 	// dbgPrint(trALWAYS, "#Adding: %s", _group_name);
 
     // Check if we already have this group in the list
-	for (index = 0; index < _task_console.menu_list.cnt; index++)
+	for (index = 0; index < _task_console.menu_grp_list.cnt; index++)
 	{
 		// We don't want to add duplicate tables or groups
-		if (!strcasecmp(_task_console.menu_list.group[index].name, _group_name))
+		if (!strcasecmp(_task_console.menu_grp_list.group[index].name, _group_name))
 		{
 			dbgPrint(trCONSOLE, "#Group \"%s\" already added @ %d)",
 				   _group_name,
@@ -943,18 +1088,18 @@ int task_console_add_menu(const char *_group_name, ConsoleMenuItem_t *_tbl, size
 			return 0;
 		}
 		
-        if (_task_console.menu_list.group[index].table_ptr == _tbl)
+        if (_task_console.menu_grp_list.group[index].table_ptr == _tbl)
 		{
 			dbgPrint(trCONSOLE, "#Table for group \"%s\" already added @ %d under \"%s\"",
 				   _group_name,
 				   _cnt,
-                   _task_console.menu_list.group[index].name);
+                   _task_console.menu_grp_list.group[index].name);
 			return 0;
 		}
 
 		// We also want to add it in alphabetical order....
 		// We walk through the existing list until we find a group which is alphabetically "after" our group
-		if (strcasecmp(_task_console.menu_list.group[index].name, _group_name) < 0)
+		if (strcasecmp(_task_console.menu_grp_list.group[index].name, _group_name) < 0)
 			continue; // with the for loop
 		// else, this item group is alphabetically larger.
 
@@ -963,37 +1108,36 @@ int task_console_add_menu(const char *_group_name, ConsoleMenuItem_t *_tbl, size
 		break; // from the for-loop
 	}
 
-    // RvN - Continue from here... this is where the issue is. The table was not added on the first run. 
-
-	// Just for shits and giggles, check if we have any duplications in the newly added menu
-	int tbl_index = 0;
-	for (int i = 0; i < _cnt; i++)
-	{
-		if (_task_console_find_menu_command(_tbl[i].command, &tbl_index))
-			dbgPrint(trCONSOLE, "#\"%s\"->\"%s\" already exists in \"%s\"", 
-					_group_name, 
-					_tbl[i].command, 
-					_task_console.menu_list.group[tbl_index].name);
-	}
-
 	//Depending on the current value of index, we may or may not need to make some space.
-	if (index < _task_console.menu_list.cnt)
+	if (index < _task_console.menu_grp_list.cnt)
 	{
-		//dbgPrint(trCONSOLE, "#Opening up space at position %d/%d", index+1, _task_console.menu_list.cnt);
+		//dbgPrint(trCONSOLE, "#Opening up space at position %d/%d", index+1, _task_console.menu_grp_list.cnt);
 		// Open up a slot by moving everything else on with one space.
-        memmove(&_task_console.menu_list.group[index + 1], &_task_console.menu_list.group[index], sizeof(ConsoleMenuTableGroup_t) * (_task_console.menu_list.cnt - index));
+        memmove(&_task_console.menu_grp_list.group[index + 1], &_task_console.menu_grp_list.group[index], sizeof(ConsoleMenuTableGroup_t) * (_task_console.menu_grp_list.cnt - index));
 	}
 
-    // dbgPrint(trCONSOLE, "#No need to move anything (%d-%d)", index, _task_console.menu_list.cnt);
+    // dbgPrint(trCONSOLE, "#No need to move anything (%d-%d)", index, _task_console.menu_grp_list.cnt);
 
 	// Reaching this point means we can add our next table at the end.
-	_task_console.menu_list.group[index].name = _group_name;
-	_task_console.menu_list.group[index].description = _desc;
-	_task_console.menu_list.group[index].table_ptr = _tbl;
-	_task_console.menu_list.group[index].item_cnt = _cnt;
-	_task_console.menu_list.cnt++;
-	dbgPrint(trCONSOLE, "#Added \"%s\" @ position %d/%d", _task_console.menu_list.group[index].name, index+1, _task_console.menu_list.cnt);
+	_task_console.menu_grp_list.group[index].name = _group_name;
+	_task_console.menu_grp_list.group[index].description = _desc;
+	_task_console.menu_grp_list.group[index].table_ptr = _tbl;
+	_task_console.menu_grp_list.group[index].item_cnt = _cnt;
+	_task_console.menu_grp_list.cnt++;
+	//dbgPrint(trCONSOLE, "#Added \"%s\" @ position %d/%d", _task_console.menu_grp_list.group[index].name, index+1, _task_console.menu_grp_list.cnt);
 
+    //RVN - I guess we can check if possible duplicate commands exist under different groups
+    for (int i = 0; i < _cnt; i++)
+    {
+        //int tbl_index = 0;
+        ConsoleMenuTableGroup_t *_group_base;
+        if (ESP_OK == _task_console_find_menu_command(_tbl[i].command, 0, NULL, &_group_base))
+            if (strcasecmp(_group_base->name, _group_name) != 0)
+                dbgPrint(trCONSOLE, "#\"%s\" is duplicated in \"%s\" (%s) and \"%s\" (%s)", 
+                    _tbl[i].command, 
+                    _group_base->name, _group_base->description,
+                    _task_console.menu_grp_list.group[index].name, _task_console.menu_grp_list.group[index].description);
+    }
 	return _cnt;
 }
 

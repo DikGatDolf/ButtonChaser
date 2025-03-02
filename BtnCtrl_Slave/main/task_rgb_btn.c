@@ -155,6 +155,7 @@ void _menu_handler_led_blink(void);
 void _menu_handler_led_rainbow(void);
 void _menu_handler_led_col_list(void);
 void _menu_handler_led_status(void);
+void _menu_handler_led_reset(void);
 
 /*******************************************************************************
 local variables
@@ -164,11 +165,11 @@ ConsoleMenuItem_t _task_rgb_led_menu_items[] =
 									        // 01234567890123456789012345678901234567890123456789012345678901234567890123456789
         {"off",     _menu_handler_led_off,      "Turns off LEDs"},
         {"on",      _menu_handler_led_col,      "Sets LEDs to a specific colour"},
-//        {"ledcol",  _menu_handler_led_col,      "Sets LEDs to a specific colour"},
         {"blink",   _menu_handler_led_blink,    "Blinks LEDs at a specified rate and colour(s)"},
         {"rainbow", _menu_handler_led_rainbow,  "Apply rainbow effect on LEDs"},
-        {"listcol", _menu_handler_led_col_list, "Displays a list predefined colours with their RGB hex values"},
+        {"rgb",     _menu_handler_led_col_list, "Displays the RGB hex values for predefined colours"},
 		{"status",  _menu_handler_led_status,   "Displays the status of the LEDs"},
+		{"reset",   _menu_handler_led_reset,    "Resets the state of the LEDs"},
 
 		// {"btn",     _menu_handler_led,   "Displays application version"},
 };
@@ -343,7 +344,7 @@ void _task_rgb_led_read_msg_queue(void)
             switch (rx_msg.cmd)
             {
                 case led_action_off:
-                    dbgPrint(trRGB, "#%s turned OFF", _index_to_led_name(_led_nr));
+                    dbgPrint(trRGB, "#%s -> OFF", _index_to_led_name(_led_nr));
                     //Val_0, Val_1 and Val_2 are not used
                     _task_rgb_led.array[_led_nr].col_1 = 0;
                     _task_rgb_led_set_colour(_led_nr, 0);
@@ -351,7 +352,7 @@ void _task_rgb_led_read_msg_queue(void)
                     sys_poll_tmr_stop(&_task_rgb_led.array[_led_nr].timer);
                     break;
                 case led_action_colour:
-                    dbgPrint(trRGB, "#%s turned ON (colour: 0x%06X)", _index_to_led_name(_led_nr), rx_msg.val_0);
+                    dbgPrint(trRGB, "#%s -> ON (colour: 0x%06X)", _index_to_led_name(_led_nr), rx_msg.val_0);
                     //Val_0 is the colour
                     //Val_1 and Val_2 are not used
                     _task_rgb_led.array[_led_nr].col_1 = rx_msg.val_0;
@@ -360,7 +361,7 @@ void _task_rgb_led_read_msg_queue(void)
                     sys_poll_tmr_stop(&_task_rgb_led.array[_led_nr].timer);
                     break;
                 case led_action_blink:            
-                    dbgPrint(trRGB, "#%s Set to Blink (0x%06X <-> 0x%06X) at %dms", _index_to_led_name(_led_nr), rx_msg.val_0, (rx_msg.val_2 & 0x00FFFFFF), rx_msg.val_1);
+                    dbgPrint(trRGB, "#%s -> Set to Blink (0x%06X <-> 0x%06X) at %dms", _index_to_led_name(_led_nr), rx_msg.val_0, (rx_msg.val_2 & 0x00FFFFFF), rx_msg.val_1);
                     //Val_0 is the 1st (primary) colour
                     //Val_1 is the period (in ms)
                     //Val_2 is the 2nd/alternating  colour
@@ -383,7 +384,7 @@ void _task_rgb_led_read_msg_queue(void)
                     sys_poll_tmr_start(&_task_rgb_led.array[_led_nr].timer, (uint64_t)rx_msg.val_1/2, true);
                     break;
                 case led_action_rainbow:
-                    dbgPrint(trRGB, "#%s LED: Set to Rainbow at %dms", _index_to_led_name(_led_nr), rx_msg.val_1);
+                    dbgPrint(trRGB, "#%s LED -> Rainbow at %dms", _index_to_led_name(_led_nr), rx_msg.val_1);
                     //Val_0 is not used
                     //Val_1 is the period (in ms)
                     //Val_2 is not used
@@ -416,24 +417,25 @@ void _task_rgb_led_read_msg_queue(void)
                     switch (_task_rgb_led.array[_led_nr].state)
                     {
                         case led_state_off:
-                            dbgPrint(trALWAYS, "%s LED OFF", _index_to_led_name(_led_nr));
+                            dbgPrint(trALWAYS, "%s LED - OFF", _index_to_led_name(_led_nr));
                             break;
                         case led_state_on:
-                            dbgPrint(trALWAYS, "%s LED ON, Colour 0x%06X", _index_to_led_name(_led_nr), _task_rgb_led.array[_led_nr].col_1, _task_rgb_led.array[_led_nr].state);
+                            dbgPrint(trALWAYS, "%s LED - ON (0x%06X)", _index_to_led_name(_led_nr), _task_rgb_led.array[_led_nr].col_1, _task_rgb_led.array[_led_nr].state);
                             break;
                         case led_state_blink:
                             //Remember, the timer period is half the blink period (on/off)
-                            dbgPrint(trALWAYS, "%s LED Blinking (0x%06X <-> 0x%06X), %.2f Hz", _index_to_led_name(_led_nr), _task_rgb_led.array[_led_nr].col_1, _task_rgb_led.array[_led_nr].col_2, (500.0f/_task_rgb_led.array[_led_nr].timer.ms_period));
+                            dbgPrint(trALWAYS, "%s LED - Blinking (0x%06X <-> 0x%06X), %.2f Hz", _index_to_led_name(_led_nr), _task_rgb_led.array[_led_nr].col_1, _task_rgb_led.array[_led_nr].col_2, (500.0f/_task_rgb_led.array[_led_nr].timer.ms_period));
                             break;
                         case led_state_rainbow:
                             //Remember, the bottom 16 bits of col_2 is the total count.... x RGB_LED_UPDATE_INTERVAL gives the period
-                            dbgPrint(trALWAYS, "%s LED Rainbow, %dms", _index_to_led_name(_led_nr), (_task_rgb_led.array[_led_nr].col_2 & 0xFFFF) * RGB_LED_UPDATE_INTERVAL);
+                            dbgPrint(trALWAYS, "%s LED - Rainbow, %dms", _index_to_led_name(_led_nr), (_task_rgb_led.array[_led_nr].col_2 & 0xFFFF) * RGB_LED_UPDATE_INTERVAL);
                             break;
                         default:
-                            dbgPrint(trALWAYS, "%s LED UNKNOWN State (%d)", _index_to_led_name(_led_nr), _task_rgb_led.array[_led_nr].state);
+                            dbgPrint(trALWAYS, "%s LED - UNKNOWN State (%d)", _index_to_led_name(_led_nr), _task_rgb_led.array[_led_nr].state);
                         break;
                     }
-                    dbgPrint(trALWAYS, "");
+                    if (_led_nr == (_task_rgb_led.cnt - 1))
+                        dbgPrint(trALWAYS, "");
                     break;
                 }
                 default:
@@ -675,6 +677,7 @@ esp_err_t _task_rgb_menu_handler_parse_address_str(uint32_t * addr_mask, const c
 esp_err_t _task_rgb_menu_handler_parse_colour(uint32_t * colour_value, const char * str)
 {
     uint32_t rgb_col_24bit;
+    uint32_t hue_value;
 
     //Righto, a colour can be in one of two valid formats:
     // 1. NOT USED: A 6-character hexadecimal string (0xHHHHHH), e.g. "0x000001", "#0F0F0F", etc
@@ -695,17 +698,18 @@ esp_err_t _task_rgb_menu_handler_parse_colour(uint32_t * colour_value, const cha
     if (strncasecmp("Hue:", str, 4) == 0)
     {
         //This could be a hue value
-        if (str2uint32(&rgb_col_24bit, str+4, 0) == ESP_OK)
+        if (str2uint32(&hue_value, str+4, 0))
         {
-            if (rgb_col_24bit > HUE_MAX)
+            if (hue_value > HUE_MAX)
             {
-                dbgPrint(trALWAYS, "Invalid Hue value (%d > %d)", rgb_col_24bit, HUE_MAX);
+                dbgPrint(trALWAYS, "Invalid Hue value (%d > %d)", hue_value, HUE_MAX);
                 return ESP_ERR_INVALID_ARG;
             }
+            hsv2rgb(hue_value, SAT_MAX, VAL_MAX, &rgb_col_24bit);
             *colour_value = rgb_col_24bit;
             return ESP_OK;
         }
-        dbgPrint(trALWAYS, "Invalid Hue value (\"%s\")", str);
+        dbgPrint(trALWAYS, "Invalid Hue value (\"%s\")", str+4);
         return ESP_ERR_INVALID_ARG;
     }
     //Reaching this point means this is NOT an colour value or name
@@ -772,7 +776,7 @@ void _menu_handler_led_off(void)
     if (help_requested)
     {
         //                  01234567890123456789012345678901234567890123456789012345678901234567890123456789
-        dbgPrint(trALWAYS, "Usage: \"ledoff [<led_addr>]\"");        
+        dbgPrint(trALWAYS, "Usage: \"off [<led_addr>]\"");        
         dbgPrint(trALWAYS, "    <led_addr>: <#>      - a single index (0 to %d), e.g. 0, 1, 2, 3, etc", _task_rgb_led.cnt-1);
         dbgPrint(trALWAYS, "                0xHHHH - a 16 bit mask of the LEDs to affect, e.g. \"0x003\"");
         dbgPrint(trALWAYS, "                \"<strip>[:<nr>]\" - a string and number (seperated by a colon)");
@@ -879,7 +883,7 @@ void _menu_handler_led_col(void)
     if (help_requested)
     {
         //                  01234567890123456789012345678901234567890123456789012345678901234567890123456789
-        dbgPrint(trALWAYS, "Usage: \"ledon <colour> [<led_addr>]\"");        
+        dbgPrint(trALWAYS, "Usage: \"on <colour> [<led_addr>]\"");        
         // dbgPrint(trALWAYS, "    <colour>:   0xRRGGBB - A 6-character hexadecimal string containing the 24-");
         // dbgPrint(trALWAYS, "                            -bit RGB value, e.g. \"0x000001\", \"#0F0F0F\", etc");
         dbgPrint(trALWAYS, "    <colour>:   String   - Any one of the assigned colour names");
@@ -1029,7 +1033,7 @@ void _menu_handler_led_blink(void)
     if (help_requested)
     {
         //                  01234567890123456789012345678901234567890123456789012345678901234567890123456789
-        dbgPrint(trALWAYS, "Usage: \"ledblink <period> [<colour_1>] [<colour_2>] [<led_addr>]\"");        
+        dbgPrint(trALWAYS, "Usage: \"blink <period> [<colour_1>] [<colour_2>] [<led_addr>]\"");        
         dbgPrint(trALWAYS, "    <period>:   A value indicating the period of the blink in ms (min: %dms)", RGB_LED_BLINK_PERIOD_MS_MIN*2);
         dbgPrint(trALWAYS, "        If <period> is omitted, a default period of %dms is used", RGB_LED_BLINK_PERIOD_MS_DEF);
         dbgPrint(trALWAYS, "    <colour>:   String   - Any one of the assigned colour names");
@@ -1136,7 +1140,7 @@ void _menu_handler_led_rainbow(void)
     if (help_requested)
     {
         //                  01234567890123456789012345678901234567890123456789012345678901234567890123456789
-        dbgPrint(trALWAYS, "Usage: \"ledblink <period> [<colour_1>] [<colour_2>] [<led_addr>]\"");        
+        dbgPrint(trALWAYS, "Usage: \"rainbow <period> [<led_addr>]\"");        
         dbgPrint(trALWAYS, "    <period>:   A value indicating the period of the rainbow cycle in ms");
         dbgPrint(trALWAYS, "                            range %d to %d", RGB_LED_RAINBOW_PER_MIN_MS, RGB_LED_RAINBOW_PER_MAX_MS);
         dbgPrint(trALWAYS, "        If <period> is omitted, a default period of %dms is used", RGB_LED_RAINBOW_PERIOD_MS_DEF);
@@ -1223,18 +1227,143 @@ void _menu_handler_led_status(void)
 void _menu_handler_led_col_list(void)
 {
     bool help_requested = false;
-    /* Possible combinations:
-        led <action>
-        led <action> <type>
-        led <action> <pixel #>
-        led <action> <value>
-        led <action> <value> <type>
-        led <action> <value> <pixel #>
-        led <action> <type> <pixel #>
-        led <action> <value> <type> <pixel #>
-        led <action> <value> <action> <value> <type> <pixel #>
-        led <action> <value> <type> <action> <value> <type> <pixel #>
-    */
+    bool show_all = false;
+    bool show_hues = false;
+    // uint32_t col_list_size = 0;
+    uint32_t parse_value = 0;
+    esp_err_t err = ESP_OK;
+
+    // if (task_console_arg_cnt() > 0)
+    // {
+    //     //Let's get an idea of how many colours we need to list
+    //     while (colour_list_item(col_list_size) != NULL)
+    //         col_list_size++;
+    // }
+    if (task_console_arg_cnt() == 0)
+    {
+        //No arguments... let's list all the colours
+        show_all = true;
+        help_requested = true;
+
+    }
+
+    //First check that all arguments are valid
+    for (int i = 0; i < task_console_arg_cnt(); i++)
+    {
+        char *arg = task_console_arg_peek(i);
+        if ((!strcasecmp("?", arg)) || (!strcasecmp("help", arg)))
+        {    
+            help_requested = true;
+            break; //from for-loop
+        }
+        if ((!strcasecmp("all", arg)) || (!strcasecmp("list", arg)))
+        {    
+            show_all = true;
+        }
+        if (!strcasecmp("hues", arg))
+        {    
+            show_hues = true;
+        }
+        // if (hex2u32(&rgb_col_24bit, str, 6))
+        // {
+        // }
+        err = _task_rgb_menu_handler_parse_colour(&parse_value, arg);
+        if (err == ESP_ERR_NOT_FOUND)
+        {
+            //No a parsable colour
+            dbgPrint(trALWAYS, "Invalid Argument (\"%s\")", arg);
+            help_requested = true;
+            break;
+        }
+
+    }
+
+    if (show_hues)
+    {
+        dbgPrint(trALWAYS, "The RGB value for all 359 HUEs are:");
+        for (int i = 0; i < HUE_MAX; i++)
+        {
+            const char * col_name = NULL;
+            uint32_t rgb_val = 0;
+            hsv2rgb(i, SAT_MAX, VAL_MAX, &rgb_val);
+            dbgPrint_i(trALWAYS, " Hue: % 3d -> 0x%06X", i, rgb_val);
+            col_name = rgb2name(rgb_val);
+            if (col_name != NULL)
+                dbgPrint_i(trALWAYS, " (%s)", col_name);
+            dbgPrint_i(trALWAYS, "\n");
+        }
+        return;
+    }
+    
+    if (show_all)
+    {
+        dbgPrint(trALWAYS, "The RGB values for the named colours are:");
+        int i = 0;
+        const char *col_name = colour_list_item(i);
+        while (col_name != NULL)
+        {
+            uint32_t rgb_val;
+            if (str2rgb(&rgb_val, col_name) != ESP_OK)
+                dbgPrint(trALWAYS, " % 2d: %s -> Invalid Colour", i, col_name); //Should never happen
+            else
+                dbgPrint(trALWAYS, " % 8s -> 0x%06X", col_name, rgb_val);
+            col_name = colour_list_item(++i);
+        }
+        return;
+    }
+    if (!help_requested)
+    {
+        //All the arguments are valid... let's list each one of them 
+        //There are two options.... 
+        // 1) the used provides a Colour name (to get the RGB value)
+        // 2) the user provides a Hue value (to get the RGB value)
+        while (task_console_arg_cnt() > 0)
+        {
+            char *arg = task_console_arg_pop();
+            if ((!strcasecmp("all", arg)) || (!strcasecmp("list", arg)))
+                continue;   //Skip.... already handled
+            if (!strcasecmp("hues", arg))
+                continue;   //Skip.... already handled
+            if (ESP_OK == _task_rgb_menu_handler_parse_colour(&parse_value, arg))
+            {
+                dbgPrint_i(trALWAYS, " % 8s -> 0x%06X", arg, parse_value);
+                const char *col_name = rgb2name(parse_value);
+                if (col_name != NULL)
+                    dbgPrint_i(trALWAYS, " (%s)", col_name);
+                dbgPrint_i(trALWAYS, "\n");
+            }
+        }
+        return;
+    }
+
+    if (help_requested)
+    {
+        //                  01234567890123456789012345678901234567890123456789012345678901234567890123456789
+        dbgPrint(trALWAYS, "Usage: \"rgb [<colour>]\"");        
+        dbgPrint(trALWAYS, "    <colour>:   String   - Any one of the assigned colour names");
+        dbgPrint(trALWAYS, "                            e.g. \"Black\", \"wh\", etc");
+        dbgPrint(trALWAYS, "                \"Hue:<#>\" - A hue value in the range 0 to 360 degrees");        
+        dbgPrint(trALWAYS, "                \"all|list\" - Lists ALL the available named colours");
+        dbgPrint(trALWAYS, "                \"hues\" - Lists the RGB values for all 359 HUE values");
+        dbgPrint(trALWAYS, " Multiple <colour> values can be specified, separated by spaces");
+    }
+}
+
+void _menu_handler_led_reset(void)
+{
+    //These functions (_menu_handler....) are called from the console task, so they should 
+    // not manupiluate the RGB task variables directly, but instead send messages to the RGB 
+    // task via the msg_queue
+    bool help_requested = false;
+    rgb_led_action_msg_t first_msg = {.led_addr = 0, .val_1 = 0};//Indicating "not set yet"
+    esp_err_t err = ESP_OK;
+    uint32_t parse_value = 0;//addr_mask = 0;
+
+    if (task_console_arg_cnt() == 0)
+    {
+        for (int i = 0; i < _task_rgb_led.cnt; i++)
+            first_msg.led_addr |= BIT(i);
+    }
 
     while (task_console_arg_cnt() > 0)
 	{
@@ -1244,26 +1373,59 @@ void _menu_handler_led_col_list(void)
             help_requested = true;
             break; //from while-loop
         }
+        parse_value = 0;
+        //Check for LED addressing
+        err = _task_rgb_menu_handler_parse_address_str(&parse_value, arg);
+        if (err == ESP_OK)
+        {
+            first_msg.led_addr |= parse_value;
+            continue;
+        }
+        else if (err == ESP_ERR_INVALID_ARG)
+        {
+            //Looked like an address, but it was invalid
+            help_requested = true;
+            break;
+        }
+        //else if (err == ESP_ERR_NOT_FOUND) /// fall through to colour check
+        dbgPrint(trALWAYS, "Invalid Argument (\"%s\")", arg);
+        help_requested = true;
+        break;
+    }
+
+    if (!help_requested)
+    {
+        if (first_msg.led_addr == 0)
+        {   
+            // No LED Address(es) specified... let's apply to all LEDs
+            for (int i = 0; i < _task_rgb_led.cnt; i++)
+                first_msg.led_addr |= BIT(i);
+        }
+        first_msg.val_1 = RGB_LED_RAINBOW_PERIOD_MS_DEF;
+        first_msg.cmd = led_action_rainbow;
+        xQueueSend(_task_rgb_led.msg_queue, &first_msg, 0);
+        //Maybe a good idea to also queue a status request right after this?
+        first_msg.cmd = led_action_status;
+        // for (int i = 0; i < _task_rgb_led.cnt; i++)
+        //     first_msg.led_addr |= BIT(i);
+        xQueueSend(_task_rgb_led.msg_queue, &first_msg, 0);
     }
 
     if (help_requested)
     {
         //                  01234567890123456789012345678901234567890123456789012345678901234567890123456789
-        dbgPrint(trALWAYS, "Usage: \"led <action> <value> <type> <pixel #>\"");
-        dbgPrint(trALWAYS, "  <action>   - <value> can be: ");
-        dbgPrint(trALWAYS, "   colour    - colour|0xRRGGBBWW - Sets a strip/pixel to a colour or RGB hex value");
-        dbgPrint(trALWAYS, "   blink     - period_ms         - Blinks strip/pixel at period (50%% duty cycle)");
-        dbgPrint(trALWAYS, "   rainbow   - period_ms         - Rainbow rotation at period");
-        dbgPrint(trALWAYS, "   off       - N/A               - Turn strip/pixel off");
-        dbgPrint(trALWAYS, "  <type> (optional):    \"debug|button\". If omitted, applies to all");
-        dbgPrint(trALWAYS, "  <pixel #> (optional): 0 to <pixel_cnt-1> for type. If omitted, applies to all");
-        dbgPrint(trALWAYS, "  ");
-        dbgPrint(trALWAYS, "  Multiple actions can be performed in a single line");
-        dbgPrint(trALWAYS, "   e.g. \"led COLOUR 0x00FF00 debug 0 BLINK 100 button 1...\" etc");
-
+        dbgPrint(trALWAYS, "Usage: \"reset [<led_addr>]\"");        
+        dbgPrint(trALWAYS, "    <led_addr>: <#>      - a single index (0 to %d), e.g. 0, 1, 2, 3, etc", _task_rgb_led.cnt-1);
+        dbgPrint(trALWAYS, "                0xHHHH - a 16 bit mask of the LEDs to affect, e.g. \"0x003\"");
+        dbgPrint(trALWAYS, "                \"<strip>[:<nr>]\" - a string and number (seperated by a colon)");
+        dbgPrint(trALWAYS, "                            indicating the LED strip and LED # to use");
+        dbgPrint(trALWAYS, "                            e.g. \"debug:0\", \"button:1\", etc");
+        dbgPrint(trALWAYS, "                  If <nr> is omitted, %s applies to the entire strip", "RESET");
+        dbgPrint(trALWAYS, "        If <led_addr> is omitted, %s applies to all leds", "RESET");
+        dbgPrint(trALWAYS, " Multiple <led_addr> values can be specified, separated by spaces");
+//        dbgPrint(trALWAYS, "   e.g. \"off 0 1 2 3\", \"off debug:0 button:1...\" etc");
     }
 }
-
 /*******************************************************************************
 Global (public) Functions
 *******************************************************************************/
