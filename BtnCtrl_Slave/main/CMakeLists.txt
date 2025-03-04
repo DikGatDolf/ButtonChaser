@@ -2,7 +2,7 @@ idf_component_register(SRCS "str_helper.c" "template.c" "colour.c" "hello_world_
                             "sys_utils.c"
                             "sys_timers.c"
 							"task_console.c"
-							"task_rgb_btn.c"
+							"task_rgb_led.c"
                             "drv_rgb_led_strip.c" 
                             
                     INCLUDE_DIRS "")

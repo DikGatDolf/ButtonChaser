@@ -25,7 +25,14 @@ includes
 /*******************************************************************************
  Local defines
 *******************************************************************************/
+#ifdef PRINTF_TAG
+#undef PRINTF_TAG
+#endif
 #define PRINTF_TAG ("Colour") /* This must be undefined at the end of the file*/
+
+//#define SWOP_U64(x, y) do { uint64_t(x) _z = x; x = y; y = _z; } while(0)
+#define MAX3(a, b, c)     (((a) > (b) ? (((a) > (c) ? (a) : (c))) : (((b) > (c) ? (b) : (c)))))
+#define MIN3(a, b, c)     (((a) < (b) ? (((a) < (c) ? (a) : (c))) : (((b) < (c) ? (b) : (c)))))
 
 /*******************************************************************************
  Local structure
@@ -172,6 +179,60 @@ void hsv2rgb(uint32_t h, uint32_t s, uint32_t v, uint32_t *rgb)
     }
     *rgb = AS_RGB(r, g, b);
 }
+
+void rgb2hsv(uint32_t rgb, uint32_t *h, uint32_t *s, uint32_t *v)
+{
+    //int32_t out_h, out_s, out_v; 
+    int r = (int)RED_from_WRGB(rgb);    //Range 0 to 255
+    int g = (int)GREEN_from_WRGB(rgb);  //Range 0 to 255
+    int b = (int)BLUE_from_WRGB(rgb);   //Range 0 to 255
+    //hsv         out;
+    uint32_t min, max, delta;
+    double h_temp = 0.0f;
+
+    min = MIN3(r, g, b);                //Min. value of RGB (range 0-255)
+    max = MAX3(r, g, b);                //Max. value of RGB (range 1-255)
+    delta = max - min;                  // Delta RGB value (range 0 to 255)
+
+    //Value %
+    if (v)
+        *v = (uint32_t)(100.0f * max / 0xff);        // Range 0 to 100
+
+    //If the numbers are all the same, then delta will be 0 and the hue and saturation are 0
+    if (delta == 0)
+    {
+        //This solves a lot of division problems in the "else" below
+        if (s)
+            *s = 0;
+        if (h)
+            *h = 0;
+    }
+    else // delta > 0
+    {
+        //Saturation %
+        if (s)
+            *s = (uint32_t)(100.0f * delta / max);     // Range 0 to 100
+
+        if (h)
+        {
+            //Hue (0 to 360 degrees)
+            if( r == max )      // R is max - hue sits between yellow (60) & magenta (300)
+                h_temp = HUE_RED + ((HUE_MAX/6.0f) * ((int)(g - b)) / delta);   
+                //     =     360 + (     (60)      * (-255 to +255) / (0-255))    -> Range 300 to 420 (60)
+            else if( g == max ) // G is max - hue sits between cyan (180) & yellow (60)
+                h_temp = HUE_GRN + ((HUE_MAX/6.0f) * ((int)(b - r)) / delta);
+                //     =     120 + (     (60)      * (int)(-255 to +255) / (0-255))    -> Range 60 to 180
+            else                // B is max - hue sits between magenta & cyan
+                h_temp = HUE_BLU + ((HUE_MAX/6.0f) * ((int)(r - g)) / delta);
+                //     =     240 + (     (60)      * (int)(-255 to +255) / (0-255))    -> Range 180 to 300
+
+            // Wrap >360 values back into range
+            *h = (((uint32_t)h_temp) % HUE_MAX);
+        }
+    }
+}
+
+
 
 #undef PRINTF_TAG
 

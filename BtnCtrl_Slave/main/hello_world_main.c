@@ -31,19 +31,22 @@
 #ifdef CONSOLE_ENABLED
   #include "task_console.h"
 #endif
-#include "task_rgb_btn.h"
+#include "task_rgb_led.h"
 
+#ifdef PRINTF_TAG
+#undef PRINTF_TAG
+#endif
 #define PRINTF_TAG ("Main") /* This must be undefined at the end of the file*/
 
 /*! CONSOLE MENU HANDLER - Performs a system reset
  */
-void _menu_handler_reset(void);
+void _sys_handler_reset(void);
 
 
 ConsoleMenuItem_t _task_main_menu_items[] =
 {
                                     //01234567890123456789012345678901234567890123456789012345678901234567890123456789
-	{"reset",   _menu_handler_reset, "Perform a system reset"},
+	{"reset",   _sys_handler_reset, "Perform a system reset"},
 };
 
 void app_main(void)
@@ -88,7 +91,7 @@ void app_main(void)
 #ifdef CONSOLE_ENABLED
     sys_tasks[eTaskIndexConsole]    = task_console_init();
 #endif
-    sys_tasks[eTaskIndexRgb]        = task_rgb_btn_init();
+    sys_tasks[eTaskIndexRgb]        = task_rgb_led_init();
     
         //typeof(_task_main_menu_items)
 #ifdef CONSOLE_ENABLED
@@ -125,7 +128,7 @@ void app_main(void)
 }
 
 #ifdef CONSOLE_ENABLED
-void _menu_handler_reset(void)
+void _sys_handler_reset(void)
 {
     static bool reset_lock = false;
 	// if no parameter passed then just open the gate

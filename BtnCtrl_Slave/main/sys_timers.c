@@ -32,6 +32,9 @@ The Timer must be polled (TimerPoll) to see when it has expired
 /*******************************************************************************
 local defines
  *******************************************************************************/
+#ifdef PRINTF_TAG
+#undef PRINTF_TAG
+#endif
 #define PRINTF_TAG ("Timers") /* This must be undefined at the end of the file*/
 
 /*******************************************************************************

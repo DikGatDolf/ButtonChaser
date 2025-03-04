@@ -26,17 +26,24 @@ definitions
 /******************************************************************************
 Macros
 ******************************************************************************/
-#define AS_RGB(r, g, b) (0x00FFFFFF & (((r) << 16) | ((g) << 8) | (b)))
+#define RGB_MAX             (0x00FFFFFF)
+
+#define AS_RGB(r, g, b)     (RGB_MAX & (((r) << 16) | ((g) << 8) | (b)))
 #define AS_WRGB(w, r, g, b) ((((w) << 24) | AS_RGB(r, g, b)))
 
-#define WHITE_from_WRGB(x)   ((uint8_t)((x >> 24)& 0xFF))
-#define RED_from_WRGB(x)     ((uint8_t)((x >> 16) & 0xFF))
-#define GREEN_from_WRGB(x)   ((uint8_t)((x >> 8) & 0xFF))
-#define BLUE_from_WRGB(x)    ((uint8_t)((x) & 0xFF))
+#define WHITE_from_WRGB(x)  ((uint8_t)((x >> 24)& 0xFF))
+#define RED_from_WRGB(x)    ((uint8_t)((x >> 16) & 0xFF))
+#define GREEN_from_WRGB(x)  ((uint8_t)((x >> 8) & 0xFF))
+#define BLUE_from_WRGB(x)   ((uint8_t)((x) & 0xFF))
 
-#define HUE_MAX 360
-#define SAT_MAX 100
-#define VAL_MAX 100
+
+#define HUE_MAX             (360)
+#define SAT_MAX             (100)
+#define VAL_MAX             (100)
+
+#define HUE_RED             (360)           /* 0 or 360 */
+#define HUE_GRN             (360/3)         /* 120 */
+#define HUE_BLU             (2*HUE_GRN)     /* 240 */
 
 /******************************************************************************
 Struct & Unions
@@ -118,12 +125,22 @@ esp_err_t str2rgb(uint32_t *rgb, const char * str);
 
 /*! @brief Simple helper function, converting HSV color space to RGB color space
  * Wiki: https://en.wikipedia.org/wiki/HSL_and_HSV
- * @param h Hue, 0-360
- * @param s Saturation, 0-100
- * @param v Value, 0-100
+ * @param h Hue angle, 0-360
+ * @param s Saturation percentage, 0-100
+ * @param v Value percentage, 0-100
  * @param rgb Pointer to the 24-bit Red-Green-Blue value
  */
 void hsv2rgb(uint32_t h, uint32_t s, uint32_t v, uint32_t *rgb);
+
+/*! @brief Simple helper function, converting RGB color space to HSV color space
+ * Wiki: https://en.wikipedia.org/wiki/HSL_and_HSV
+ * @param rgb The 24-bit Red-Green-Blue value
+ * @param h Pointer to the Hue angle, 0-360
+ * @param s Pointer to the Saturation percentage, 0-100
+ * @param v Pointer to the Value percentage, 0-100
+ */
+void rgb2hsv(uint32_t rgb, uint32_t *h, uint32_t *s, uint32_t *v);
+
 
 #undef EXT
 #endif /* __colour_H__ */

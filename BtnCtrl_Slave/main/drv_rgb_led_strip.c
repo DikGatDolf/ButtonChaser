@@ -27,7 +27,10 @@ includes
 /*******************************************************************************
 local defines and constants
  *******************************************************************************/
-#define PRINTF_TAG ("RGB") /* This must be undefined at the end of the file*/
+#ifdef PRINTF_TAG
+#undef PRINTF_TAG
+#endif
+#define PRINTF_TAG ("LedStrip") /* This must be undefined at the end of the file*/
 
 
 #define RMT_LED_STRIP_RESOLUTION_HZ 10000000 // 10MHz resolution, 1 tick = 0.1us (led strip needs a high resolution)
