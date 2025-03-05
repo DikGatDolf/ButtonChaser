@@ -21,8 +21,8 @@ Macros
 #define EXT
 #else
 #define EXT extern
-extern void task_console_printline(uint8_t traceflags, const char * tag, const char *fmt, ...);
-extern void task_console_print(uint8_t traceflags, const char * tag, const char *fmt, ...);
+extern void console_printline(uint8_t traceflags, const char * tag, const char *fmt, ...);
+extern void console_print(uint8_t traceflags, const char * tag, const char *fmt, ...);
 #endif /* __NOT_EXTERN__ */
 
 #define BIT_POS(pos)			(1U << pos)
@@ -50,11 +50,11 @@ Print an entire line (or not). A leading '#' is replaced with the PRINTF_TAG,
 The passed traceflags is compared with the system set trace print flag(s) to
  determine if the print can happen or not.
 ******************************************************************************/
-#define dbgPrint(traceflags, fmtstr, ...) task_console_printline(traceflags, PRINTF_TAG, fmtstr, ##__VA_ARGS__)
+#define dbgPrint(traceflags, fmtstr, ...) console_printline(traceflags, PRINTF_TAG, fmtstr, ##__VA_ARGS__)
 /******************************************************************************
 "Incomplete" version of dbgPrint.... no "\n" added at the end
 ******************************************************************************/
-#define dbgPrint_i(traceflags, fmtstr, ...) task_console_print(traceflags, PRINTF_TAG, fmtstr, ##__VA_ARGS__)
+#define dbgPrint_i(traceflags, fmtstr, ...) console_print(traceflags, PRINTF_TAG, fmtstr, ##__VA_ARGS__)
 
 /******************************************************************************
 Struct & Unions
@@ -80,11 +80,7 @@ Global (public) Function prototypes
  * @return A pointer to the taskInfo structure for the console (if successful)
             otherwise NULL
  */
-TaskInfo_t * task_console_init(void);
-
-/*! Deinitialises the Console
- */
-void task_console_deinit(void);
+void * console_init_task(void);
 
 /*! Adds a menu item to the console
  * @param[in] _group_name The name of the group of commands to which this item is added
@@ -93,12 +89,12 @@ void task_console_deinit(void);
  * @param[in] _desc A description of the group
  * @return The number of commands in the table
  */
-int task_console_add_menu(const char *, ConsoleMenuItem_t *, size_t, const char *);
+int console_add_menu(const char *, ConsoleMenuItem_t *, size_t, const char *);
 
 /*! Pops the next argument from the stack
  * @return A pointer to the argument on the stack. NULL if there are no arguments to pop
  */
-char * task_console_arg_pop(void);
+char * console_arg_pop(void);
 
 /*! Returns a pointer to the argument on the stack relative to to the index of 
  * the argument which will be popped from the stack next using ...pop() (if available)
@@ -109,12 +105,12 @@ char * task_console_arg_pop(void);
  * @return A pointer to the argument on the stack. NULL if the ultimate index is 
  *      outside of the bounds of the current stack.
  */
-char * task_console_arg_peek(int offset);
+char * console_arg_peek(int offset);
 
 /*! Returns a count of the argument left on the stack to pop
  * @return The count of arguments left to pop
  */
-int task_console_arg_cnt(void);
+int console_arg_cnt(void);
 
 #undef EXT
 #endif /* __task_console_H__ */

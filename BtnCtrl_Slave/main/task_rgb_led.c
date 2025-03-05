@@ -25,6 +25,7 @@ includes
 #include "esp_timer.h"
 #include "sys_utils.h"
 #include "sys_timers.h"
+#include "sys_task_utils.h"
 #include "str_helper.h"
 #include "task_console.h"
 #include "drv_rgb_led_strip.h"
@@ -40,16 +41,16 @@ Macros and Constants
 #ifdef PRINTF_TAG
 #undef PRINTF_TAG
 #endif
-#define PRINTF_TAG ("RGB_LED") /* This must be undefined at the end of the file*/
+#define PRINTF_TAG ("LED") /* This must be undefined at the end of the file*/
 
 #define RGB_STACK_SIZE 4096
 
-#define RGB_LED_UPDATE_INTERVAL         20     /* Task cycles at a 50Hz rate*/
-#define RGB_LED_BLINK_PERIOD_MS_MIN     100     /* 10Hz/2 = 5Hz... is already fairly fast for a blinking period */
-#define RGB_LED_BLINK_PERIOD_MS_DEF     400    /* 1Hz */
-#define RGB_LED_RAINBOW_PER_MIN_MS      1800    /* Cycling through the spectrum in 1.8s */
-#define RGB_LED_RAINBOW_PER_MAX_MS      (0xFFFF * RGB_LED_UPDATE_INTERVAL)    /* Cycling through the spectrum in 21m 50.7s */
-#define RGB_LED_RAINBOW_PERIOD_MS_DEF   3800
+#define LED_UPDATE_INTERVAL_MS      20     /* Task cycles at a 50Hz rate*/
+#define LED_BLINK_PERIOD_MS_MIN     100     /* 10Hz/2 = 5Hz... is already fairly fast for a blinking period */
+#define LED_BLINK_PERIOD_MS_DEF     400    /* 1Hz */
+#define LED_RAINBOW_PER_MIN_MS      1800    /* Cycling through the spectrum in 1.8s */
+#define LED_RAINBOW_PER_MAX_MS      (0xFFFF * LED_UPDATE_INTERVAL_MS)    /* Cycling through the spectrum in 21m 50.7s */
+#define LED_RAINBOW_PERIOD_MS_DEF   3800
 
 #define MAX_LED_NAME_LEN 16
 
@@ -127,6 +128,7 @@ typedef struct {
 
 typedef struct
 {
+    bool init_done;
     int cnt;
     rgb_led_t * array;    
 	TaskInfo_t task;
@@ -136,31 +138,39 @@ typedef struct
 
 } DeviceRgb_t;
 
-//We need to create a message queue for the RGB LED task
+//We need to create a message queue for the LED task
 //static QueueHandle_t _queue;
 
 
 /*******************************************************************************
 local function prototypes
  *******************************************************************************/
-/*! @brief Initialises the RGB LED task
+/*! Deinitialises the RGB driving
  */
-void _init(void);
+void _led_task_deinit(void);
 
-/*! @brief Deinitialises the RGB LED task
+/*! The main function for the LED task
  */
-void _deinit(void);
+void _led_main_func(void * pvParameters);
+
+/*! @brief Initialises the LED task
+ */
+void _led_setup(void);
+
+/*! @brief Deinitialises the LED task
+ */
+void _led_teardown(void);
 
 /*! @brief Displays information about a specific LED (Only for debug purposes)
  * @param _index The index of the LED to display information about
  */
-void _info(int _index);
+void _led_info_print(int _index);
 
-/*! @brief Reads the message queue for the RGB LED task
+/*! @brief Reads the message queue for the LED task
  */
 void _read_msg_queue(void);
 
-/*! @brief The main service() function for the RGB LED task
+/*! @brief The main service() function for the LED task
  */
 void _led_service(void);
 
@@ -268,21 +278,25 @@ const _led_strip_name_t _led_strips[] =
 ConsoleMenuItem_t _led_menu_items[] =
 {
 									        // 01234567890123456789012345678901234567890123456789012345678901234567890123456789
-        {"off",     _led_handler_off,      "Turns off LEDs"},
-        {"on",      _led_handler_col,      "Sets LEDs to a specific colour"},
-        {"blink",   _led_handler_blink,    "Blinks LEDs at a specified rate and colour(s)"},
-        {"rainbow", _led_handler_rainbow,  "Apply rainbow effect on LEDs"},
-        {"rgb",     _led_handler_col_list, "Displays the RGB hex values for predefined colours"},
-		{"status",  _led_handler_status,   "Displays the status of the LEDs"},
-		{"reset",   _led_handler_reset,    "Resets the state of the LEDs"},
+        {"off",     _led_handler_common_action, "Turns off LEDs"},
+        {"on",      _led_handler_common_action, "Sets LEDs to a specific colour"},
+        {"blink",   _led_handler_common_action, "Blinks LEDs at a specified rate and colour(s)"},
+        {"rainbow", _led_handler_common_action, "Apply rainbow effect on LEDs"},
+        {"rgb",     _led_handler_col_list,      "Displays the RGB hex values for predefined colours"},
+		{"status",  _led_handler_status,        "Displays the status of the LEDs"},
+		{"reset",   _led_handler_reset,         "Resets the state of the LEDs"},
 };
 
 static DeviceRgb_t _rgb_led = {
     .cnt = 0,
     .array = NULL,
-	.task = {   .handle = NULL,
-	            .stack_depth = RGB_STACK_SIZE,
-	            .stack_unused = 0
+	.task = {   
+        .init_done = false,
+        .handle = NULL,
+            .stack_depth = RGB_STACK_SIZE,
+            .stack_unused = 0,
+            // .init_func = rgb_led_init_task,
+            // .deinit_func = _led_task_deinit,
     },
     .msg_queue = NULL,
 };
@@ -291,33 +305,74 @@ static DeviceRgb_t _rgb_led = {
 Local (private) Functions
 *******************************************************************************/
 
-void _init(void)
+void _led_task_deinit(void)
 {
-    rgb_led_action_msg_t led_msg;
+	// Use the handle to delete the task.
+	if(_rgb_led.task.handle != NULL )
+		vTaskDelete(_rgb_led.task.handle);
+}
+
+void _led_main_func(void * pvParameters)
+{
+    // uint16_t hue = 0;
+
+    TickType_t xLastWakeTime = xTaskGetTickCount();
+
+    //Wait until the initialisation is done
+    while (!_rgb_led.task.init_done)
+        xTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(LED_UPDATE_INTERVAL_MS));
+
+    dbgPrint(trRGB|trALWAYS, "#Task Started (%d). Running @ %d Hz", _rgb_led.cnt, (1000/LED_UPDATE_INTERVAL_MS));
+
+    while (1) 
+    {
+
+        _read_msg_queue();
+        
+        _led_service();
+
+        xTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(LED_UPDATE_INTERVAL_MS));  //vTaskDelay(pdMS_TO_TICKS(EXAMPLE_CHASE_SPEED_MS));
+    
+        /* Inspect our own high water mark on entering the task. */
+    	_rgb_led.task.stack_unused = uxTaskGetStackHighWaterMark2( NULL );
+    }
+
+    _led_teardown();
+
+    dbgPrint(trRGB|trALWAYS, "#LED Task Complete!");
+}
+
+void _led_setup(void)
+{
+    if (_rgb_led.cnt > 0)
+    {
+        dbgPrint(trRGB|trALWAYS, "#Already initialised");
+        return; //Already initialised
+    }
 
     _rgb_led.cnt = drv_rgb_led_strip_init();
 
-    //dbgPrint(trRGB|trALWAYS, "#RGB LED Task init done (%d LEDs in total)", _rgb_led.cnt);
+    //dbgPrint(trRGB|trALWAYS, "#LED Task init done (%d LEDs in total)", _rgb_led.cnt);
 
 #ifdef CONSOLE_ENABLED
-    task_console_add_menu("led", _led_menu_items, ARRAY_SIZE(_led_menu_items), "RGB LED Control");
+    console_add_menu("led", _led_menu_items, ARRAY_SIZE(_led_menu_items), "LED Control");
 #endif
 
-    //We need to create a message queue for the RGB LED task, let's make it double to the total led_action_total count
+    //We need to create a message queue for the LED task, let's make it double to the total led_action_total count
     _rgb_led.msg_queue = xQueueCreate(led_action_total*2, sizeof(rgb_led_action_msg_t));
     if(_rgb_led.msg_queue == 0 )
     {
         // Queue was not created and must not be used.
-        dbgPrint(trRGB|trALWAYS, "#Unable to create Msg Queue for RGB LED task");
+        dbgPrint(trRGB|trALWAYS, "#Unable to create Msg Queue for LED task");
         assert(0);
     }
 
-    //We also need to create a timer for each RGB LED (for blinking)
+    //We also need to create a timer for each LED (for blinking)
     _rgb_led.array = (rgb_led_t *)malloc(_rgb_led.cnt * sizeof(rgb_led_t));
     if (_rgb_led.array == NULL)
     {
         // Queue was not created and must not be used.
-        dbgPrint(trRGB|trALWAYS, "#Unable to create Timers for RGB LED task");
+        dbgPrint(trRGB|trALWAYS, "#Unable to create Timers for LED task");
         assert(0);
     }
     else
@@ -346,40 +401,26 @@ void _init(void)
         //memset(_rgb_led.array, 0, _rgb_led.cnt * sizeof(rgb_led_t));
     }
 
+    _rgb_led.task.init_done = true;
+
     //Debugging - print contents of LED Array
     // for (int i = 0; i < _rgb_led.cnt; i++)
-    //     _info(i);
+    //     _led_info_print(i);
     
     //Send a message to start the rainbow effect on the Debug LED only
-    led_msg.cmd = led_action_rainbow;
-    led_msg.led_addr = BIT(led_bit_dbg);
-    led_msg.val_0 = colBlack;   //Black
-    led_msg.val_1 = RGB_LED_RAINBOW_PERIOD_MS_DEF;  // 7200ms
-    led_msg.val_2 = 0;
+    rgb_led_demo(BIT(led_bit_dbg), LED_RAINBOW_PERIOD_MS_DEF);
 
-    //Add this message to the queue
-    xQueueSend(_rgb_led.msg_queue, &led_msg, 0);
+    // led_msg.cmd = led_action_rainbow;
+    // led_msg.led_addr = BIT(led_bit_dbg);
+    // led_msg.val_0 = colBlack;   //Black
+    // led_msg.val_1 = LED_RAINBOW_PERIOD_MS_DEF;  // 7200ms
+    // led_msg.val_2 = 0;
+
+    // //Add this message to the queue
+    // xQueueSend(_rgb_led.msg_queue, &led_msg, 0);
 }
 
-void _info(int _index)
-{
-    rgb_led_t * rgb_led = &_rgb_led.array[_index];
-    rgb_led_strip_type _strip;
-    uint32_t _addr;
-    char _led_name[16]; 
-
-    if ((_index >= _rgb_led.cnt) || (_index > led_bit_max))
-    {
-        dbgPrint(trRGB, "#RGB LED #%d Index out of bounds (%d/%d)", _index, _index, _rgb_led.cnt);
-        return;
-    }
-
-    if (_led_index2type_nr(_index, &_strip, &_addr, _led_name))
-        dbgPrint(trRGB, "#%s LED (%d) Info: Type %d, Address %d, Colour %06X, State %d", _led_name, _index, _strip, _addr, rgb_led->col_1, rgb_led->state);
-
-}
-
-void _deinit(void)
+void _led_teardown(void)
 {
     for (int _led = 0; _led < _rgb_led.cnt; _led++)
         sys_poll_tmr_stop(&_rgb_led.array[_led].timer);
@@ -393,33 +434,9 @@ void _deinit(void)
         _rgb_led.array = NULL;
     }
 
+    _rgb_led.cnt = 0;
+
     drv_rgb_led_strip_deinit();
-}
-
-void _led_task(void * pvParameters)
-{
-    // uint16_t hue = 0;
-
-    TickType_t xLastWakeTime = xTaskGetTickCount();
-
-    _init();
-
-    dbgPrint(trRGB|trALWAYS, "#RGB LED Task Started (%d LEDs) @ %d Hz", _rgb_led.cnt, (1000/RGB_LED_UPDATE_INTERVAL));
-
-    while (1) 
-    {
-
-        _read_msg_queue();
-        
-        _led_service();
-
-        xTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(RGB_LED_UPDATE_INTERVAL));  //vTaskDelay(pdMS_TO_TICKS(EXAMPLE_CHASE_SPEED_MS));
-    
-        /* Inspect our own high water mark on entering the task. */
-    	_rgb_led.task.stack_unused = uxTaskGetStackHighWaterMark2( NULL );
-    }
-    
-    _deinit();
 
 }
 
@@ -473,13 +490,13 @@ void _read_msg_queue(void)
                     //Val_2 is the 2nd/alternating  colour
                     //First make sure the blink timer period is good
                     // Since the task is running at 20ms intervals, we can only set the timer to multiples of 20ms
-                    if ((rx_msg.val_1%RGB_LED_UPDATE_INTERVAL) > 0)
-                        rx_msg.val_1 = (RGB_LED_UPDATE_INTERVAL * ((rx_msg.val_1/RGB_LED_UPDATE_INTERVAL)+1));
-                        // rx_msg.val_1 += (RGB_LED_UPDATE_INTERVAL - (rx_msg.val_1%RGB_LED_UPDATE_INTERVAL));
+                    if ((rx_msg.val_1%LED_UPDATE_INTERVAL_MS) > 0)
+                        rx_msg.val_1 = (LED_UPDATE_INTERVAL_MS * ((rx_msg.val_1/LED_UPDATE_INTERVAL_MS)+1));
+                        // rx_msg.val_1 += (LED_UPDATE_INTERVAL_MS - (rx_msg.val_1%LED_UPDATE_INTERVAL_MS));
 
                     //Blinking faster than 10Hz is not really useful
-                    if (rx_msg.val_1 < RGB_LED_BLINK_PERIOD_MS_MIN)
-                        rx_msg.val_1 = RGB_LED_BLINK_PERIOD_MS_MIN;
+                    if (rx_msg.val_1 < LED_BLINK_PERIOD_MS_MIN)
+                        rx_msg.val_1 = LED_BLINK_PERIOD_MS_MIN;
 
                         //Start the timer and assign the primary colour
                     _set_colour(_led_nr, rx_msg.val_0);
@@ -496,50 +513,31 @@ void _read_msg_queue(void)
                     //Val_2 is not used
                     //First make sure the timer period is good
                     // Since the task is running at 20ms intervals, we can only set the timer to multiples of 20ms
-                    if ((rx_msg.val_1%RGB_LED_UPDATE_INTERVAL) > 0)
-                        rx_msg.val_1 = (RGB_LED_UPDATE_INTERVAL * ((rx_msg.val_1/RGB_LED_UPDATE_INTERVAL)+1));
-                        //rx_msg.val_1 += (RGB_LED_UPDATE_INTERVAL - (rx_msg.val_1%RGB_LED_UPDATE_INTERVAL));
+                    if ((rx_msg.val_1%LED_UPDATE_INTERVAL_MS) > 0)
+                        rx_msg.val_1 = (LED_UPDATE_INTERVAL_MS * ((rx_msg.val_1/LED_UPDATE_INTERVAL_MS)+1));
+                        //rx_msg.val_1 += (LED_UPDATE_INTERVAL_MS - (rx_msg.val_1%LED_UPDATE_INTERVAL_MS));
 
                     //Blinking faster than 10Hz is not really useful
-                    if (rx_msg.val_1 < RGB_LED_RAINBOW_PER_MIN_MS)
-                        rx_msg.val_1 = RGB_LED_RAINBOW_PER_MIN_MS;
-                    if (rx_msg.val_1 > RGB_LED_RAINBOW_PER_MAX_MS)
-                        rx_msg.val_1 = RGB_LED_RAINBOW_PER_MAX_MS;
+                    if (rx_msg.val_1 < LED_RAINBOW_PER_MIN_MS)
+                        rx_msg.val_1 = LED_RAINBOW_PER_MIN_MS;
+                    if (rx_msg.val_1 > LED_RAINBOW_PER_MAX_MS)
+                        rx_msg.val_1 = LED_RAINBOW_PER_MAX_MS;
                     
                     _set_colour(_led_nr, 0);
-                    //The minimum timer value is 20ms (RGB_LED_UPDATE_INTERVAL).
-                    //Dividing the period by RGB_LED_UPDATE_INTERVAL gives us a count of how many task cycles it takes to loop through the 360 degree hue spectrum,
+                    //The minimum timer value is 20ms (LED_UPDATE_INTERVAL_MS).
+                    //Dividing the period by LED_UPDATE_INTERVAL_MS gives us a count of how many task cycles it takes to loop through the 360 degree hue spectrum,
                     //No need to start a timer... we use the task cycle interval to update the hue (if needed)
                     _rgb_led.array[_led_nr].col_1 = 0;
-                    _rgb_led.array[_led_nr].col_2 = (rx_msg.val_1/RGB_LED_UPDATE_INTERVAL) & 0xFFFF;
+                    _rgb_led.array[_led_nr].col_2 = (rx_msg.val_1/LED_UPDATE_INTERVAL_MS) & 0xFFFF;
                     // dbgPrint(trRGB, "#%s LED: Rainbow effect at %dms (%d x %d = %d)", 
-                    //     _led_index2name(_led_nr), rx_msg.val_1, _rgb_led.array[_led_nr].col_2, RGB_LED_UPDATE_INTERVAL, _rgb_led.array[_led_nr].col_2 * RGB_LED_UPDATE_INTERVAL);
+                    //     _led_index2name(_led_nr), rx_msg.val_1, _rgb_led.array[_led_nr].col_2, LED_UPDATE_INTERVAL_MS, _rgb_led.array[_led_nr].col_2 * LED_UPDATE_INTERVAL_MS);
                     _rgb_led.array[_led_nr].state = led_state_rainbow;
                     // sys_stopwatch_ms_start(&_rgb_led.sw);
                     sys_poll_tmr_stop(&_rgb_led.array[_led_nr].timer);
                     break;
                 case led_action_status:
                 {
-                    switch (_rgb_led.array[_led_nr].state)
-                    {
-                        case led_state_off:
-                            dbgPrint(trALWAYS, "%s LED - OFF", _led_index2name(_led_nr));
-                            break;
-                        case led_state_on:
-                            dbgPrint(trALWAYS, "%s LED - ON (0x%06X)", _led_index2name(_led_nr), _rgb_led.array[_led_nr].col_1, _rgb_led.array[_led_nr].state);
-                            break;
-                        case led_state_blink:
-                            //Remember, the timer period is half the blink period (on/off)
-                            dbgPrint(trALWAYS, "%s LED - Blinking (0x%06X <-> 0x%06X), %.2f Hz", _led_index2name(_led_nr), _rgb_led.array[_led_nr].col_1, _rgb_led.array[_led_nr].col_2, (500.0f/_rgb_led.array[_led_nr].timer.ms_period));
-                            break;
-                        case led_state_rainbow:
-                            //Remember, the bottom 16 bits of col_2 is the total count.... x RGB_LED_UPDATE_INTERVAL gives the period
-                            dbgPrint(trALWAYS, "%s LED - Rainbow, %dms", _led_index2name(_led_nr), (_rgb_led.array[_led_nr].col_2 & 0xFFFF) * RGB_LED_UPDATE_INTERVAL);
-                            break;
-                        default:
-                            dbgPrint(trALWAYS, "%s LED - UNKNOWN State (%d)", _led_index2name(_led_nr), _rgb_led.array[_led_nr].state);
-                        break;
-                    }
+                    _led_info_print(_led_nr);
                     if (_led_nr == (_rgb_led.cnt - 1))
                         dbgPrint(trALWAYS, "");
                     break;
@@ -599,6 +597,32 @@ void _led_service(void)
                 break;
         }
     }
+}
+
+void _led_info_print(int _index)
+{
+    rgb_led_t * rgb_led = &_rgb_led.array[_index];
+    switch (rgb_led->state)
+    {
+        case led_state_off:
+            dbgPrint(trALWAYS, "%s LED - OFF", _led_index2name(_index));
+            break;
+        case led_state_on:
+            dbgPrint(trALWAYS, "%s LED - ON (0x%06X)", _led_index2name(_index), rgb_led->col_1, rgb_led->state);
+            break;
+        case led_state_blink:
+            //Remember, the timer period is half the blink period (on/off)
+            dbgPrint(trALWAYS, "%s LED - Blinking (0x%06X <-> 0x%06X), %.2f Hz", _led_index2name(_index), rgb_led->col_1, rgb_led->col_2, (500.0f/rgb_led->timer.ms_period));
+            break;
+        case led_state_rainbow:
+            //Remember, the bottom 16 bits of col_2 is the total count.... x LED_UPDATE_INTERVAL_MS gives the period
+            dbgPrint(trALWAYS, "%s LED - Rainbow, %dms", _led_index2name(_index), (rgb_led->col_2 & 0xFFFF) * LED_UPDATE_INTERVAL_MS);
+            break;
+        default:
+            dbgPrint(trALWAYS, "%s LED - UNKNOWN State (%d)", _led_index2name(_index), rgb_led->state);
+        break;
+    }
+
 }
 
 void _set_colour(rgb_led_addr_t _index, uint32_t _rgb)
@@ -844,6 +868,8 @@ esp_err_t _handler_parse_colour_hsv(char * str, uint32_t *value, uint32_t limit,
 
 void _led_handler_off(void)
 {
+    _led_handler_common_action();
+#if 0    
     //These functions (_menu_handler....) are called from the console task, so they should 
     // not manupiluate the RGB task variables directly, but instead send messages to the RGB 
     // task via the msg_queue
@@ -853,9 +879,9 @@ void _led_handler_off(void)
     uint32_t parse_value = 0;
 //    uint32_t addr_mask = 0;
 
-    while (task_console_arg_cnt() > 0)
+    while (console_arg_cnt() > 0)
 	{
-        char *arg = task_console_arg_pop();
+        char *arg = console_arg_pop();
         if ((!strcasecmp("?", arg)) || (!strcasecmp("help", arg)))
         {    
             help_requested = true;
@@ -903,10 +929,13 @@ void _led_handler_off(void)
         dbgPrint(trALWAYS, " Multiple <led_addr> values can be specified, separated by spaces");
         //        dbgPrint(trALWAYS, "   e.g. \"off 0 1 2 3\", \"off debug:0 button:1...\" etc");
     }
+#endif
 }
 
 void _led_handler_col(void)
 {
+    _led_handler_common_action();
+#if 0
     //These functions (_menu_handler....) are called from the console task, so they should 
     // not manupiluate the RGB task variables directly, but instead send messages to the RGB 
     // task via the msg_queue
@@ -915,9 +944,9 @@ void _led_handler_col(void)
     esp_err_t err = ESP_OK;
     uint32_t parse_value = 0;
 
-    while (task_console_arg_cnt() > 0)
+    while (console_arg_cnt() > 0)
 	{
-        char *arg = task_console_arg_pop();
+        char *arg = console_arg_pop();
         if ((!strcasecmp("?", arg)) || (!strcasecmp("help", arg)))
         {    
             help_requested = true;
@@ -985,8 +1014,6 @@ void _led_handler_col(void)
     {
         //                  01234567890123456789012345678901234567890123456789012345678901234567890123456789
         dbgPrint(trALWAYS, "Usage: \"on <colour> [<led_addr>]\"");        
-        // dbgPrint(trALWAYS, "    <colour>:   0xRRGGBB - A 6-character hexadecimal string containing the 24-");
-        // dbgPrint(trALWAYS, "                            -bit RGB value, e.g. \"0x000001\", \"#0F0F0F\", etc");
         dbgPrint(trALWAYS, "    <colour>:   String   - Any one of the assigned colour names");
         dbgPrint(trALWAYS, "                            e.g. \"Black\", \"wh\", etc");
         dbgPrint(trALWAYS, "                \"HSV:<csv>\" - An HSV string in the format \"HSV:<h>[,<s>[,<v>]]\"");
@@ -1004,13 +1031,11 @@ void _led_handler_col(void)
         dbgPrint(trALWAYS, " Multiple <led_addr> values can be specified, separated by spaces");
 //        dbgPrint(trALWAYS, "   e.g. \"off 0 1 2 3\", \"off debug:0 button:1...\" etc");
     }
+#endif
 }
 
 void _led_handler_common_action(void/*rgb_led_action_cmd action*/)
 {
-    rgb_led_action_cmd action = led_action_nop;
-    char *arg = task_console_arg_peek(-1);
-    
     //These functions (_menu_handler....) are called from the console task, so they should 
     // not manupiluate the RGB task variables directly, but instead send messages to the RGB 
     // task via the msg_queue
@@ -1018,53 +1043,86 @@ void _led_handler_common_action(void/*rgb_led_action_cmd action*/)
     rgb_led_action_msg_t led_msg = {.led_addr = 0, .val_0 = -1, .val_1 = 0, .val_2 = -1};//Indicating "not set yet"
     esp_err_t err = ESP_OK;
     uint32_t parse_value = 0;//addr_mask = 0;
+    rgb_led_action_cmd action = led_action_nop;
+    char *arg = console_arg_peek(-1);
 
-    while (task_console_arg_cnt() > 0)
+    if (strcasecmp(arg, "off") == 0)
+        action = led_action_off;
+    else if (strcasecmp(arg, "on") == 0)
+        action = led_action_colour;
+    else if (strcasecmp(arg, "blink") == 0)
+        action = led_action_blink;
+    else if (strcasecmp(arg, "rainbow") == 0)
+        action = led_action_rainbow;
+    else
+        return; //Nothing to do.... (how did we get here?)
+
+    while (console_arg_cnt() > 0)
 	{
-        char *arg = task_console_arg_pop();
+        char *arg = console_arg_pop();
         if ((!strcasecmp("?", arg)) || (!strcasecmp("help", arg)))
         {    
             help_requested = true;
             break; //from while-loop
         }
         parse_value = 0;
-        //Check for period first
-        if (str2uint32(&parse_value, arg, 0))
+
+        //Check for period first - BLINK and RAINBOW
+        if ((action == led_action_blink) || (action == led_action_rainbow))
         {
-            //This could be the period OR an address
-            if (parse_value >= RGB_LED_BLINK_PERIOD_MS_MIN*2)
+            if (str2uint32(&parse_value, arg, 0))
             {
-                //Ooooh... this could be a period
-                if (led_msg.val_1 != 0)
-                    dbgPrint(trALWAYS, "Overwriting previously set period (%dms) with \"%s\" (%dms)", led_msg.val_1, arg, parse_value);
-                led_msg.val_1 = parse_value;
+                //This could be the period OR an address
+                if (((parse_value >= LED_BLINK_PERIOD_MS_MIN*2) && (action == led_action_blink)) ||
+                    ((parse_value >= LED_RAINBOW_PER_MIN_MS) && (action == led_action_rainbow)))
+                {
+                    //Ooooh... this could be a period
+                    if (led_msg.val_1 != 0)
+                        dbgPrint(trALWAYS, "Overwriting previously set period (%dms) with \"%s\" (%dms)", led_msg.val_1, arg, parse_value);
+                    led_msg.val_1 = parse_value;
+                    continue;
+                }
+            }
+            //else not a good period value... maybe it is a colour or a LED address
+        }
+
+        //Then we check for colour(s) - ON and BLINK
+        if ((action == led_action_colour) || (action == led_action_blink))
+        {
+            err = _handler_parse_colour(&parse_value, arg);
+            if (err == ESP_OK)
+            {
+                if (action == led_action_colour)
+                {
+                    if (led_msg.val_0 != (uint32_t)-1)
+                        dbgPrint(trALWAYS, "Overwriting previously set colour (%06X) with \"%s\" (%06X)", led_msg.val_0, arg, parse_value);
+    
+                    led_msg.val_0 = parse_value;
+                }
+                else if (action == led_action_blink)
+                {
+                    if (led_msg.val_0 == (uint32_t)-1)
+                    {
+                        led_msg.val_0 = parse_value;
+                    }
+                    else
+                    {
+                        if (led_msg.val_2 != (uint32_t)-1)
+                            dbgPrint(trALWAYS, "Overwriting previously set colour (%06X) with \"%s\" (%06X)", led_msg.val_2, arg, parse_value);            
+                        led_msg.val_2 = parse_value;
+                    }
+                }
                 continue;
             }
-        }
-        //else not a good period value... maybe it is a colour or a LED address
-        //Then we check for colour(s)
-        err = _handler_parse_colour(&parse_value, arg);
-        if (err == ESP_OK)
-        {
-            if (led_msg.val_0 == (uint32_t)-1)
+            else if (err == ESP_ERR_INVALID_ARG)
             {
-                led_msg.val_0 = parse_value;
+                //Looked like a Hue value, but it was invalid
+                help_requested = true;
+                break;
             }
-            else
-            {
-                if (led_msg.val_2 != (uint32_t)-1)
-                    dbgPrint(trALWAYS, "Overwriting previously set colour (%06X) with \"%s\" (%06X)", led_msg.val_2, arg, parse_value);            
-                led_msg.val_2 = parse_value;
-            }
-            continue;
         }
-        else if (err == ESP_ERR_INVALID_ARG)
-        {
-            //Looked like an address, but it was invalid
-            help_requested = true;
-            break;
-        }
-        //Then we check for LED addressing
+
+        //Then we check for LED addressing - ALL
         err = _handler_parse_address_str(&parse_value, arg);
         if (err == ESP_OK)
         {
@@ -1085,68 +1143,107 @@ void _led_handler_common_action(void/*rgb_led_action_cmd action*/)
 
     if (!help_requested)
     {
-        if (led_msg.val_0 == (uint32_t)-1)
+        if (action == led_action_colour)
         {
-            // No colour? We'll assign both using a very silly RNG based on the time since boot in us (mod 360)
-            uint32_t rand_hue = (uint32_t)(esp_timer_get_time()%360L);
-            hsv2rgb(rand_hue, SAT_MAX, VAL_MAX, &led_msg.val_0);
-            //The second colour is the complementary colour on the other side (+180 degrees) of the colour wheel
-            hsv2rgb(rand_hue+(HUE_MAX/2), SAT_MAX, VAL_MAX, &led_msg.val_2);
-            dbgPrint(trALWAYS, "No Colours specified, using 0x%06X and 0x%06X", led_msg.val_0, led_msg.val_2);
+            if (led_msg.val_0 == (uint32_t)-1)
+            {
+                // No colour? We'll assign both using a very silly RNG based on the time since boot in us (mod 360)
+                uint32_t rand_hue = (uint32_t)(esp_timer_get_time()%360L);
+                hsv2rgb(rand_hue, SAT_MAX, VAL_MAX, &led_msg.val_0);
+                dbgPrint(trALWAYS, "No Colour specified, using 0x%06X", led_msg.val_0);
+            }
         }
-        else if (led_msg.val_2 == (uint32_t)-1)
+        else if (action == led_action_blink)
         {
-            // No colour? We'll assign one using a very silly RNG based on the time since boot in us (mod 360)
-            hsv2rgb((uint32_t)(esp_timer_get_time()%360L), 100, 100, &led_msg.val_2);
-            dbgPrint(trALWAYS, "No Colour specified, using 0x%06X", led_msg.val_2);
-        }
-        
+            if (led_msg.val_0 == (uint32_t)-1)
+            {
+                // No colour? We'll assign both using a very silly RNG based on the time since boot in us (mod 360)
+                uint32_t rand_hue = (uint32_t)(esp_timer_get_time()%360L);
+                hsv2rgb(rand_hue, SAT_MAX, VAL_MAX, &led_msg.val_0);
+                //The second colour is the complementary colour on the other side (+180 degrees) of the colour wheel
+                hsv2rgb(rand_hue+(HUE_MAX/2), SAT_MAX, VAL_MAX, &led_msg.val_2);
+                dbgPrint(trALWAYS, "No Colours specified, using 0x%06X and 0x%06X", led_msg.val_0, led_msg.val_2);
+            }
+            else if (led_msg.val_2 == (uint32_t)-1)
+            {
+                uint32_t hue, sat, val;
+                rgb2hsv(led_msg.val_0, &hue, &sat, &val);
+                // No 2nd colour? We'll assign a complimentary colour from the one selected in val_0
+                hsv2rgb(hue+(HUE_MAX/2), sat, val, &led_msg.val_2);
+                dbgPrint(trALWAYS, "No Colour specified, using 0x%06X", led_msg.val_2);
+            }
+        }        
 
-        if (led_msg.val_1 == 0)
+        if ((action == led_action_blink) || (action == led_action_rainbow))
         {
-            // No period? We'll assign one using a very silly RNG based on the time since boot in us (mod 360)
-            led_msg.val_1 = RGB_LED_BLINK_PERIOD_MS_DEF;
-            dbgPrint(trALWAYS, "Using default period of %dms", led_msg.val_1);
+            if (led_msg.val_1 == 0)
+            {
+                // No period? We'll assign one using a very silly RNG based on the time since boot in us (mod 360)
+                led_msg.val_1 = (action == led_action_rainbow) ? LED_RAINBOW_PERIOD_MS_DEF : LED_BLINK_PERIOD_MS_DEF;
+                dbgPrint(trALWAYS, "Using default period of %dms", led_msg.val_1);
+            }
         }
+
         if (led_msg.led_addr == 0)
             led_msg.led_addr = BIT(0);             // No LED Address(es) specified... let's apply debug
 
-        led_msg.cmd = led_action_blink;
+        led_msg.cmd = action;
         xQueueSend(_rgb_led.msg_queue, &led_msg, 0);
+
         //Maybe a good idea to also queue a status request right after this?
         led_msg.cmd = led_action_status;
-        // for (int i = 0; i < _rgb_led.cnt; i++)
-        //     led_msg.led_addr |= BIT(i);
         xQueueSend(_rgb_led.msg_queue, &led_msg, 0);
     }
 
     if (help_requested)
     {
-        //                  01234567890123456789012345678901234567890123456789012345678901234567890123456789
-        dbgPrint(trALWAYS, "Usage: \"blink <period> [<colour_1>] [<colour_2>] [<led_addr>]\"");        
-        dbgPrint(trALWAYS, "    <period>:   A value indicating the period of the blink in ms (min: %dms)", RGB_LED_BLINK_PERIOD_MS_MIN*2);
-        dbgPrint(trALWAYS, "        If <period> is omitted, a default period of %dms is used", RGB_LED_BLINK_PERIOD_MS_DEF);
-        dbgPrint(trALWAYS, "    <colour>:   String   - Any one of the assigned colour names");
-        dbgPrint(trALWAYS, "                            e.g. \"Black\", \"wh\", etc");
-        dbgPrint(trALWAYS, "                \"HSV:<csv>\" - An HSV string in the format \"HSV:<h>[,<s>[,<v>]]\"");
-        dbgPrint(trALWAYS, "                            e.g. \"HSV:120\", \"HSV:180,50,50\", etc");
-        dbgPrint(trALWAYS, "                  <h> must be in the range 0 to %d degrees", HUE_MAX-1);
-        dbgPrint(trALWAYS, "                  If <s> or <v> is omitted, it will be set to 100%%");
-        dbgPrint(trALWAYS, "        If one or both <colour> are omitted, they will be selected at random");
+        //Opening line
+        dbgPrint_i(trALWAYS, "Usage: \"%s ", arg);        
+        if (action == led_action_colour)    dbgPrint_i(trALWAYS, "[<colour>] ");
+        if ((action == led_action_rainbow) || (action == led_action_blink))   dbgPrint_i(trALWAYS, "[<period>] ");
+        if (action == led_action_blink)     dbgPrint_i(trALWAYS, "[<colour_1>] [<colour_2>]");        
+        dbgPrint(trALWAYS, " [<led_addr>]\"");
+
+
+        // Describe "period"
+        if ((action == led_action_blink) || (action == led_action_rainbow))
+        {
+            dbgPrint(trALWAYS, "    <period>:   A value indicating the period of the %s cycle in ms", arg);
+            dbgPrint(trALWAYS, "                            (min: %dms)", (action == led_action_blink)? LED_BLINK_PERIOD_MS_DEF*2 : LED_RAINBOW_PER_MIN_MS);
+            dbgPrint(trALWAYS, "        If <period> is omitted, a default period of %dms is used", (action == led_action_blink)? LED_BLINK_PERIOD_MS_DEF*2 : LED_RAINBOW_PER_MIN_MS);
+        }
+
+        // Describe "colour"
+        if ((action == led_action_colour) || (action == led_action_blink))
+        {
+            dbgPrint(trALWAYS, "    <colour>:   String   - Any one of the assigned colour names");
+            dbgPrint(trALWAYS, "                            e.g. \"Black\", \"wh\", etc");
+            dbgPrint(trALWAYS, "                \"HSV:<csv>\" - An HSV string in the format \"HSV:<h>[,<s>[,<v>]]\"");
+            dbgPrint(trALWAYS, "                            e.g. \"HSV:120\", \"HSV:180,50,50\", etc");
+            dbgPrint(trALWAYS, "                  <h> must be in the range 0 to %d degrees", HUE_MAX-1);
+            dbgPrint(trALWAYS, "                  If <s> or <v> is omitted, it will be set to 100%%");
+            if (action == led_action_blink)
+                dbgPrint(trALWAYS, "        If one or both <colour> are omitted, they will be selected at random");
+            else
+                dbgPrint(trALWAYS, "        If <colour> is omitted, one will be selected at random");
+        }
+
+        // Describe "led_addr"
         dbgPrint(trALWAYS, "    <led_addr>: <#>      - a single index (0 to %d), e.g. 0, 1, 2, 3, etc", _rgb_led.cnt-1);
         dbgPrint(trALWAYS, "                0xHHHH   - a 16 bit mask of the LEDs to affect, e.g. \"0x003\"");
         dbgPrint(trALWAYS, "                \"<strip>[:<nr>]\" - a string and number (seperated by a colon)");
         dbgPrint(trALWAYS, "                            indicating the LED strip and LED # to use");
         dbgPrint(trALWAYS, "                            e.g. \"debug\", \"button:1\", \"button:2\", etc");
-        dbgPrint(trALWAYS, "                  If <nr> is omitted, %s applies to the entire strip", "BLINK");
+        dbgPrint(trALWAYS, "                  If <nr> is omitted, %s applies to the entire strip", arg);
         dbgPrint(trALWAYS, "        If <led_addr> is omitted, \"debug\" is assumed");
         dbgPrint(trALWAYS, " Multiple <led_addr> values can be specified, separated by spaces");
-//        dbgPrint(trALWAYS, "   e.g. \"off 0 1 2 3\", \"off debug:0 button:1...\" etc");
     }
 }
 
 void _led_handler_blink(void)
 {
+    _led_handler_common_action();
+#if 0
     //These functions (_menu_handler....) are called from the console task, so they should 
     // not manupiluate the RGB task variables directly, but instead send messages to the RGB 
     // task via the msg_queue
@@ -1155,9 +1252,9 @@ void _led_handler_blink(void)
     esp_err_t err = ESP_OK;
     uint32_t parse_value = 0;//addr_mask = 0;
 
-    while (task_console_arg_cnt() > 0)
+    while (console_arg_cnt() > 0)
 	{
-        char *arg = task_console_arg_pop();
+        char *arg = console_arg_pop();
         if ((!strcasecmp("?", arg)) || (!strcasecmp("help", arg)))
         {    
             help_requested = true;
@@ -1168,7 +1265,7 @@ void _led_handler_blink(void)
         if (str2uint32(&parse_value, arg, 0))
         {
             //This could be the period OR an address
-            if (parse_value >= RGB_LED_BLINK_PERIOD_MS_MIN*2)
+            if (parse_value >= LED_BLINK_PERIOD_MS_MIN*2)
             {
                 //Ooooh... this could be a period
                 if (led_msg.val_1 != 0)
@@ -1241,7 +1338,7 @@ void _led_handler_blink(void)
         if (led_msg.val_1 == 0)
         {
             // No period? We'll assign one using a very silly RNG based on the time since boot in us (mod 360)
-            led_msg.val_1 = RGB_LED_BLINK_PERIOD_MS_DEF;
+            led_msg.val_1 = LED_BLINK_PERIOD_MS_DEF;
             dbgPrint(trALWAYS, "Using default period of %dms", led_msg.val_1);
         }
         if (led_msg.led_addr == 0)
@@ -1260,8 +1357,8 @@ void _led_handler_blink(void)
     {
         //                  01234567890123456789012345678901234567890123456789012345678901234567890123456789
         dbgPrint(trALWAYS, "Usage: \"blink <period> [<colour_1>] [<colour_2>] [<led_addr>]\"");        
-        dbgPrint(trALWAYS, "    <period>:   A value indicating the period of the blink in ms (min: %dms)", RGB_LED_BLINK_PERIOD_MS_MIN*2);
-        dbgPrint(trALWAYS, "        If <period> is omitted, a default period of %dms is used", RGB_LED_BLINK_PERIOD_MS_DEF);
+        dbgPrint(trALWAYS, "    <period>:   A value indicating the period of the blink in ms (min: %dms)", LED_BLINK_PERIOD_MS_MIN*2);
+        dbgPrint(trALWAYS, "        If <period> is omitted, a default period of %dms is used", LED_BLINK_PERIOD_MS_DEF);
         dbgPrint(trALWAYS, "    <colour>:   String   - Any one of the assigned colour names");
         dbgPrint(trALWAYS, "                            e.g. \"Black\", \"wh\", etc");
         dbgPrint(trALWAYS, "                \"HSV:<csv>\" - An HSV string in the format \"HSV:<h>[,<s>[,<v>]]\"");
@@ -1281,10 +1378,13 @@ void _led_handler_blink(void)
     }
 
     //Print a status of all LEDs?
+#endif
 }
 
 void _led_handler_rainbow(void)
 {
+    _led_handler_common_action();
+#if 0
     //These functions (_menu_handler....) are called from the console task, so they should 
     // not manupiluate the RGB task variables directly, but instead send messages to the RGB 
     // task via the msg_queue
@@ -1293,9 +1393,9 @@ void _led_handler_rainbow(void)
     esp_err_t err = ESP_OK;
     uint32_t parse_value = 0;//addr_mask = 0;
 
-    while (task_console_arg_cnt() > 0)
+    while (console_arg_cnt() > 0)
 	{
-        char *arg = task_console_arg_pop();
+        char *arg = console_arg_pop();
         if ((!strcasecmp("?", arg)) || (!strcasecmp("help", arg)))
         {    
             help_requested = true;
@@ -1306,7 +1406,7 @@ void _led_handler_rainbow(void)
         if (str2uint32(&parse_value, arg, 0))
         {
             //This could be the period OR an address
-            if (parse_value >= RGB_LED_BLINK_PERIOD_MS_MIN*2)
+            if (parse_value >= LED_BLINK_PERIOD_MS_MIN*2)
             {
                 //Ooooh... this could be a period
                 if (led_msg.val_1 != 0)
@@ -1341,7 +1441,7 @@ void _led_handler_rainbow(void)
         if (led_msg.val_1 == 0)
         {
             // No period? We'll assign one using a very silly RNG based on the time since boot in us (mod 360)
-            led_msg.val_1 = RGB_LED_RAINBOW_PERIOD_MS_DEF;
+            led_msg.val_1 = LED_RAINBOW_PERIOD_MS_DEF;
             dbgPrint(trALWAYS, "Using default period of %dms", led_msg.val_1);
         }
 
@@ -1362,8 +1462,8 @@ void _led_handler_rainbow(void)
         //                  01234567890123456789012345678901234567890123456789012345678901234567890123456789
         dbgPrint(trALWAYS, "Usage: \"rainbow <period> [<led_addr>]\"");        
         dbgPrint(trALWAYS, "    <period>:   A value indicating the period of the rainbow cycle in ms");
-        dbgPrint(trALWAYS, "                            range %d to %d", RGB_LED_RAINBOW_PER_MIN_MS, RGB_LED_RAINBOW_PER_MAX_MS);
-        dbgPrint(trALWAYS, "        If <period> is omitted, a default period of %dms is used", RGB_LED_RAINBOW_PERIOD_MS_DEF);
+        dbgPrint(trALWAYS, "                            range %d to %d", LED_RAINBOW_PER_MIN_MS, LED_RAINBOW_PER_MAX_MS);
+        dbgPrint(trALWAYS, "        If <period> is omitted, a default period of %dms is used", LED_RAINBOW_PERIOD_MS_DEF);
         dbgPrint(trALWAYS, "    <led_addr>: <#>      - a single index (0 to %d), e.g. 0, 1, 2, 3, etc", _rgb_led.cnt-1);
         dbgPrint(trALWAYS, "                0xHHHH   - a 16 bit mask of the LEDs to affect, e.g. \"0x003\"");
         dbgPrint(trALWAYS, "                \"<strip>[:<nr>]\" - a string and number (seperated by a colon)");
@@ -1374,6 +1474,7 @@ void _led_handler_rainbow(void)
         dbgPrint(trALWAYS, " Multiple <led_addr> values can be specified, separated by spaces");
 //        dbgPrint(trALWAYS, "   e.g. \"off 0 1 2 3\", \"off debug:0 button:1...\" etc");
     }
+#endif
 }
 
 void _led_handler_status(void)
@@ -1387,9 +1488,9 @@ void _led_handler_status(void)
     uint32_t parse_value = 0;
 //    uint32_t addr_mask = 0;
 
-    while (task_console_arg_cnt() > 0)
+    while (console_arg_cnt() > 0)
 	{
-        char *arg = task_console_arg_pop();
+        char *arg = console_arg_pop();
         if ((!strcasecmp("?", arg)) || (!strcasecmp("help", arg)))
         {    
             help_requested = true;
@@ -1444,13 +1545,13 @@ void _led_handler_col_list(void)
     uint32_t parse_value = 0;
     esp_err_t err = ESP_OK;
 
-    // if (task_console_arg_cnt() > 0)
+    // if (console_arg_cnt() > 0)
     // {
     //     //Let's get an idea of how many colours we need to list
     //     while (colour_list_item(col_list_size) != NULL)
     //         col_list_size++;
     // }
-    if (task_console_arg_cnt() == 0)
+    if (console_arg_cnt() == 0)
     {
         //No arguments... let's list all the colours
         show_all = true;
@@ -1459,9 +1560,9 @@ void _led_handler_col_list(void)
     }
 
     //First check that all arguments are valid
-    for (int i = 0; i < task_console_arg_cnt(); i++)
+    for (int i = 0; i < console_arg_cnt(); i++)
     {
-        char *arg = task_console_arg_peek(i);
+        char *arg = console_arg_peek(i);
         if ((!strcasecmp("?", arg)) || (!strcasecmp("help", arg)))
         {    
             help_requested = true;
@@ -1535,9 +1636,9 @@ void _led_handler_col_list(void)
         //There are two options.... 
         // 1) the used provides a Colour name (to get the RGB value)
         // 2) the user provides a Hue value (to get the RGB value)
-        while (task_console_arg_cnt() > 0)
+        while (console_arg_cnt() > 0)
         {
-            char *arg = task_console_arg_pop();
+            char *arg = console_arg_pop();
             if ((!strcasecmp("all", arg)) || (!strcasecmp("list", arg)))
                 continue;   //Skip.... already handled
             if (!strcasecmp("hues", arg))
@@ -1581,9 +1682,9 @@ void _led_handler_reset(void)
     esp_err_t err = ESP_OK;
     uint32_t parse_value = 0;//addr_mask = 0;
 
-    while (task_console_arg_cnt() > 0)
+    while (console_arg_cnt() > 0)
 	{
-        char *arg = task_console_arg_pop();
+        char *arg = console_arg_pop();
         if ((!strcasecmp("?", arg)) || (!strcasecmp("help", arg)))
         {    
             help_requested = true;
@@ -1614,7 +1715,7 @@ void _led_handler_reset(void)
         if (led_msg.led_addr == 0)
             led_msg.led_addr = BIT(0);             // No LED Address(es) specified... let's apply debug
 
-        led_msg.val_1 = RGB_LED_RAINBOW_PERIOD_MS_DEF;
+        led_msg.val_1 = LED_RAINBOW_PERIOD_MS_DEF;
         led_msg.cmd = led_action_rainbow;
         xQueueSend(_rgb_led.msg_queue, &led_msg, 0);
         //Maybe a good idea to also queue a status request right after this?
@@ -1642,39 +1743,30 @@ void _led_handler_reset(void)
 /*******************************************************************************
 Global (public) Functions
 *******************************************************************************/
-
-TaskInfo_t * task_rgb_led_init(void)
+void * rgb_led_init_task(void)
 {
 	//Let's not re-initialise this task by accident
 	if (_rgb_led.task.handle)
 		return &_rgb_led.task;
 
-	_rgb_led.cnt = 0;
-
 	// Create the task, storing the handle.  Note that the passed parameter ucParameterToPass
 	// must exist for the lifetime of the task, so in this case is declared static.  If it was just an
 	// an automatic stack variable it might no longer exist, or at least have been corrupted, by the time
 	// the new task attempts to access it.
-	if (xTaskCreate( _led_task, PRINTF_TAG, _rgb_led.task.stack_depth, _rgb_led.task.parameter_to_pass, 10, &_rgb_led.task.handle ) != pdPASS)
+	if (xTaskCreate( _led_main_func, PRINTF_TAG, _rgb_led.task.stack_depth, _rgb_led.task.parameter_to_pass, 10, &_rgb_led.task.handle ) != pdPASS)
 	{
-		dbgPrint(trALWAYS, "#Unable to start Task (%d)!", eTaskIndexRgb);
+		dbgPrint(trALWAYS, "#Unable to start %s Task!", PRINTF_TAG);
 		return NULL;
 	}
 
 	configASSERT(_rgb_led.task.handle);
 
-	return &_rgb_led.task;
+    _led_setup();
+
+    return &_rgb_led.task;
 }
 
-void task_rgb_led_deinit(void)
-{
-	// Use the handle to delete the task.
-	if(_rgb_led.task.handle != NULL )
-		vTaskDelete(_rgb_led.task.handle);
-
-}
-
-esp_err_t task_rgb_led_off(uint16_t address_mask)
+esp_err_t rgb_led_off(uint16_t address_mask)
 {
     //This function can be called from ANY task
     rgb_led_action_msg_t led_msg = {
@@ -1682,6 +1774,9 @@ esp_err_t task_rgb_led_off(uint16_t address_mask)
         .cmd = led_action_nop, 
         .val_0 = -1, 
     };//Indicating "not set yet"
+
+    if (!_rgb_led.task.init_done)
+        return ESP_ERR_INVALID_STATE;
 
     if (address_mask == 0)
         return ESP_OK;  //Technically not an error... but nothing to do
@@ -1698,7 +1793,7 @@ esp_err_t task_rgb_led_off(uint16_t address_mask)
     return ESP_FAIL;
 }
 
-esp_err_t task_rgb_led_on(uint16_t address_mask, uint32_t rgb_colour)
+esp_err_t rgb_led_on(uint16_t address_mask, uint32_t rgb_colour)
 {
     //This function can be called from ANY task
     rgb_led_action_msg_t led_msg = {
@@ -1706,6 +1801,9 @@ esp_err_t task_rgb_led_on(uint16_t address_mask, uint32_t rgb_colour)
         .cmd = led_action_nop, 
         .val_0 = -1, 
     };//Indicating "not set yet"
+
+    if (!_rgb_led.task.init_done)
+        return ESP_ERR_INVALID_STATE;
 
     if (address_mask == 0)
         return ESP_OK;  //Technically not an error... but nothing to do
@@ -1736,7 +1834,7 @@ esp_err_t task_rgb_led_on(uint16_t address_mask, uint32_t rgb_colour)
     return ESP_FAIL;
 }
 
-esp_err_t task_rgb_led_blink(uint16_t address_mask, uint32_t period, uint32_t rgb_colour_1, uint32_t rgb_colour_2)
+esp_err_t rgb_led_blink(uint16_t address_mask, uint32_t period, uint32_t rgb_colour_1, uint32_t rgb_colour_2)
 {
     rgb_led_action_msg_t led_msg = {
         .led_addr = 0, 
@@ -1746,12 +1844,15 @@ esp_err_t task_rgb_led_blink(uint16_t address_mask, uint32_t period, uint32_t rg
         .val_2 = -1
     };//Indicating "not set yet"
 
+    if (!_rgb_led.task.init_done)
+        return ESP_ERR_INVALID_STATE;
+
     if (address_mask == 0)
         return ESP_OK;  //Technically not an error... but nothing to do
 
-    if (period < (RGB_LED_BLINK_PERIOD_MS_MIN*2))
+    if (period < (LED_BLINK_PERIOD_MS_MIN*2))
     {
-        dbgPrint(trRGB, "#Min blink period = %dms (got %dms)", (RGB_LED_BLINK_PERIOD_MS_MIN*2), period);
+        dbgPrint(trRGB, "#Min blink period = %dms (got %dms)", (LED_BLINK_PERIOD_MS_MIN*2), period);
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -1800,8 +1901,11 @@ esp_err_t task_rgb_led_blink(uint16_t address_mask, uint32_t period, uint32_t rg
     return ESP_FAIL;
 }
 
-esp_err_t task_rgb_led_demo(uint16_t address_mask, uint32_t period)
+esp_err_t rgb_led_demo(uint16_t address_mask, uint32_t period)
 {
+    if (!_rgb_led.task.init_done)
+        return ESP_ERR_INVALID_STATE;
+
     rgb_led_action_msg_t led_msg = {
         .led_addr = 0, 
         .cmd = led_action_nop, 
@@ -1811,9 +1915,9 @@ esp_err_t task_rgb_led_demo(uint16_t address_mask, uint32_t period)
     if (address_mask == 0)
         return ESP_OK;  //Technically not an error... but nothing to do
 
-    if (period < (RGB_LED_BLINK_PERIOD_MS_MIN*2))
+    if (period < (LED_BLINK_PERIOD_MS_MIN*2))
     {
-        dbgPrint(trRGB, "#Min blink period = %dms (got %dms)", (RGB_LED_BLINK_PERIOD_MS_MIN*2), period);
+        dbgPrint(trRGB, "#Min blink period = %dms (got %dms)", (LED_BLINK_PERIOD_MS_MIN*2), period);
         return ESP_ERR_INVALID_ARG;
     }
 

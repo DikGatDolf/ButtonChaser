@@ -1,4 +1,4 @@
-idf_component_register(SRCS "str_helper.c" "template.c" "colour.c" "hello_world_main.c"
+idf_component_register(SRCS "button_chase_main.c" "sys_task_utils.c" "str_helper.c" "template.c" "colour.c"
                             "sys_utils.c"
                             "sys_timers.c"
 							"task_console.c"

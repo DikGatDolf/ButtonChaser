@@ -10,7 +10,7 @@ part of the input string is matched in the local structured array to check for a
 matching command. All additional data will be treated as parameters.
 
 The Console maintains a list of menu item GROUPS (Tables), not the items 
- themselves, which are added with the task_console_add_menu() function. 
+ themselves, which are added with the console_add_menu() function. 
  The menu items are statically declared in the caller task/file/module.
  A single menu item of  type ConsoleMenuItem_t, is a structure containing:
     the command
@@ -38,6 +38,7 @@ includes
 #include <stdint.h>
 #include "sys_utils.h"
 #include "str_helper.h"
+#include "sys_task_utils.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -64,6 +65,9 @@ local defines and constants
                                     as it was received on the console */
 
 #define task_console_MAX_MENU_ITEMS_MAX 5 /* The maximum number of menu groups/tables */
+
+#define CONSOLE_READ_INTERVAL_MS      100     /* Task cycles at a 10Hz rate*/
+
 
 const char BACKSPACE_ECHO[] = {0x08, 0x20, 0x08, 0x00};
 
@@ -119,6 +123,7 @@ sPrintFlagActionItem;
 
 typedef struct
 {
+    bool init_done;
 	struct
 	{
 		char buff[CONSOLE_RX_BUFF + 1]; /* The rx buff for data read from the console. */
@@ -148,7 +153,16 @@ typedef struct
 /*******************************************************************************
 local function prototypes
  *******************************************************************************/
-/*! Reads the data on the serial port and parses the line when a carriage return 
+
+/*! Deinitialises the Console
+ */
+void _console_task_deinit(void);
+
+/*! The main function for the Console task
+ */
+void _console_main_func(void * pvParameters);
+
+ /*! Reads the data on the serial port and parses the line when a carriage return 
  * is encountered.
  */
 bool _console_service(void);
@@ -168,7 +182,7 @@ void _parse_args(char * arg_str);
 /*! Prints all the arguments on the stack, with relative index to the next item 
  * to pop
 */
-void _arg_stack(void);
+void _print_arg_stack(void);
 
 /*! Finds a pointer to the specific command group (if it has been added to the list)
  * @param[in] _command The command string to search for
@@ -219,11 +233,6 @@ void _console_handler_help(void);
  */
 void _console_handler_trace(void);
 
-/*! CONSOLE MENU ITEM - Prints the help string for either the command in question, 
- * or for the entire list of commands under the group
- */
-void _console_handler_tasks(void);
-
 /*! CONSOLE MENU HANDLER - Displays the application version
  */
 void _console_handler_version(void);
@@ -238,9 +247,9 @@ void _console_handler_version(void);
  * @param[in] fmt The format string to print
  * @param[in] ... The variable arguments to print
  */
-void task_console_print(uint8_t traceflags, const char * tag, const char *fmt, ...);
+void console_print(uint8_t traceflags, const char * tag, const char *fmt, ...);
 
-/*! Does the same as task_console_print, but adds a "\n" at the end of the print 
+/*! Does the same as console_print, but adds a "\n" at the end of the print 
  *   print string
  * @param[in] traceflags The trace flags to compare with the system trace flags
  * @param[in] tag The tag to print with the message (should be defined at the 
@@ -248,7 +257,7 @@ void task_console_print(uint8_t traceflags, const char * tag, const char *fmt, .
  * @param[in] fmt The format string to print
  * @param[in] ... The variable arguments to print
  */
-void task_console_printline(uint8_t traceflags, const char * tag, const char *fmt, ...);
+void console_printline(uint8_t traceflags, const char * tag, const char *fmt, ...);
 
 /*! Prints the default action passed to the function
  * @param[in] def_act The default action to print
@@ -281,32 +290,50 @@ ConsoleMenuItem_t _console_menu_items[] =
 		{"version", _console_handler_version,   "Displays application version"},
 		{"help",  	_console_handler_help,      "Displays information on the available Console commands"},
 		{"trace",   _console_handler_trace,     "Displays the status, or Enables/Disables print traces"},
-		{"rtos", 	_console_handler_tasks,     "Displays RTOS information for each or a specific task"},
 };
 
 static DeviceConsole_t _console = {
-	.task.handle = NULL,
-	.task.stack_depth = CONSOLE_STACK_SIZE,
-	.task.stack_unused = 0,
+    .menu_grp_list.cnt = 0,
+	.tracemask = trCONSOLE|trAPP|trRGB,
+    .task = {
+        .init_done = false,
+        .handle = NULL,
+        .stack_depth = CONSOLE_STACK_SIZE,
+        .stack_unused = 0,
+        // .init_func = console_init_task,
+        // .deinit_func = _console_task_deinit,
+    }
 };
 
 /*******************************************************************************
 Local (private) Functions
 *******************************************************************************/
 
-/*******************************************************************************
-
-Parses the line received on the Debug port.
-
- *******************************************************************************/
-void _console_task(void * pvParameters)
+void _console_task_deinit(void)
 {
+	// Use the handle to delete the task.
+	if(_console.task.handle != NULL )
+		vTaskDelete(_console.task.handle);
+}
+
+void _console_main_func(void * pvParameters)
+{
+
+    TickType_t xLastWakeTime = xTaskGetTickCount();
+
+    //Wait until the initialisation is done
+    while (!_console.task.init_done)
+        xTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(CONSOLE_READ_INTERVAL_MS));
+
+    dbgPrint(trRGB|trALWAYS, "#Task Started (%d). Running @ %d Hz", 0, (1000/CONSOLE_READ_INTERVAL_MS));
+    
+
 	while (1)
   	{
         TickType_t xLastWakeTime = xTaskGetTickCount();
 
         //Wait at least 100ms before checking again
-        xTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(100)); 
+        xTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(CONSOLE_READ_INTERVAL_MS)); 
 
     	_console_service();
 	    
@@ -314,13 +341,9 @@ void _console_task(void * pvParameters)
     	_console.task.stack_unused = uxTaskGetStackHighWaterMark2( NULL );
 	}
 
+    _console_task_deinit();
 }
 
-/*******************************************************************************
-
-Parses the line received on the Debug port.
-
- *******************************************************************************/
 void _parse_rx_line(void)
 {
 //	dbgPrint(PRINT_TR_CONSOLE, "Parseline() called for \"%s\"", _console.rx.buff);
@@ -340,7 +363,7 @@ void _parse_rx_line(void)
     _parse_args(arg);
 
     //the 1st entry in the arg stack should be the command, let's pop it
-    arg = task_console_arg_pop();
+    arg = console_arg_pop();
 
     //Is the first argument a command or a group?
     _group = _find_menu_group(arg);
@@ -349,14 +372,14 @@ void _parse_rx_line(void)
         //dbgPrint(trALWAYS, "\"%s\" identified as a group (%s)", _command, _group->description);
 
         //A group, so we expect the next one to be a command (or help/?), 
-        if (task_console_arg_cnt() == 0)
+        if (console_arg_cnt() == 0)
         {
             //No command, so we will show the help for the group
             _show_help_on_command((char *)_group->name);
             return;
         }
         //else ... oooh, we have more... the next one should be a command
-        arg = task_console_arg_pop();
+        arg = console_arg_pop();
     }
 
     //We suspect we have a command now, but if there are multiple commands like this in different groups, we cannot decide
@@ -370,14 +393,14 @@ void _parse_rx_line(void)
         return;
     }
     //Unique case where the user entered <group> help or <group> ?
-    if ((task_console_arg_cnt() == 0) && ((strcasecmp(arg, "help") == 0) || (strcasecmp(arg, "?") == 0)) && (_group != NULL))
+    if ((console_arg_cnt() == 0) && ((strcasecmp(arg, "help") == 0) || (strcasecmp(arg, "?") == 0)) && (_group != NULL))
     {
         //No arguments, so we will show the help for the command
         _show_help_on_command((char *)_group->name);
         return;
     }
 
-    _arg_stack();
+    //_print_arg_stack();
 
     // Righto, so we are going to run through the list of menu table groups to see if this command is not contained in one of them...
     ConsoleMenuItem_t *menu_item = NULL;
@@ -440,7 +463,7 @@ void _parse_args(char * arg_str)
     // while (_console.args.cnt < task_console_MAX_ARGS);
 }
 
-void _arg_stack(void)
+void _print_arg_stack(void)
 {
     for (int i = 0; i < task_console_MAX_ARGS; i++)
     {
@@ -451,9 +474,9 @@ void _arg_stack(void)
     }
 }
 
-char * task_console_arg_pop(void)
+char * console_arg_pop(void)
 {
-    char * arg = task_console_arg_peek(0);
+    char * arg = console_arg_peek(0);
 
     if (arg)
         _console.args.pop_index++;
@@ -465,7 +488,7 @@ char * task_console_arg_pop(void)
     return arg;
 }
 
-char * task_console_arg_peek(int offset)
+char * console_arg_peek(int offset)
 {
     int real_offset = offset + _console.args.pop_index;
 
@@ -476,7 +499,7 @@ char * task_console_arg_peek(int offset)
     return _console.args.item[real_offset]; 
 }
 
-int task_console_arg_cnt(void)
+int console_arg_cnt(void)
 {
     //Guard against the pop_index being greater than the count of arguments
     return MAX(_console.args.cnt - _console.args.pop_index, 0);
@@ -560,11 +583,11 @@ void _console_handler_help(void)
 	int found_cmd = 0;
 	bool print_all = false;
 
-    //_arg_stack();
+    //_print_arg_stack();
 
-	if (task_console_arg_cnt() > 0)
+	if (console_arg_cnt() > 0)
 	{
-        arg = task_console_arg_peek(found_grp + found_cmd);// task_console_arg_pop();
+        arg = console_arg_peek(found_grp + found_cmd);// console_arg_pop();
 
         do
         {
@@ -586,16 +609,16 @@ void _console_handler_help(void)
                 //Either way, we are done looping through the arguments.    
                 break; //from do-while-loop
             }
-            arg = task_console_arg_peek(found_grp + found_cmd); //task_console_arg_pop();
+            arg = console_arg_peek(found_grp + found_cmd); //console_arg_pop();
 
-        } while ((task_console_arg_cnt() >= 0) && (NULL != arg) && (!help_requested));
+        } while ((console_arg_cnt() >= 0) && (NULL != arg) && (!help_requested));
 
 		if ((!print_all) && ((found_grp+found_cmd) > 0))
         {
 			//Great, we can actually parse this
 			for (int i = (found_grp + found_cmd); i > 0; i--)
 			{
-                arg = task_console_arg_pop();
+                arg = console_arg_pop();
 				ConsoleMenuTableGroup_t * grp = _find_menu_group(arg);
                 ConsoleMenuItem_t * cmd;
                 uint32_t _cmd_cnt = _count_menu_commands(arg);
@@ -671,9 +694,9 @@ void _console_handler_trace(void)
     //uint8_t *change_mask = &change_mask_interim;
 
 
-	if (task_console_arg_cnt() > 0)
+	if (console_arg_cnt() > 0)
 	{
-        char *arg = task_console_arg_pop();
+        char *arg = console_arg_pop();
         do
         {
             uint8_t *change_mask_ptr = NULL;
@@ -723,18 +746,18 @@ void _console_handler_trace(void)
                 valid_traces_cnt = 0;
             }
             //Get the next argument
-            arg = task_console_arg_pop();
+            arg = console_arg_pop();
 
-        } while ((task_console_arg_cnt() >= 0) && (NULL != arg));// && (!help_requested));
+        } while ((console_arg_cnt() >= 0) && (NULL != arg));// && (!help_requested));
 
         if (valid_traces_cnt /*un_selected_cnt*/ > 0)
         {
-            //_arg_stack();
+            //_print_arg_stack();
             //We have a valid trace mask, but no state was selected, so we'll toggle it
             dbgPrint(trALWAYS, " No action selected for %d valid tag(s), performing default action(s):", valid_traces_cnt /*un_selected_cnt*/);
             for (int offset = (0-un_selected_cnt); offset < 0; offset++)
             {
-                arg = task_console_arg_peek(offset);
+                arg = console_arg_peek(offset);
                 for (int i = 0; (i < (sizeof(print_trace_combos)/sizeof(sPrintFlagActionItem)) && (valid_traces_cnt > 0)); i++)
                 {
                     if(!strcasecmp(print_trace_combos[i].name, arg))
@@ -818,83 +841,6 @@ void _console_handler_trace(void)
 				/* Add an asterisk if this trace flag has been changed in this operation */
 				((tmp_tracemask & trace_mask) != (_console.tracemask & trace_mask))? "*" : "");
 	}
-}
-
-void _console_handler_tasks(void)
-{
-	/*We are expecting one fo the following arguments
-	<nothing> 				- Display the stack usage of all the running tasks
-	<"?"> 					- Displaya list of all the running tasks
-	<task name> 			- Display the stack usage of the specified task
-	*/
-#if ( configUSE_TRACE_FACILITY == 1 )
-	int task_index = -1;
-	int print_start = 0;
-	int print_end = eTaskIndexMax;
-
-	char task_list_buff[eTaskIndexMax*40];
-
-	if (arg_cnt > 0)
-	{
-		if (is_number_str(args[0]))
-		{
-			int index = atoi(args[0]);
-			if ((index >= eTaskIndexMax) || (index < 0))
-			{
-				dbgPrint(trALWAYS, "Please specify a number from 0 and %d, or alternatively the task name.");
-				task_index = -1;
-			}
-		}
-	}
-
-	if (task_index >= 0)
-	{
-		//We are only printing one task's information
-		print_start = task_index;
-		print_end = task_index+1;
-	}
-	// else, keep the values unchanged and print the entire list
-
-	dbgPrint(trALWAYS, "Task Information");
-	dbgPrint(trALWAYS, "+---+------------+------------+-------+------------+--------------------+");
-	dbgPrint(trALWAYS, "+ # | Name       | Status     | Pr'ty | Runtime    | Stack Usage        |");
-	dbgPrint(trALWAYS, "+---+------------+------------+-------+------------+--------------------+");
-	for (int i = print_start; i < print_end; i++)
-	{
-		float s_depth_f;
-	    configSTACK_DEPTH_TYPE s_depth_u16;
-    	configSTACK_DEPTH_TYPE s_used_u16;
-
-		if (!sys_tasks[i])
-			continue;
-		vTaskGetInfo(sys_tasks[i]->handle, &sys_tasks[i]->details, pdTRUE, eInvalid);
-
-	    s_depth_u16 = (configSTACK_DEPTH_TYPE)sys_tasks[i]->stack_depth;
-    	s_used_u16 = (configSTACK_DEPTH_TYPE)(sys_tasks[i]->stack_depth - sys_tasks[i]->stack_unused);
-		s_depth_f = (float)(s_used_u16 * 100.0f)/(s_depth_u16 * 1.0f);
-
-		dbgPrint(trALWAYS, "| %d | %-10s | %-10s | %02d/%02d | %10u | %04u/%04u (%2.2f%%) |",
-			i, 
-			sys_tasks[i]->details.pcTaskName,
-			taskStateName[sys_tasks[i]->details.eCurrentState],
-			sys_tasks[i]->details.uxCurrentPriority,
-			sys_tasks[i]->details.uxBasePriority,
-			sys_tasks[i]->details.ulRunTimeCounter,
-			s_used_u16,
-			s_depth_u16,
-			s_depth_f);
-	}
-	dbgPrint(trALWAYS, "+---+------------+------------+-------+------------+--------------------+");
-	dbgPrint(trALWAYS, "");
-
-	dbgPrint(trALWAYS, "System generated Task List:");
-	vTaskList(task_list_buff);
-	dbgPrint(trALWAYS, "%s", task_list_buff);
-	dbgPrint(trALWAYS, "Done.");
-#else
-	dbgPrint(trALWAYS, "Not Supported in this build.");
-#endif
-
 }
 
 void _console_handler_version(void)
@@ -996,19 +942,14 @@ bool _console_service(void)
 Global (public) Functions
 *******************************************************************************/
 
-TaskInfo_t * task_console_init(void)
+void * console_init_task(void)
 {
 	//Let's not re-initialise this task by accident
 	if (_console.task.handle)
 		return &_console.task;
 
-	_console.menu_grp_list.cnt = 0;
-
 	// The Console will run on the Debug port
 	// Serial.begin(115200, SERIAL_8N1);
-
-	_console.tracemask = trCONSOLE|trAPP|trRGB;
-
 
 	// dbgPrint(trALWAYS,	"ALWAYS  - Print a number %d", 1);
 	// dbgPrint(trBAT, 		"BAT     - Print a number %d", 2);
@@ -1021,32 +962,26 @@ TaskInfo_t * task_console_init(void)
 	// must exist for the lifetime of the task, so in this case is declared static.  If it was just an
 	// an automatic stack variable it might no longer exist, or at least have been corrupted, by the time
 	// the new task attempts to access it.
-	if (xTaskCreate( _console_task, PRINTF_TAG, _console.task.stack_depth, _console.task.parameter_to_pass, tskIDLE_PRIORITY, &_console.task.handle ) != pdPASS)
+	if (xTaskCreate( _console_main_func, PRINTF_TAG, _console.task.stack_depth, _console.task.parameter_to_pass, tskIDLE_PRIORITY, &_console.task.handle ) != pdPASS)
 	{
-		dbgPrint(trALWAYS, "#Unable to start Task (%d)!", eTaskIndexConsole);
+		dbgPrint(trALWAYS, "#Unable to start %s Task!", PRINTF_TAG);
 		return NULL;
 	}
 
+	configASSERT(_console.task.handle);
+
+    _console.task.init_done = true;
+
     _console_handler_version();
 
-	task_console_add_menu("con", _console_menu_items, ARRAY_SIZE(_console_menu_items), "Console Interface");
+	console_add_menu("con", _console_menu_items, ARRAY_SIZE(_console_menu_items), "Console Interface");
 
 	dbgPrint(trALWAYS, "#Init OK (Traces: 0x%02X)", _console.tracemask);
-
-	configASSERT(_console.task.handle);
 
 	return &_console.task;
 }
 
-void task_console_deinit(void)
-{
-	// Use the handle to delete the task.
-	if(_console.task.handle != NULL )
-		vTaskDelete(_console.task.handle);
-
-}
-
-int task_console_add_menu(const char *_group_name, ConsoleMenuItem_t *_tbl, size_t _cnt, const char *_desc)
+int console_add_menu(const char *_group_name, ConsoleMenuItem_t *_tbl, size_t _cnt, const char *_desc)
 {
 	// Do not bother if we have not been initialized
 	if (!_console.task.handle)
@@ -1155,7 +1090,7 @@ int task_console_add_menu(const char *_group_name, ConsoleMenuItem_t *_tbl, size
 	return _cnt;
 }
 
-void task_console_print(uint8_t traceflags, const char * tag, const char *fmt, ...)
+void console_print(uint8_t traceflags, const char * tag, const char *fmt, ...)
 {
 	va_list ap;
 
@@ -1174,9 +1109,9 @@ void task_console_print(uint8_t traceflags, const char * tag, const char *fmt, .
 	va_end(ap);
 }
 
-void task_console_printline(uint8_t traceflags, const char * tag, const char *fmt, ...)
+void console_printline(uint8_t traceflags, const char * tag, const char *fmt, ...)
 {
-    task_console_print(traceflags, tag, fmt);
+    console_print(traceflags, tag, fmt);
 	//Ends with a newline.
 	printf("\n");
 }

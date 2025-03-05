@@ -28,6 +28,7 @@
 #include "defines.h"
 #include "sys_utils.h"
 #include "sys_timers.h"
+#include "sys_task_utils.h"
 #ifdef CONSOLE_ENABLED
   #include "task_console.h"
 #endif
@@ -40,13 +41,19 @@
 
 /*! CONSOLE MENU HANDLER - Performs a system reset
  */
-void _sys_handler_reset(void);
+
+ void _sys_handler_reset(void);
+/*! CONSOLE MENU ITEM - Prints the help string for either the command in question, 
+ * or for the entire list of commands under the group
+ */
+void _sys_handler_tasks(void);
 
 
 ConsoleMenuItem_t _task_main_menu_items[] =
 {
                                     //01234567890123456789012345678901234567890123456789012345678901234567890123456789
 	{"reset",   _sys_handler_reset, "Perform a system reset"},
+    {"rtos", 	_sys_handler_tasks,     "Displays RTOS information for each or a specific task"},
 };
 
 void app_main(void)
@@ -80,22 +87,19 @@ void app_main(void)
 
     printf("Minimum free heap size: %" PRIu32 " bytes\n", esp_get_minimum_free_heap_size());
 
-    printf("We are launching %d tasks\n", eTaskIndexMax);
+    //printf("We are launching %d tasks\n", eTaskIndexMax);
 
     sys_timers_init();
-
-    //Get everything ready
-    for (int i = 0; i < eTaskIndexMax; i++)
-    	sys_tasks[i] = NULL;
+    sys_task_clear();
 
 #ifdef CONSOLE_ENABLED
-    sys_tasks[eTaskIndexConsole]    = task_console_init();
+    sys_task_add((TaskInfo_t *)console_init_task());
 #endif
-    sys_tasks[eTaskIndexRgb]        = task_rgb_led_init();
+    sys_task_add((TaskInfo_t *)rgb_led_init_task());
     
         //typeof(_task_main_menu_items)
 #ifdef CONSOLE_ENABLED
-    task_console_add_menu("sys", _task_main_menu_items, ARRAY_SIZE(_task_main_menu_items), "System");
+    console_add_menu("sys", _task_main_menu_items, ARRAY_SIZE(_task_main_menu_items), "System");
 #endif
 
     xLastWakeTime = xTaskGetTickCount();
@@ -112,8 +116,6 @@ void app_main(void)
         //vTaskDelay(1000 / portTICK_PERIOD_MS);
         xTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(1000));
     }
-
-    task_console_deinit();
 
     sys_timers_deinit();
 
@@ -133,7 +135,7 @@ void _sys_handler_reset(void)
     static bool reset_lock = false;
 	// if no parameter passed then just open the gate
 
-    char *argStr = task_console_arg_pop();
+    char *argStr = console_arg_pop();
 
 	if (!reset_lock)
     {
@@ -159,6 +161,83 @@ void _sys_handler_reset(void)
     }
     reset_lock = false;
 }
+
+void _sys_handler_tasks(void)
+{
+    /*We are expecting one fo the following arguments
+    <nothing> 				- Display the stack usage of all the running tasks
+    <"?"> 					- Displaya list of all the running tasks
+    <task name> 			- Display the stack usage of the specified task
+    */
+#if ( configUSE_TRACE_FACILITY == 1 )
+    int task_index = -1;
+    int print_start = 0;
+    int print_end = eTaskIndexMax;
+
+    char task_list_buff[eTaskIndexMax*40];
+
+    if (arg_cnt > 0)
+    {
+        if (is_number_str(args[0]))
+        {
+            int index = atoi(args[0]);
+            if ((index >= eTaskIndexMax) || (index < 0))
+            {
+                dbgPrint(trALWAYS, "Please specify a number from 0 and %d, or alternatively the task name.");
+                task_index = -1;
+            }
+        }
+    }
+
+    if (task_index >= 0)
+    {
+        //We are only printing one task's information
+        print_start = task_index;
+        print_end = task_index+1;
+    }
+    // else, keep the values unchanged and print the entire list
+
+    dbgPrint(trALWAYS, "Task Information");
+    dbgPrint(trALWAYS, "+---+------------+------------+-------+------------+--------------------+");
+    dbgPrint(trALWAYS, "+ # | Name       | Status     | Pr'ty | Runtime    | Stack Usage        |");
+    dbgPrint(trALWAYS, "+---+------------+------------+-------+------------+--------------------+");
+    for (int i = print_start; i < print_end; i++)
+    {
+        float s_depth_f;
+        configSTACK_DEPTH_TYPE s_depth_u16;
+        configSTACK_DEPTH_TYPE s_used_u16;
+
+        if (!sys_tasks[i])
+            continue;
+        vTaskGetInfo(sys_tasks[i]->handle, &sys_tasks[i]->details, pdTRUE, eInvalid);
+
+        s_depth_u16 = (configSTACK_DEPTH_TYPE)sys_tasks[i]->stack_depth;
+        s_used_u16 = (configSTACK_DEPTH_TYPE)(sys_tasks[i]->stack_depth - sys_tasks[i]->stack_unused);
+        s_depth_f = (float)(s_used_u16 * 100.0f)/(s_depth_u16 * 1.0f);
+
+        dbgPrint(trALWAYS, "| %d | %-10s | %-10s | %02d/%02d | %10u | %04u/%04u (%2.2f%%) |",
+            i, 
+            sys_tasks[i]->details.pcTaskName,
+            taskStateName[sys_tasks[i]->details.eCurrentState],
+            sys_tasks[i]->details.uxCurrentPriority,
+            sys_tasks[i]->details.uxBasePriority,
+            sys_tasks[i]->details.ulRunTimeCounter,
+            s_used_u16,
+            s_depth_u16,
+            s_depth_f);
+    }
+    dbgPrint(trALWAYS, "+---+------------+------------+-------+------------+--------------------+");
+    dbgPrint(trALWAYS, "");
+
+    dbgPrint(trALWAYS, "System generated Task List:");
+    vTaskList(task_list_buff);
+    dbgPrint(trALWAYS, "%s", task_list_buff);
+    dbgPrint(trALWAYS, "Done.");
+#else
+    dbgPrint(trALWAYS, "Not Supported in this build.");
+#endif
+}
+
 #endif
 
 #undef PRINTF_TAG

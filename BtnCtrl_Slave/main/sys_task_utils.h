@@ -1,12 +1,12 @@
 /*****************************************************************************
 
-sys_utils.h
+sys_task_utils.h
 
-Include file for sys_utils.c
+Include file for sys_task_utils.c
 
 ******************************************************************************/
-#ifndef __SYSUTILS_H__
-#define __SYSUTILS_H__
+#ifndef __sys_task_utils_H__
+#define __sys_task_utils_H__
 
 
 /******************************************************************************
@@ -25,20 +25,6 @@ definitions
 #define EXT extern
 #endif /* __NOT_EXTERN__ */
 
-
-#define CRC_8_POLYNOMIAL 0x8C
-
-#ifndef NULL_PTR
-#define NULL_PTR (void*)0
-#endif
-
-#define ARRAY_SIZE(_array) (sizeof(_array) / sizeof((_array)[0]))
-
-#define SWOP_U64(x, y) do { uint64_t(x) _z = x; x = y; y = _z; } while(0)
-#define SWOP_U32(x, y) do { uint32_t(x) _z = x; x = y; y = _z; } while(0)
-#define SWOP_U16(x, y) do { uint16_t(x) _z = x; x = y; y = _z; } while(0)
-#define SWOP_U8(x, y) do { uint8_t(x) _z = x; x = y; y = _z; } while(0)
-
 /******************************************************************************
 Macros
 ******************************************************************************/
@@ -46,18 +32,30 @@ Macros
 /******************************************************************************
 Struct & Unions
 ******************************************************************************/
+typedef struct 
+{
+    bool init_done;
+    void * parameter_to_pass;
+    TaskHandle_t handle;
+    TaskStatus_t details;
+    configSTACK_DEPTH_TYPE stack_depth;
+    configSTACK_DEPTH_TYPE stack_unused;
+	// void* (*init_func)(void);
+	// void (*deinit_func)(void);
+
+}TaskInfo_t;
 
 /******************************************************************************
 variables
 ******************************************************************************/
+extern TaskInfo_t * sys_tasks[];
 
 /******************************************************************************
 functions
 ******************************************************************************/
+void sys_task_clear(void);
 
-uint8_t crc8_str(uint8_t crc_start, const char *str);
-uint8_t crc8_str_n(uint8_t crc_start, const uint8_t *data, size_t len);
-uint8_t crc8(uint8_t crc_start, uint8_t data);
+void sys_task_add(TaskInfo_t * _task);
 
 #undef EXT
 #endif /* __SYSUTILS_H__ */
