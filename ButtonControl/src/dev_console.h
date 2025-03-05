@@ -18,7 +18,7 @@ includes
 /******************************************************************************
 definitions
 ******************************************************************************/
-#ifdef CONSOLE_MENU
+#ifdef CONSOLE_ENABLED
 
 #define CONSOLE_RX_BUFF     80 /* must be able to store the max size of string. */
 
@@ -44,8 +44,7 @@ typedef struct
 //	void * OwnerObj;
 //	char * Tag;
 	const char * Command;
-	void (*Func)(char **, int);
-//	void (*Func)(void);
+	bool (*Func)(void);
 	const char * HelpStr;
 	void * Prev;
 	void * Next;
@@ -73,25 +72,25 @@ void _SerialPrintf(int traceflags, const char *fmt, ...);
 //st_console_menu_item * addMenuItem(st_console_menu_item * menuItem);
 st_console_menu_item * addMenuItem(st_console_menu_item * menuItem, st_console_menu_item * parent = NULL);
 
-bool Read(void);
-char * paramGetNext(void);
+bool Console_Read(void);
+char * paramsGetNext(void);
+uint8_t paramsGetCnt(void);
+bool help_req(void);
 
 //void _SerialPrintf(int flags, const char *fmt, ...);
 //void DoNothing(int flags, const char *fmt, ...);
-bool GetTrace(int flagIndex);
-int GetTraceIndex(const char * traceName);
-void SetTrace(int flagIndex);
-void ClearTrace(int flagIndex);
-const char * GetTraceName(int flagIndex);
-void DumpMem(int Flags, void * Src, unsigned long Address, int Len);
+uint8_t GetTraceMask(const char * traceName);
+void SetTraces(uint8_t flag_mask);
+void ClearTraces(uint8_t flag_mask);
+
+void Print_RAM(int Flags, void * Src, unsigned long Address, int Len);
+void Print_FLASH(int Flags, void * Src, unsigned long Address, int Len);
 #ifdef MAIN_DEBUG
-	void menuTogglePin(char ** args, int arg_cnt);
+	void menuTogglePin(void);
 #endif /* MAIN_DEBUG */
 
-void menuDumpMem(char ** args, int arg_cnt);
-void menuTogglePrintFlags(char ** args, int arg_cnt);
 
-#endif /* CONSOLE_MENU */
+#endif /* CONSOLE_ENABLED */
 
 #endif /* __DEV_CONSOLE_H__ */
 

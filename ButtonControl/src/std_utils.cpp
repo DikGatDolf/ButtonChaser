@@ -34,7 +34,7 @@ includes
 #include "std_utils.h"
 #undef __NOT_EXTERN__
 
-#ifdef CONSOLE_MENU
+#ifdef CONSOLE_ENABLED
 	#include "dev_console.h"
 #else
 	#include "devComms.h"
@@ -53,64 +53,21 @@ char convToStringBuff[FMT_TO_STR_BUFF_SIZE + 1];  // The tmp buff for copying da
 
 byte SystemStatus;
 
-/*******************************************************************************
-
-Finds the start of the next word after this one.
-Returns NULL if nothing is found.
-
- *******************************************************************************/
-char * nextWord(char * curWord, bool terminate)
+bool isHexStr(char * str)
 {
-char *nxtWord;
-	//Let's start by checking if there is a space after this word?
-	nxtWord = strchr(curWord, ' ');
-	if (nxtWord)
-	{
-		if (terminate)
-			*nxtWord = 0;
-
-		//Great... now we skip the spaces until we find something else
-		do
-		{
-			nxtWord++;
-		}
-		while (*nxtWord == ' ');
-
-		if (0 == *nxtWord)
-			return NULL;
-	}
-
-	return nxtWord;
-}
-
-/*******************************************************************************
-
-Finds the start of the next word after this one.
-Returns NULL if nothing is found.
-
- *******************************************************************************/
-char * nextWord(char * curWord, bool terminate, char delim)
-{
-char *nxtWord;
-	//Let's start by checking if there is a space after this word?
-	nxtWord = strchr(curWord, delim);
-	if (nxtWord)
-	{
-		if (terminate)
-			*nxtWord = 0;
-
-		//Great... now we skip the spaces until we find something else
-		do
-		{
-			nxtWord++;
-		}
-		while (*nxtWord == ' ');
-
-		if (0 == *nxtWord)
-			return NULL;
-	}
-
-	return nxtWord;
+    //The string could optionally start with a 0x, 0X, x or X"
+    if ((str[0] == '0') && ((str[1] == 'x') || (str[1] == 'X')))
+        str += 2;
+    else if ((str[0] == 'x') || (str[0] == 'X'))
+        str++;
+        
+    while (*str)
+    {
+        if (!isxdigit(*str))
+            return false;
+        str++;
+    }
+    return true;
 }
 /*******************************************************************************
 
@@ -142,8 +99,6 @@ byte hexToByte(char * hexDigits)
 	return retVal;
 }
 
-
-
 int setFloatParam(float * param, float value, float min_Limit, float max_Limit)
 {
 
@@ -158,7 +113,7 @@ int setFloatParam(float * param, float value, float min_Limit, float max_Limit)
 
 
 
-#ifdef CONSOLE_MENU
+#ifdef CONSOLE_ENABLED
 int setFloatParam(char * name, char * paramStr, char * valueStr, float * param, float min_Limit, float max_Limit)
 {
 float tmpFloat;
@@ -232,7 +187,7 @@ float FloatMathStr(char * Src, float value)
 	else
 		return atof(Src);
 }
-#endif /* CONSOLE_MENU */
+#endif /* CONSOLE_ENABLED */
 
 float FloatMathStr(char * Src, float value, bool absolute)
 {

@@ -42,6 +42,8 @@ typedef signed long s32;
 #define trPWM		0x20
 #define trYYY		0x40
 
+#define MAX_TRACE_FLAGS	6
+
 #define trALWAYS	0x80
 #define trALL		0xFF
 #define trNONE		0x00
@@ -72,7 +74,7 @@ typedef signed long s32;
 Macros
 ******************************************************************************/
 
-//#ifdef CONSOLE_MENU
+//#ifdef CONSOLE_ENABLED
 //	#define iPrintF(traceflags, fmt, ...) _SerialPrintf(traceflags, PSTR(fmt), ##__VA_ARGS__)
 //	#define PrintF(fmt, ...) _SerialPrintf(PSTR(fmt), ##__VA_ARGS__)
 //#else
@@ -112,18 +114,17 @@ functions
 ******************************************************************************/
 int setFloatParam(float * param, float value, float min_Limit, float max_Limit);
 
-#ifdef CONSOLE_MENU
+#ifdef CONSOLE_ENABLED
 	int setFloatParam(char * name, char * paramStr, char * valueStr, float * param, float min_Limit, float max_Limit);
 	int setFloatParam(char * name, char * paramStr, char * valueStr, float * param);
 	float FloatMathStr(char * Src, float floatValue);
-#endif /* CONSOLE_MENU */
+#endif /* CONSOLE_ENABLED */
 
 float FloatMathStr(char * Src, float value, bool absolute);
 char * floatToStr(float val, int precision);
 //	char * floatToStr(float fVal, int precision, char * dst, int maxlen);
 float FloatMathStr(char * Src, float value);
-char * nextWord(char * curWord, bool terminate);
-char * nextWord(char * curWord, bool terminate, char delim);
+bool isHexStr(char * str);
 byte hexToByte(char * hexDigits);
 byte charToNibble(char hexDigit);
 void quickPinToggle(uint8_t pin, bool state);

@@ -33,7 +33,7 @@ includes
 #include "version.h"
 #include "std_utils.h"
 
-#ifdef CONSOLE_MENU
+#ifdef CONSOLE_ENABLED
 
 /*******************************************************************************
 local defines
@@ -46,8 +46,10 @@ local defines
 static st_console_menu_item * FirstMenuItem;
 //static st_console_menu_item * LastMenuItem;
 
-static unsigned long Dev_DumpAddr = 0x10000L;
-static unsigned int Dev_DumpLen = 256;
+//static unsigned long Dev_DumpAddr = 0x10000L;
+//static unsigned int Dev_DumpLen = 256;
+
+static bool help_request_flag = false; // can be "help", "help XXXX" or "XXXX help"
 //static unsigned int Dev_DumpDev = 0;
 
 /*******************************************************************************
@@ -57,27 +59,34 @@ local variables
 /*******************************************************************************
 local function prototypes
  *******************************************************************************/
-void(*resetFunc)(void) = 0; //declare reset function at address 0
 st_console_menu_item * find_menu_entry_in_siblings(st_console_menu_item *pt, char * commandStr);
-void menuPinToggle(char ** args, int arg_cnt);
-void menuPinHi(char ** args, int arg_cnt);
-void menuPinLo(char ** args, int arg_cnt);
-void menuPrintHelp(st_console_menu_item * pt, bool useParent);
-void ParseLine(void);
-int paramsParse(char * paramStr, bool terminate);
-int paramsTotal(void);
-char * paramsItem(int index);
-int paramsGetCnt(void);
+bool menuDumpRAM(void);
+bool menuDumpFlash(void);
+bool menuDump_Generic(char * memType, unsigned long memStart, unsigned long memEnd, unsigned long * memDumpAddr, unsigned int * memDumpLen);
+bool menuTogglePrintFlags(void);
+bool menuPin(void);
+void menuPinToggle(void);
+void menuPinHi(void);
+void menuPinLo(void);
+
+const char * get_trace_name(int flagIndex);
+
+void show_menu_items(st_console_menu_item * pt, bool useParent);
+void parse_line(void);
+bool str_in_list(char * str, const char ** list);
+int parse_params(char * paramStr, bool terminate);
+//char * paramsItem(int index);
 bool is_next_arg_help(void);
+
 /*******************************************************************************
 local structure
  *******************************************************************************/
 #ifdef MAIN_DEBUG
 typedef struct
 {
-	int Pin[6];
-	bool State[6];
-}ST_DEBUG_PORT;
+	int Pin;
+	bool State;
+}st_debug_port;
 #endif /*MAIN_DEBUG*/
 
 
@@ -90,7 +99,7 @@ bool devConsole_initOK = false;
 
 const char u8Dev_BackSpaceEcho[] = {0x08, 0x20, 0x08, 0x00};
 
-byte traceMask = trALL;
+static byte _traceMask = trALL;
 
 ST_PRINT_FLAG_ITEM traceFlags[8] 	 = {
 		{trMAIN, 		"Main"},	/* 1 - 0x01 */
@@ -104,24 +113,26 @@ ST_PRINT_FLAG_ITEM traceFlags[8] 	 = {
 };
 
 #ifdef MAIN_DEBUG
-ST_DEBUG_PORT debugPort;
+#define MAX_DEBUG_PINS 6
+st_debug_port debugPort[MAX_DEBUG_PINS];
 #endif /*MAIN_DEBUG*/
 
 char * _paramStr[MAX_ARGS];  // We can keep pointers to up to 10 parameters in here...
 int _paramCnt;
 int _paramIndex;
 
-//st_console_menu_item devMenuItem_help 		= {NULL, "read", menuPrintHelp,	"Duh!"};
+//st_console_menu_item devMenuItem_help 		= {NULL, "read", show_menu_items,	"Duh!"};
 //st_console_menu_item devMenuItem_dump 		= {NULL, "write", menuDumpMem,	"Dump memory (as bytes). Dump <ADDR(hex)> <LEN(dec)>"};
 
-//static st_console_menu_item devMenuItem_help 		= { "help", menuPrintHelp,	"Duh!"};
-static st_console_menu_item devMenuItem_dump 		= { "dump", menuDumpMem,	"Dump memory (as bytes). Dump <ADDR(hex)> <LEN(dec)>"};
-static st_console_menu_item devMenuItem_Print 		= { "trace",menuTogglePrintFlags,	"Toggle print flags"};
+//static st_console_menu_item devMenuItem_help 		= { "help", show_menu_items,	"Duh!"};
+static st_console_menu_item devMenuItem_dump_RAM    = { "ram", menuDumpRAM,	"RAM information"};
+static st_console_menu_item devMenuItem_dump_Flash	= { "flash", menuDumpFlash,	"Dump Flash (as bytes). Dump <ADDR(hex)> <LEN(dec)>"};
+static st_console_menu_item devMenuItem_Print 		= { "trace",menuTogglePrintFlags,	"Set/Clear debug print traces"};
 #ifdef MAIN_DEBUG
-static st_console_menu_item devMenuItem_DbgPin 	    = {"pin",  NULL, "Manipulate Debug pins A(0 to 5)"};
-static st_console_menu_item devMenuItem_DbgPin_tg 	= {"toggle",  menuPinToggle, "Toggle Debug pins A(0 to 5)"};
-static st_console_menu_item devMenuItem_DbgPin_hi 	= {"hi",  menuPinHi, "Sets Debug pins A(0 to 5) High"};
-static st_console_menu_item devMenuItem_DbgPin_lo 	= {"lo",  menuPinLo, "Sets Debug pins A(0 to 5) Low"};
+static st_console_menu_item devMenuItem_DbgPin 	    = {"pin",  menuPin, "Get/Set the state of Debug pins"};
+// static st_console_menu_item devMenuItem_DbgPin_tg 	= {"toggle",  menuPinToggle, "Toggle Debug pins A(0 to 5)"};
+// static st_console_menu_item devMenuItem_DbgPin_hi 	= {"hi",  menuPinHi, "Sets Debug pins A(0 to 5) High"};
+// static st_console_menu_item devMenuItem_DbgPin_lo 	= {"lo",  menuPinLo, "Sets Debug pins A(0 to 5) Low"};
 #endif /* MAIN_DEBUG */
 
 /*******************************************************************************
@@ -148,7 +159,7 @@ void _SerialPrintf(int traceflags, const char *fmt, ...)
 FILE stdiostr;
 va_list ap;
 
-	if ((traceMask & traceflags) == trNONE)
+	if ((_traceMask & traceflags) == trNONE)
 		return;
 
 	//RVN TODO - we could check for our custom "%?" flags at the start of the string here and then print the trace banner "[xxxx]" if it is set and then pass on fmt+2 to the vfprintf_P() function.
@@ -205,29 +216,32 @@ bool devConsoleInit(unsigned long baud, byte config)
 
 	//Assign the "private"
 	//addMenuItem(&devMenuItem_help);
-	addMenuItem(&devMenuItem_dump);
+	addMenuItem(&devMenuItem_dump_RAM);
+	addMenuItem(&devMenuItem_dump_Flash);
 	addMenuItem(&devMenuItem_Print);
 #ifdef MAIN_DEBUG
 	addMenuItem(&devMenuItem_DbgPin);
-	addMenuItem(&devMenuItem_DbgPin_tg, &devMenuItem_DbgPin);
-	addMenuItem(&devMenuItem_DbgPin_hi, &devMenuItem_DbgPin);
-	addMenuItem(&devMenuItem_DbgPin_lo, &devMenuItem_DbgPin);
+	// addMenuItem(&devMenuItem_DbgPin_tg, &devMenuItem_DbgPin);
+	// addMenuItem(&devMenuItem_DbgPin_hi, &devMenuItem_DbgPin);
+	// addMenuItem(&devMenuItem_DbgPin_lo, &devMenuItem_DbgPin);
     
 #endif /* MAIN_DEBUG */
 
 #ifdef MAIN_DEBUG
-	debugPort.Pin[0] = pinDEBUG_0;
-	debugPort.Pin[1] = pinDEBUG_1;
-	debugPort.Pin[2] = pinDEBUG_2;
-	debugPort.Pin[3] = pinDEBUG_3;
-	debugPort.Pin[4] = pinDEBUG_4;
-	debugPort.Pin[5] = pinDEBUG_5;
-	for (int i = 0; i < 6; i++)
+    
+	debugPort[0].Pin = pinDEBUG_0;
+	debugPort[1].Pin = pinDEBUG_1;
+	debugPort[2].Pin = pinDEBUG_2;
+	debugPort[3].Pin = pinDEBUG_3;
+	debugPort[4].Pin = pinDEBUG_4;
+	debugPort[5].Pin = pinDEBUG_5;
+	for (int i = 0; i < MAX_DEBUG_PINS; i++)
 	{
-		debugPort.State[i] = false;
-		pinMode(debugPort.Pin[i], OUTPUT);
-		digitalWrite(debugPort.Pin[i], LOW);
-		//iPrintF(trCONSOLE, "\n%sDebug Pin %d INIT OK\n", devConsole_tag, i);
+		debugPort[i].State = false;
+		pinMode(debugPort[i].Pin, OUTPUT);
+        quickPinToggle(debugPort[i].Pin, LOW);
+		//digitalWrite(debugPort[i].Pin, LOW);
+		iPrintF(trCONSOLE, "%sDebug Pin %d INIT OK (%d)\n", devConsole_tag, i, debugPort[i].Pin);
 	}
 #endif /*MAIN_DEBUG*/
 
@@ -240,17 +254,14 @@ bool devConsoleInit(unsigned long baud, byte config)
 Sets selected trace Flags
 
  *******************************************************************************/
-void SetTrace(int flagIndex)
+void SetTraces(uint8_t flag_mask)
 {
-	if (flagIndex < 7)
-	{
-		traceMask |= (0x01 << flagIndex);
-	}
-	else if (flagIndex == trALL)
-	{
-		for (int i = 0; i < 7; i++)
-			traceMask |= (0x01 << i);
-	}
+	// for (int i = 0; i < MAX_TRACE_FLAGS; i++)
+    //     if (flag_mask & _BV(i))
+    //         iPrintF(trCONSOLE, "%sTrace %s SET\n", devConsole_tag, get_trace_name(i));
+    // iPrintF(trCONSOLE, "%sTraceMask 0x%02X -> ", devConsole_tag, _traceMask);
+    _traceMask |= flag_mask;
+    // iPrintF(trCONSOLE, "0x%02X\n", _traceMask);
 }
 
 /*******************************************************************************
@@ -258,19 +269,14 @@ void SetTrace(int flagIndex)
 Sets selected print Flags
 
  *******************************************************************************/
-void ClearTrace(int flagIndex)
+void ClearTraces(uint8_t flag_mask)
 {
-	if (flagIndex < 7)
-	{
-		traceMask &= (~traceFlags[flagIndex].flagMask);
-		traceMask |= trALWAYS; //Keep the ALWAYS flag on.
-	}
-	else if (flagIndex == trALL)
-	{
-		for (int i = 0; i < 7; i++)
-			traceMask &= (~(0x01 << i));
-		traceMask |= trALWAYS; //Keep the ALWAYS flag on.
-	}
+	// for (int i = 0; i < MAX_TRACE_FLAGS; i++)
+    //     if (flag_mask & _BV(i))
+    //         iPrintF(trCONSOLE, "%sTrace %s CLEAR (0x%02X)\n", devConsole_tag, get_trace_name(i), _BV(i));
+    // iPrintF(trCONSOLE, "%sTraceMask 0x%02X -> ", devConsole_tag, _traceMask);
+    _traceMask &= (~flag_mask);
+    // iPrintF(trCONSOLE, "0x%02X\n", _traceMask);
 }
 
 /*******************************************************************************
@@ -278,28 +284,19 @@ void ClearTrace(int flagIndex)
 Sets selected print Flags
 
  *******************************************************************************/
-bool GetTrace(int flagIndex)
+uint8_t GetTraceMask(const char * traceName)
 {
-	if (flagIndex < 7)
-	{
-		return ((traceMask >> flagIndex) & 0x01)? true : false;
-	}
-	return false;
-}
-
-int GetTraceIndex(const char * traceName)
-{
-	for (int i = 0; i < 8; i++)
+	for (int i = 0; i < MAX_TRACE_FLAGS; i++)
 	{
 		if ( strcasecmp(traceName, traceFlags[i].Name) == 0)
-			return i;
+			return _BV(i);
 	}
-	return 9;
+	return 0;
 }
 
-const char * GetTraceName(int flagIndex)
+const char * get_trace_name(int flagIndex)
 {
-	if (flagIndex < 7)
+	if (flagIndex < MAX_TRACE_FLAGS)
 	{
 		return traceFlags[flagIndex].Name;
 	}
@@ -312,7 +309,7 @@ Reads the data on the serial port and parses the line when a carriage return is
 encountered.
 
  *******************************************************************************/
-bool Read(void)
+bool Console_Read(void)
 {
 	//UINT16 rxBytes, cnt;
 	//UINT16 rxCnt;
@@ -351,8 +348,8 @@ bool Read(void)
 			// Now parse the line if it is Valid
 			if (stDev_Console.InPtr > 0)
 			{
-				//printf("Parseline() called\n");
-				ParseLine();
+				//printf("parse_line() called\n");
+				parse_line();
 			}
 			// Start a new line now....
 			stDev_Console.InPtr = 0;      // Reset index pointer
@@ -409,22 +406,18 @@ bool Read(void)
 Parses the line received on the Debug port.
 
  *******************************************************************************/
-void ParseLine(void)
+void parse_line(void)
 {
 	st_console_menu_item *pt = FirstMenuItem;
 	char *commandStr;
-    bool help_reqested = false; // can be "help", "help XXXX" or "XXXX help"
 
+    help_request_flag = false;
 
     //Let's seperate all the parameters for the guys to use further on (max 10)
-    if (paramsParse(stDev_Console.RxBuff, true) > 0)
+    if (parse_params(stDev_Console.RxBuff, true) > 0)
     {
         // is the first parameter a "?" or "help"?
-        if (is_next_arg_help())
-        {
-            help_reqested = true;
-            paramGetNext(); // skip the "?" or "help"
-        }
+        is_next_arg_help();
     }
 
     // iPrintF(trCONSOLE, "%s%d parameters:\n", devConsole_tag, paramCnt());
@@ -438,7 +431,7 @@ void ParseLine(void)
         st_console_menu_item * first_born = pt;
 
         //Now we are looking for the next argument passed in the command line
-        commandStr = strlwr(paramGetNext());
+        commandStr = strlwr(paramsGetNext());
 
         //Checking if the next command is found in the siblings of the current menu item
         //pt = find_menu_entry_in_siblings(pt_last_good, commandStr);
@@ -449,54 +442,70 @@ void ParseLine(void)
             if ((commandStr != NULL) && (strlen(commandStr) > 0)) 
             {
                 pt = first_born;
-                int i = (help_reqested)? 1 : 0;
+                int i = (help_request_flag)? 1 : 0;
                 int stop = pt->level + i;
                 if (i < stop)
                 {
                     PrintF("\n\t", commandStr);
                     for (; i < stop; i++)
-                        PrintF("%s->", paramsItem(i));
+                        PrintF("%s->", _paramStr[i] /*paramsItem(i)*/);
                 }
                 PrintF(" ... \"%s\" not found!!!\n\n", commandStr);
             }
 
-            menuPrintHelp(first_born, true);
+            show_menu_items(first_born, true); //Command not found on this level, show the available commands
             return;
         }    
         //iPrintF(trCONSOLE, "%sMatched \"%s\" with \"%s\" (%d)\n", devConsole_tag, commandStr, pt->Command, pt->level);
 
         //Okay, we found the sibling... What are our options now?
         // 1) This command has no children - Call it's function
-        // 2) This command has children, but we are out of arguments - Call "help" on the next level of the menu
+        // 2) This command has children, but we are out of arguments (or the next argument is a "?" or "help" - Call "help" on the next level of the menu
         // 3) This command has children and we have more arguments - Iterate through the next level of the menu
 
-        if ((!help_reqested) && (is_next_arg_help()))
-        {
-            menuPrintHelp(pt, false);
-            return;
-        }
+        if (!help_request_flag)
+            is_next_arg_help();
 
         if (pt->FirstBorn == NULL)
         {
             // iPrintF(trCONSOLE, "%s\"%s\" called with %d parameters:\n", devConsole_tag, commandStr, paramCnt());
             // for (int i = 0; i < paramCnt(); i++)
             //     iPrintF(trCONSOLE, "%s    %s \n", devConsole_tag, getParam(i));
-            if (help_reqested)
-                menuPrintHelp(pt, false);
-            else
-                iPrintF(trCONSOLE, "%s\"%s\" (%d) called with %d arguments(%d)\n", devConsole_tag, pt->Command, pt->level, paramsGetCnt());
-                //pt->Func(&_paramStr[_paramIndex], paramsGetCnt());
+
+            // if (help_request_flag)
+            //     show_menu_items(pt, false);
+            // else
+            //iPrintF(trCONSOLE, "%s\"%s\" (%d) called with %d arguments(%d)\n", devConsole_tag, pt->Command, pt->level, paramsGetCnt());
+            pt->Func();
             return;
         }
         else // (pt->FirstBorn != NULL)
         {
-            pt = (st_console_menu_item *)pt->FirstBorn;
             if (paramsGetCnt() == 0)
             {
+
+                //RVN - continue from here. Trying to figure out how to a parent function with chilren if it has a function specified
+
                 // 2) This command has children, but we are out of arguments - Call "help" on the next level of the menu
-                menuPrintHelp(pt, true);//(char *)pt->Command);
+                //Unless it has a function to call, then rather call that function
+                if (pt->Func)
+                {
+                    iPrintF(trCONSOLE, "%s Parent function \"%s\" (%d) called with %d arguments(%d)\n", devConsole_tag, pt->Command, pt->level, paramsGetCnt());
+                    pt->Func();
+                    //show_menu_items(pt, true);//(char *)pt->Command);
+                    return;
+                }
+                else
+                {
+                    show_menu_items((st_console_menu_item *)pt->FirstBorn, true);//(char *)pt->Command);
+                    return;
+                }
+
+
+                show_menu_items(pt, true);//(char *)pt->Command);
                 return;
             }
+            pt = (st_console_menu_item *)pt->FirstBorn;
             //else// 3) This command has children and we have more arguments - Iterate through the next level of the menu
         }
 
@@ -510,8 +519,18 @@ Look for the command string within the siblings of the passed menu item
  *******************************************************************************/
 bool is_next_arg_help(void)
 {   
-    char * commandStr = paramsItem(paramsTotal() - paramsGetCnt()); 
-    return ((0 == strcasecmp("?", commandStr)) || (0 == strcasecmp("help", commandStr)));
+    char * commandStr = _paramStr[/*index] paramsItem*/(_paramCnt - paramsGetCnt())]; 
+    if ((0 == strcasecmp("?", commandStr)) || (0 == strcasecmp("help", commandStr)))
+    {
+        help_request_flag = true;
+        paramsGetNext(); // skip the "?" or "help"
+    }
+    return help_request_flag;
+}
+
+bool help_req(void)
+{
+    return help_request_flag;
 }
 
 /*******************************************************************************
@@ -636,7 +655,22 @@ Finds the parameters in the passed string (seperated by spaces)
 Returns the number found.
 
  *******************************************************************************/
-int paramsParse(char * paramStr, bool terminate)
+bool str_in_list(char * str, const char ** list)
+{
+    for (int i = 0; list[i]; i++)
+    {
+        if (0 == strcasecmp(str, list[i]))
+            return true;
+    }
+    return false;
+}
+/*******************************************************************************
+
+Finds the parameters in the passed string (seperated by spaces)
+Returns the number found.
+
+ *******************************************************************************/
+int parse_params(char * paramStr, bool terminate)
 {
     char * token;
 
@@ -663,34 +697,13 @@ int paramsParse(char * paramStr, bool terminate)
 
 	return _paramCnt;
 }
-/*******************************************************************************
 
-Returns the number of paramaeters found.
-
- *******************************************************************************/
-int paramsTotal(void)
-{
-	return _paramCnt;
-}
-
-/*******************************************************************************
-
-Returns the parameter at the specifed index...0 = first parameter, 4 = last
-
- *******************************************************************************/
-char * paramsItem(int index)
-{
-	if ((index < _paramCnt) && (index >= 0))
-		return _paramStr[index];
-	else
-		return NULL;
-}
 /*******************************************************************************
 
 Pops the next paramater out of the "stack"
 
  *******************************************************************************/
-char * paramGetNext(void)
+char * paramsGetNext(void)
 {
     char * param;
     
@@ -704,10 +717,10 @@ char * paramGetNext(void)
 }
 /*******************************************************************************
 
-Pops the next paramater out of the "stack"
+Returns the number of parameters left in the "stack"
 
  *******************************************************************************/
-int paramsGetCnt(void)
+uint8_t paramsGetCnt(void)
 {
     return (_paramCnt - _paramIndex);
 }
@@ -729,7 +742,7 @@ Prints the help string for either the command in question, or for the entire
 list of commands.
 
  *******************************************************************************/
-void menuPrintHelp(st_console_menu_item * pt, bool useParent)//, char * cmd_str)//void)
+void show_menu_items(st_console_menu_item * pt, bool useParent)//, char * cmd_str)//void)
 {
     if ((!pt) || ((useParent) && (pt->level == 0)))
     {
@@ -765,336 +778,376 @@ void menuPrintHelp(st_console_menu_item * pt, bool useParent)//, char * cmd_str)
 
 /*******************************************************************************
 
-Dumps a block of memory in Byte Access
+Dumps a block of RAM memory in Byte Access
 
 *******************************************************************************/
-void menuDumpMem(char ** args, int arg_cnt)//void)
+bool menuDumpRAM(void)
 {
+    static unsigned long RAM_DumpAddr = RAMSTART;
+    static unsigned int RAM_DumpLen = 256;
 
-// get the address from the commandline, if any
-  if(paramsItem(0))
-  {
-    sscanf(strupr(paramsItem(0)), "%lX", &Dev_DumpAddr);
-// get the length from the commandline, if any
-
-    if(paramsItem(1))
-      sscanf(paramsItem(0), "%d", &Dev_DumpLen);
-  }
-
-// OK, dump
-  DumpMem(trCONSOLE | trALWAYS, (void *)Dev_DumpAddr, (u32)Dev_DumpAddr, Dev_DumpLen);
-// add len to addr, so the next "Dump" without params just continues...
-  Dev_DumpAddr += Dev_DumpLen;
+    return menuDump_Generic((char *)"RAM", RAMSTART, RAMEND, &RAM_DumpAddr, &RAM_DumpLen);
 }
 
+/*******************************************************************************
+
+Dumps a block of FLASH memory in Byte Access
+
+*******************************************************************************/
+bool menuDumpFlash(void)
+{
+    static unsigned long FLASH_DumpAddr = 0l;//0x10000L;
+    static unsigned int FLASH_DumpLen = 256;
+
+    return menuDump_Generic((char *)"FLASH", 0, FLASHEND, &FLASH_DumpAddr, &FLASH_DumpLen);
+}
+
+/*******************************************************************************
+
+Dumps a block of RAM/FLASH memory in Byte Access (Generic)
+
+*******************************************************************************/
+bool menuDump_Generic(char * memType, unsigned long memStart, unsigned long memEnd, unsigned long * memDumpAddr, unsigned int * memDumpLen)
+{
+    unsigned long tmp_addr = *memDumpAddr;
+    unsigned long tmp_len = (unsigned long)*memDumpLen;
+    bool is_ram_not_flash = (memStart == RAMSTART);
+    bool help_reqested = help_req();
+
+    char *argStr = paramsGetNext();
+
+    if (!help_reqested)
+    {
+        if (!argStr)
+        {
+            //Show RAM status
+            if (is_ram_not_flash)
+            {
+                extern int __heap_start, *__brkval;//, __malloc_heap_start;
+                PrintF("  HEAP Start: 0x%06lX\n", (int)&__heap_start);
+                PrintF("  HEAP End:   0x%06lX\n", (int)__brkval);
+                PrintF("  Free RAM:   %d bytes\n", freeRam());
+            }
+            else
+            {
+                PrintF("  FLASH Start: 0x%06X\n", 0);
+                PrintF("  FLASH End:   0x%06lX\n", (unsigned long)(FLASHEND));
+            }
+            PrintF("  Next read:   %d bytes from 0x%06lX\n", *memDumpLen, *memDumpAddr);
+            PrintF("\n");
+            return true;
+        }
+        else if (0 == strcasecmp(argStr, "?")) //is it a ?
+        {
+            help_reqested = true; //Disregard the rest of the arguments
+        }
+        else if (0 == strcasecmp(argStr, "dump")) // dump
+        {
+            //Get address
+            argStr = paramsGetNext();
+            if (argStr) //Address
+            {
+                if (!isHexStr(argStr))
+                {
+                    PrintF("Invalid %s Start address (", memType);
+                    PrintF("\"%s\"", argStr);
+                    PrintF(")\nPlease use address between 0x%06lX and 0x%06lX\n", memStart, memEnd);
+                    PrintF("\n");
+                    return true;
+                }
+
+                //sscanf(strupr(argStr), "%lX", &tmp_addr);
+                tmp_addr = strtoul(argStr, NULL, 16);
+                PrintF("Got Address: 0x%06X from \"%s\"\n", tmp_addr, argStr);
+
+                if ((tmp_addr < memStart) || (tmp_addr >= memEnd))
+                {
+                    PrintF("Invalid %s Start address (", memType);
+                    PrintF("0x%06X", tmp_addr);
+                    PrintF(")\nPlease use address between 0x%06lX and 0x%06lX\n", memStart, memEnd);
+                    PrintF("\n");
+                    return true;
+                }
+                argStr = paramsGetNext();
+                if ((argStr) && (isNaturalNumberStr(argStr))) //Length
+                {
+                    tmp_len = (unsigned long)atol(argStr); //sscanf(argStr, "%lu", &tmp_len);
+                    PrintF("Got Length: %lu from \"%s\"\n", tmp_len, argStr);
+
+                    //TODO - RVN, you should perform better handling of invalid length values here
+                }
+            }
+
+            *memDumpAddr = tmp_addr;
+            *memDumpLen = (unsigned int)tmp_len;
+
+            //Does the read run over the end of the FLASH?
+            if ((tmp_len >= ((memEnd + 1l) - tmp_addr)))
+            {
+                tmp_len = memEnd - tmp_addr + 1;
+                PrintF("%s Dump length limited to %ld bytes: 0x%06lX to 0x%06lX\n", memType, tmp_len, tmp_addr, memEnd);
+                PrintF("\n");
+            }
+
+            // OK, I honestly did not think the compiler will allow this. Cool.
+            ((is_ram_not_flash)? Print_RAM : Print_FLASH)(trCONSOLE | trALWAYS, (void *)*memDumpAddr, (u32)*memDumpAddr, tmp_len);
+            PrintF("\n");
+
+            *memDumpAddr += *memDumpLen;
+            //If we reach the end of RAM, reset the address
+            if (*memDumpAddr > memEnd)
+                *memDumpAddr = memStart;
+
+            return true;
+
+        }
+        else
+        {
+            help_reqested = true;
+            PrintF("Invalid argument \"%s\"\n", argStr);
+            PrintF("\n");
+        }
+    }
+    if (help_reqested)
+    {
+        PrintF("Valid commands:\n");
+        PrintF(" <No Args> - Shows %s summary\n", memType);
+        PrintF(" \"dump <ADDR> <LEN>\" - Dumps N bytes of %s starting at <ADDR>\n", memType);
+        PrintF(" \"dump\" - Dumps previously set N bytes (default: 256) of %s starting\n", memType);
+        PrintF("           at end of last call (default: %s Start)\n", memType);
+        PrintF("\n");
+        return true;
+    }    
+    return false;
+}
 /*******************************************************************************
 
 
  *******************************************************************************/
-void menuTogglePrintFlags(char ** args, int arg_cnt)//void)
+bool menuTogglePrintFlags(void)
 {
-char *argStr_1;
-char *argStr_2;
-//int argCnt = 0;
-int affectedIndex = -1;
+    uint8_t affected_mask = 0;
+    int state_mask = -1; /* -1 = unspecified, 0 = OFF, 1 = ON*/
+    bool help_reqested = help_req();
 
+    //str_in_list("ALL", traceFlags);
 	//Get pointers to all the arguments
-	argStr_1 = paramsItem(0);//paramStr;
 
-	if (argStr_1)
-	{
-		// Check if the user passed the "ALL" or "NONE" keywords
-		if (0 == strcasecmp(argStr_1, "ALL"))
-		{
-			SetTrace(trALL);
-			affectedIndex = 7;
-		}
-		else if (0 == strcasecmp(argStr_1, "NONE"))
-		{
-			ClearTrace(trALL);
-			affectedIndex = 7;
-		}
-		else //Perhaps the user passed a flag name
-		{
-			argStr_2 = paramsItem(1);//paramStr;
-			for (int i = 0; i < 7; i++)
-			{
-				if (0 == strcasecmp(argStr_1, GetTraceName(i)))
-				{
-					affectedIndex = i;
-					if (paramsTotal() > 1)
-					{
-						//Allright, we found a match
-						if (0 == strcasecmp(argStr_2, "ON"))
-						{
-							SetTrace(i);
-						}
-						else if (0 == strcasecmp(argStr_2, "OFF"))
-						{
-							//PrintF("Turn the %s (%d) traces OFF\n", GetPrintFlagsName(i), i);
-							ClearTrace(i);
-						}
-						else
-						{
-							affectedIndex = -1;
-						}
-					}
-					break; //... from FOR loop
-				}
-			}
-		}
-	}
-	else //No arguments passed
-	{
-		affectedIndex = 7;
-	}
-	if (affectedIndex == 7)
-	{
-		PrintF("Traces: \n");
-		for (int i = 0; i < 7; i++)
-			PrintF("% 10s : %s \n", GetTraceName(i), (GetTrace(i))? "ON" : "OFF");
-	}
-	else if (affectedIndex >= 0)
-	{
-		PrintF("% 10s : %s \n", GetTraceName(affectedIndex), (GetTrace(affectedIndex))? "ON" : "OFF");
-	}
-	else
-	{
-		//PrintF("Debug prints: \n");
-		//for (int i = 0; i < 7; i++)
-		//	PrintF("% 10s : %s \n", GetPrintFlagsName(i), (GetPrintFlagsBit(i))? "ON" : "OFF");
+    char *argStr = paramsGetNext();
 
-		PrintF("Valid commands:\n");
-		PrintF(" \"ALL\"             - Turns ALL traces ON\n");
-		PrintF(" \"NONE\"            - Turns ALL traces OFF\n");
-		PrintF(" \"<NAME>\"          - Shows state of traces for <NAME>\n");
-		PrintF(" \"<NAME> <ON/OFF>\" - Turns <NAME> traces ON or OFF\n");
-	}
-	PrintF("\n");
+    if (!argStr)    // Just print all the traces without changing anything
+        affected_mask = trALL;
+
+    while ((argStr) && (!help_reqested))
+    {
+        // Check if the user passed the "?"
+        if (0 == strcasecmp(argStr, "?"))
+        {
+            help_reqested = true;
+            break; //disregard the rest of the arguments
+        }
+        // Check if the user passed the "ALL" keywords
+        else if (0 == strcasecmp(argStr, "ALL"))
+        {
+            affected_mask = trALL;
+        }
+        // Check if the user passed the "ON" or "OFF" keywords
+        else if (0 == strcasecmp(argStr, "ON")) //Should be the last argument evaluated
+        {
+            if (0 == affected_mask) //Treat as "ALL ON"
+                affected_mask = trALL;
+            state_mask = 1;
+            break; //from while loop, disregard the rest of the arguments
+        }
+        else if (0 == strcasecmp(argStr, "OFF")) //Should be the last argument evaluated
+        {
+            if (0 == affected_mask) //Treat as "ALL OFF"
+                affected_mask = trALL;
+            state_mask = 0;
+            break; //from while loop, disregard the rest of the arguments
+        }
+        else //we have to assume the user passed a flag name
+        {
+            bool found = false;
+            for (int i = 0; i < MAX_TRACE_FLAGS; i++)
+            {
+                if (0 == strcasecmp(argStr, get_trace_name(i)))
+                {
+                    affected_mask |=  _BV(i);
+                    found = true;
+                    break; //... from FOR loop
+                }
+            }
+            if (!found)
+            {
+                PrintF("Invalid trace name \"%s\"\n", argStr);
+                PrintF("\n");
+                affected_mask = 0;
+                state_mask = -1;
+                help_reqested = true;
+                break; //from while loop, disregard the rest of the arguments
+            }
+            //Allright, we found a match, let's see if the user passed a state or more flags
+        }
+        argStr = paramsGetNext();
+    }
+
+    if (0 != affected_mask) //We have some flags to get/set
+    {
+        if (state_mask != -1) //Set
+        {
+            if (1 == state_mask)
+            {
+                SetTraces(affected_mask);
+            }
+            else
+            {
+                ClearTraces(affected_mask);
+            }
+        }
+		PrintF("Traces: (0x%02X)\n", _traceMask);
+		for (int i = 0; i < MAX_TRACE_FLAGS; i++)
+        {
+    	    PrintF("% 10s : %s %s\n", get_trace_name(i), (_traceMask & _BV(i))? "ON " : "OFF", ((state_mask != -1) && (affected_mask & _BV(i)))? "*" : "");
+            // if (affected_mask & _BV(i))
+			//     PrintF("% 10s : %s\n", get_trace_name(i), (_traceMask & _BV(i))? "ON" : "OFF");
+        }
+    	PrintF("\n");
+    }
+    if (help_reqested)
+    {
+        PrintF("Valid commands:\n");
+        PrintF(" \"<NAME>\"          - Shows state of <NAME> trace(s)\n");
+        PrintF(" \"<NAME> <ON/OFF>\" - Turns <NAME> traces ON or OFF\n");
+        PrintF("\n");
+        PrintF("   Multiple <NAME>s can be specified.\n");
+        PrintF("   Options: ALL");
+        for (int i = 0; i < MAX_TRACE_FLAGS; i++)
+            PrintF(", %s", get_trace_name(i));
+        PrintF("\n");
+    	PrintF("\n");
+    }    
+    return true;
 }
+
+
 /*******************************************************************************
 
-Provides access to the debug pins through the console
-"pin ?" to see the options.
+Displays the state of the debug pins A(0 to 5)
+    "pin" - Displays the state of ALL the Debug pins A(0 to 5)
+    "pin <#>" - Displays the state of the Debug pin A<#>
+    "pin <#> Toggle/Hi/Lo/1/0/On/Off" - Sets/Changes the state of the Debug pin A<#>
+    "pin ?" - Displays the help for the "pin" command
 
  *******************************************************************************/
 #ifdef MAIN_DEBUG
-void menuPinToggle(char ** args, int arg_cnt)//void)
+bool menuPin(void)
 {
-    char * paramStr;
-    char *argStr_1;
-    char *argStr_2;
-    //char *argStr_3;
-    int argCnt = 0;
+    char *argStr = paramsGetNext();
+    bool help_reqested = help_req();
 
-    int debugPinNum;
+    if (!help_reqested)
+    {
+        if ((!argStr) || (0 == strcasecmp(argStr, "ALL")))// got "pin" only or "pin all"
+        {
+            PrintF("Debug Pin states:\n");
+            for (int i = 0; i < MAX_DEBUG_PINS; i++)
+                PrintF("\t\tA%d -> %s \n", i, debugPort[i].State? "HI" : "LO");
+            PrintF("\n");
+        }
+        //else got "pin <something>"
+        else if (0 == strcasecmp(argStr, "?")) //is it a ?
+        {
+            help_reqested = true; //Disregard the rest of the arguments
+        }
+        else if (isNaturalNumberStr(argStr)) //is it a (pin) number 
+        {
+            //We are expecting one or 2 arguments... the debug pin number and "toggle/hi/lo"
+            uint8_t debugPinNum = atoi(argStr);//= (uint8_t)((*argStr) - '0');
+    		PrintF("Pin %d identified\n", debugPinNum);
+            if (debugPinNum >= MAX_DEBUG_PINS)
+            {
+                PrintF("Please specify a debug pin from 0 to %d (got %d)\n", MAX_DEBUG_PINS-1, debugPinNum);
+                PrintF("\n");
+                return true;
+            }
+            argStr = paramsGetNext();
+            if (argStr)
+            {
+                bool state = debugPort[debugPinNum].State;
+                if (strcasecmp(argStr, "toggle") == 0)
+                    debugPort[debugPinNum].State = !debugPort[debugPinNum].State;
+                else if (strcasecmp(argStr, "hi") == 0)
+                    debugPort[debugPinNum].State = true;
+                else if (strcasecmp(argStr, "lo") == 0)
+                    debugPort[debugPinNum].State = false;
+                else
+                {
+                    help_reqested = true;
+                    PrintF("Invalid argument \"%s\"\n", argStr);
+                    PrintF("The options for Debug Pin %d are: HI, LO, or TOGGLE\n", debugPinNum);
+                    PrintF("\n");
+                    return true;
+                }
+                if (state != debugPort[debugPinNum].State)
+                    quickPinToggle(debugPort[debugPinNum].Pin, debugPort[debugPinNum].State);
 
-    paramStr = paramsItem(0);
-	//Get pointers to all the arguments
-	argStr_1 = nextWord(paramStr, true);
-	if (argStr_1)
-	{
-		argCnt++;;
-		argStr_2 = nextWord(argStr_1, true);
-		if (argStr_2)
-		{
-			argCnt++;;
-		}
-	}
+                PrintF("Debug Pin %d (%d):", debugPinNum, debugPort[debugPinNum].Pin);
+                PrintF(" %s", state? "HI" : "LO");
+                PrintF(" ->");
+                PrintF(" %s", debugPort[debugPinNum].State? "HI" : "LO");
+                PrintF("\n");
+            }
+            else
+            { 
+                //No arguments passed, 
+                PrintF("Debug Pin %d (%d):", debugPinNum, debugPort[debugPinNum].Pin);
+                PrintF(" %s", debugPort[debugPinNum].State? "HI" : "LO");
+                PrintF("\n");
+            }
+            
+            //just display the state of the pin
+            PrintF("\n");
+            return true;
+        }
+        else
+        {
+            help_reqested = true;
+            PrintF("Invalid argument \"%s\"\n", argStr);
+            PrintF("Please specify a debug pin from 0 to %d \n", MAX_DEBUG_PINS-1);
+            PrintF("\n");
+            return true;
+        }
+    }
 
-	PrintF("\"pin toggle\" %s called with \"%s\"\n", paramStr, ((argCnt >= 1)? argStr_1 : ""));
-
-	if ((paramStr) && (isdigit(*paramStr)))
-	{
-		debugPinNum = (int)((*paramStr) - '0');
-
-		PrintF("Pin %d identified\n", debugPinNum);
-
-		if ((debugPinNum >= 0) && (debugPinNum <= 5))
-		{
-			if (argCnt == 1)
-			{
-				//PrintF("Param = %s\n", argStr_1);
-
-				//we are expecting a "hi" or a "lo"
-				if (0 == strcasecmp(argStr_1, "hi"))
-					debugPort.State[debugPinNum] = true;
-				else if (0 == strcasecmp(argStr_1, "lo"))
-					debugPort.State[debugPinNum] = false;
-				else
-					argCnt = 8;
-			}
-			if (argCnt == 0)
-			{
-				//PrintF("No Param, just toggle\n");
-				//Just toggle the pin
-				debugPort.State[debugPinNum] = !debugPort.State[debugPinNum];
-			}
-			if (argCnt < 2)
-			{
-				//if (debug.State[debugPinNum])
-				//	PORTC |= _BV(debugPinNum);
-				//else
-				//	PORTC &= ~_BV(debugPinNum);
-
-				quickPinToggle(debugPort.Pin[debugPinNum], debugPort.State[debugPinNum]);
-				//digitalWrite(debug.Port[debugPinNum], (debug.State[debugPinNum])? HIGH : LOW);
-				PrintF("Debug Pin A%d -> %s \n", debugPinNum , debugPort.State[debugPinNum]? "HI" : "LO");
-				PrintF("\n");
-				return;
-			}
-		}
-	}
-
-	PrintF("Valid Toggle commands are:\n");
-	PrintF(" \"<#> <HI/LO>\" - Sets the debug pin A(0 to 5) hi or lo\n");
-	PrintF(" \"<#>\" - Toggles the debug pin A(0 to 5)\n");
+    if (help_reqested)
+    {
+        PrintF("Valid Pin arguments are:\n");
+        PrintF(" \"ALL\" or \"\" - Displays the state of ALL pins");
+        PrintF(" (0 to %d)\n", MAX_DEBUG_PINS-1);
+        PrintF(" \"<#>\" - Displays state of pin");
+        PrintF(" (0 to %d)\n", MAX_DEBUG_PINS-1);
+        PrintF(" \"<#> <HI/LO>\" - Sets the state of pin");
+        PrintF(" (0 to %d)\n", MAX_DEBUG_PINS-1);
+        PrintF(" \"<#>\" - Toggles the state of pin");
+        PrintF(" (0 to %d)\n", MAX_DEBUG_PINS-1);
+        PrintF("\n");
+    }
+    return false;
+}
+void menuPinToggle(void)
+{
+	PrintF("NOT IMPLEMENTED\n");
 	PrintF("\n");
 }
-void menuPinHi(char ** args, int arg_cnt)//void)
+void menuPinHi(void)
 {
-    char * paramStr;
-    char *argStr_1;
-    char *argStr_2;
-    //char *argStr_3;
-    int argCnt = 0;
-
-    int debugPinNum;
-
-    paramStr = paramsItem(0);
-	//Get pointers to all the arguments
-	argStr_1 = nextWord(paramStr, true);
-	if (argStr_1)
-	{
-		argCnt++;;
-		argStr_2 = nextWord(argStr_1, true);
-		if (argStr_2)
-		{
-			argCnt++;;
-		}
-	}
-
-	//PrintF("Toggle %s called with \"%s\"\n", paramStr, ((argCnt >= 1)? argStr_1 : ""));
-
-	// if no parameter passed then assume the user wanted RPM
-	if ((paramStr) && (isdigit(*paramStr)))
-	{
-		debugPinNum = (int)((*paramStr) - '0');
-
-		//PrintF("Pin %d identified\n", debugPinNum);
-
-		if ((debugPinNum >= 0) && (debugPinNum <= 5))
-		{
-			if (argCnt == 1)
-			{
-				//PrintF("Param = %s\n", argStr_1);
-
-				//we are expecting a "hi" or a "lo"
-				if (0 == strcasecmp(argStr_1, "hi"))
-					debugPort.State[debugPinNum] = true;
-				else if (0 == strcasecmp(argStr_1, "lo"))
-					debugPort.State[debugPinNum] = false;
-				else
-					argCnt = 8;
-			}
-			if (argCnt == 0)
-			{
-				//PrintF("No Param, just toggle\n");
-				//Just toggle the pin
-				debugPort.State[debugPinNum] = !debugPort.State[debugPinNum];
-			}
-			if (argCnt < 2)
-			{
-				//if (debug.State[debugPinNum])
-				//	PORTC |= _BV(debugPinNum);
-				//else
-				//	PORTC &= ~_BV(debugPinNum);
-
-				quickPinToggle(debugPort.Pin[debugPinNum], debugPort.State[debugPinNum]);
-				//digitalWrite(debug.Port[debugPinNum], (debug.State[debugPinNum])? HIGH : LOW);
-				PrintF("Debug Pin A%d -> %s \n", debugPinNum , debugPort.State[debugPinNum]? "HI" : "LO");
-				PrintF("\n");
-				return;
-			}
-		}
-	}
-
-	PrintF("Valid Toggle commands are:\n");
-	PrintF(" \"<#> <HI/LO>\" - Sets the debug pin A(0 to 5) hi or lo\n");
-	PrintF(" \"<#>\" - Toggles the debug pin A(0 to 5)\n");
+	PrintF("NOT IMPLEMENTED\n");
 	PrintF("\n");
 }
-void menuPinLo(char ** args, int arg_cnt)//void)
+void menuPinLo(void)
 {
-    char * paramStr;
-    char *argStr_1;
-    char *argStr_2;
-    //char *argStr_3;
-    int argCnt = 0;
-
-    int debugPinNum;
-
-    paramStr = paramsItem(0);
-	//Get pointers to all the arguments
-	argStr_1 = nextWord(paramStr, true);
-	if (argStr_1)
-	{
-		argCnt++;;
-		argStr_2 = nextWord(argStr_1, true);
-		if (argStr_2)
-		{
-			argCnt++;;
-		}
-	}
-
-	//PrintF("Toggle %s called with \"%s\"\n", paramStr, ((argCnt >= 1)? argStr_1 : ""));
-
-	// if no parameter passed then assume the user wanted RPM
-	if ((paramStr) && (isdigit(*paramStr)))
-	{
-		debugPinNum = (int)((*paramStr) - '0');
-
-		//PrintF("Pin %d identified\n", debugPinNum);
-
-		if ((debugPinNum >= 0) && (debugPinNum <= 5))
-		{
-			if (argCnt == 1)
-			{
-				//PrintF("Param = %s\n", argStr_1);
-
-				//we are expecting a "hi" or a "lo"
-				if (0 == strcasecmp(argStr_1, "hi"))
-					debugPort.State[debugPinNum] = true;
-				else if (0 == strcasecmp(argStr_1, "lo"))
-					debugPort.State[debugPinNum] = false;
-				else
-					argCnt = 8;
-			}
-			if (argCnt == 0)
-			{
-				//PrintF("No Param, just toggle\n");
-				//Just toggle the pin
-				debugPort.State[debugPinNum] = !debugPort.State[debugPinNum];
-			}
-			if (argCnt < 2)
-			{
-				//if (debug.State[debugPinNum])
-				//	PORTC |= _BV(debugPinNum);
-				//else
-				//	PORTC &= ~_BV(debugPinNum);
-
-				quickPinToggle(debugPort.Pin[debugPinNum], debugPort.State[debugPinNum]);
-				//digitalWrite(debug.Port[debugPinNum], (debug.State[debugPinNum])? HIGH : LOW);
-				PrintF("Debug Pin A%d -> %s \n", debugPinNum , debugPort.State[debugPinNum]? "HI" : "LO");
-				PrintF("\n");
-				return;
-			}
-		}
-	}
-
-	PrintF("Valid Toggle commands are:\n");
-	PrintF(" \"<#> <HI/LO>\" - Sets the debug pin A(0 to 5) hi or lo\n");
-	PrintF(" \"<#>\" - Toggles the debug pin A(0 to 5)\n");
+	PrintF("NOT IMPLEMENTED\n");
 	PrintF("\n");
 }
 #endif /* MAIN_DEBUG */
@@ -1104,15 +1157,13 @@ void * Src,           // ptr to memory to dump
 unsigned long Address,       // address to display
 unsigned short Len)               // nr of bytes to dump
 */
-void DumpMem(int Flags, void * Src, unsigned long Address, int Len)
+void Print_RAM(int Flags, void * Src, unsigned long Address, int Len)
 {
 u8 *s;
 u8 x;
 u16 cnt;
-
-	// Are we even bothering to print this?
-	if ((traceMask & Flags) == trNONE)
-		return;
+//RAMSTART     (0x100)
+//RAMEND       0x8FF     /* Last On-Chip SRAM Location */
 
 	s = (u8 *)Src;
 
@@ -1149,55 +1200,24 @@ u16 cnt;
 //  iprintf(Flags, "\n");
 }
 
-#ifdef MAIN_DEBUG
-/*******************************************************************************
-
- Display program version info
-
- *******************************************************************************/
-void menuVersion(char ** args, int arg_cnt)//void)
+void Print_FLASH(int Flags, void * Src, unsigned long Address, int Len)
 {
-	PrintF("VER %s\n", PROG_VERSIONSTRING);
-}
+    u8 buf[16];
+    u8 *s = (u8 *)Src;
 
-/*******************************************************************************
-
- Reads or Sets the system time.
-
- *******************************************************************************/
-void menuTime(char ** args, int arg_cnt)//void)
-{
-	PrintF("Running for %lu s\n", ((long)millis() / 1000));
-}
-
-/*******************************************************************************
-
- Resets the system
-
- *******************************************************************************/
-void menuReset(char ** args, int arg_cnt)//void)
-{
-	char *paramStr;
-	// if no parameter passed then just open the gate
-	paramStr = paramsItem(0);
-
-	if (!paramStr)
+	while(Len)
 	{
-		PrintF("Now type 'reset Y', IF YOU ARE SURE.\n");
-		return;
+        for (int i = 0; i < 16; i++)
+            buf[i] = pgm_read_byte(s++);
+        
+        Print_RAM(Flags, buf, Address, 16);
+		Address += 16;
+		Len     -= 16;
 	}
-	if (*(char *)paramStr != 'Y')
-	{
-		PrintF("'reset Y' expected. Start over.\n");
-		return;
-	}
-	// ok, do the reset.
-	PrintF("Resetting. Goodbye, cruel world!\n");
-	Serial.flush();
 
-	resetFunc();
+//  iprintf(Flags, "\n");
 }
-#endif /* MAIN_DEBUG */
-#endif /* CONSOLE_MENU */
+
+#endif /* CONSOLE_ENABLED */
 
 /*************************** END OF FILE *************************************/

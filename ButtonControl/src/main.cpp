@@ -50,7 +50,7 @@
 //#include "appPidControl.h"
 //#include "appWaveGen.h"
 #include "version.h"
-#ifdef CONSOLE_MENU
+#ifdef CONSOLE_ENABLED
 #include "dev_console.h"
 #else
 #include "devComms.h"
@@ -69,11 +69,12 @@
  *******************************************************************************/
 //Menu Commands (without any owners)
 #ifdef MAIN_DEBUG
-#ifdef CONSOLE_MENU
-void menuTime(char ** args, int arg_cnt);
-void menuReset(char ** args, int arg_cnt);
-void menuVersion(char ** args, int arg_cnt);
-#endif /* CONSOLE_MENU */
+#ifdef CONSOLE_ENABLED
+void(*resetFunc)(void) = 0; //declare reset function at address 0
+bool menuTime(void);
+bool menuReset(void);
+bool menuVersion(void);
+#endif /* CONSOLE_ENABLED */
 #endif /* MAIN_DEBUG */
 
 /*******************************************************************************
@@ -81,11 +82,11 @@ void menuVersion(char ** args, int arg_cnt);
  *******************************************************************************/
 //The help menu structures
 #ifdef MAIN_DEBUG
-#ifdef CONSOLE_MENU
+#ifdef CONSOLE_ENABLED
 static st_console_menu_item devMenuItem_time = { "time", menuTime, "Returns the system time" };
 static st_console_menu_item devMenuItem_reset = { "reset", menuReset, "Resets the system" };
 static st_console_menu_item devMenuItem_version = { "version", menuVersion, "Display firmware version" };
-#endif /* CONSOLE_MENU */
+#endif /* CONSOLE_ENABLED */
 #endif /* MAIN_DEBUG */
 //int SystemState;		/* Movement State Machine variable */
 
@@ -128,22 +129,19 @@ void setup() {
 #endif /* MAIN_DEBUG */
 
 
+    hal_pwm_start(0.01, 1);
+
 	//Set the print traces we want...
-	SetTrace(trALL);
-	ClearTrace(GetTraceIndex("RGB"));
-	ClearTrace(GetTraceIndex("Button"));
-	ClearTrace(GetTraceIndex("I2C"));
+	SetTraces(trALL);
+	ClearTraces(GetTraceMask("RGB"));
+	ClearTraces(GetTraceMask("Button"));
+	ClearTraces(GetTraceMask("I2C"));
 
 	SetStatus(statusOK);
 
-    hal_pwm_menu_init();
-    if (hal_pwm_start(0.01, 4))
-    {
-        iPrintF(trALWAYS, "PWM started at %s Hz\n", floatToStr(hal_pwm_get_frequency(), 2));
-    }
     hal_pwm_assign_pin(13);
     
-	msTimerStart(&debugTmr, 100L);	//Does something every 100ms
+	msTimerStart(&debugTmr, 10L);	//Does something every 100ms
 
 }
 
@@ -151,13 +149,82 @@ void loop() {
 	// put your main code here, to run repeatedly:
 
 	//Check for anything coming in on the Serial Port and process it
-	Read();
+	Console_Read();
+
+    //static uint8_t dc = 0;
 	//devComms::Read();
 
 	if (msTimerPoll(&debugTmr))
 	{
 		//iPrintF(trMAIN, "Running for %lu s\n", SecondCount());
-        hal_pwm_inc_duty_cycle(13, true);
+        // if (dc > 100)
+        //     dc = 0;
+        // hal_pwm_set_duty_cycle_percent(13, dc++);
+        //hal_pwm_inc_duty_cycle(13, true);
 		msTimerReset(&debugTmr);
 	}
 }
+
+#ifdef MAIN_DEBUG
+#ifdef CONSOLE_ENABLED
+/*******************************************************************************
+
+ Display program version info
+
+ *******************************************************************************/
+bool menuVersion(void)
+{
+	PrintF("VER %s\n", PROG_VERSIONSTRING);
+    return true;
+}
+
+/*******************************************************************************
+
+ Reads or Sets the system time.
+
+ *******************************************************************************/
+bool menuTime(void)
+{
+	PrintF("Running for %lu s\n", ((long)millis() / 1000));
+    return true;
+}
+
+/*******************************************************************************
+
+ Resets the system
+
+ *******************************************************************************/
+bool menuReset(void)
+{
+    static bool reset_lock = false;
+	// if no parameter passed then just open the gate
+
+    char *argStr = paramsGetNext();
+
+	if (!reset_lock)
+    {
+        if (!argStr)
+        {
+            reset_lock = true;
+            PrintF("Now type 'reset Y', IF YOU ARE SURE.\n");
+            return true;
+        }
+        PrintF("No arguments expected (got \"%s\").\n", argStr);
+    }
+    else //if (reset_lock)
+    {
+		if (0 == strcasecmp(argStr, "Y"))
+        {
+            // ok, do the reset.
+            PrintF("Resetting. Goodbye, cruel world!\n");
+            Serial.flush();
+            resetFunc();
+            return true;
+        }        
+        PrintF("'reset Y' expected. Starting over.\n");
+    }
+    reset_lock = false;
+    return true;
+}
+#endif /* CONSOLE_ENABLED */
+#endif /* MAIN_DEBUG */
