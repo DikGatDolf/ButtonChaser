@@ -34,20 +34,6 @@ typedef signed long s32;
 
 #define CRC_POLYNOMIAL 0x8C
 
-#define trMAIN		0x01
-#define trCONSOLE	0x02
-#define trRGB		0x04
-#define trBUTTON	0x08
-#define trI2C		0x10
-#define trPWM		0x20
-#define trYYY		0x40
-
-#define MAX_TRACE_FLAGS	6
-
-#define trALWAYS	0x80
-#define trALL		0xFF
-#define trNONE		0x00
-
 #define statusOK			0x01	/* Done */
 //#define statusMOVING		0x02	/* Done */
 //#define statusDIRECTION		0x04	/* Done */
@@ -74,13 +60,7 @@ typedef signed long s32;
 Macros
 ******************************************************************************/
 
-//#ifdef CONSOLE_ENABLED
-//	#define iPrintF(traceflags, fmt, ...) _SerialPrintf(traceflags, PSTR(fmt), ##__VA_ARGS__)
-//	#define PrintF(fmt, ...) _SerialPrintf(PSTR(fmt), ##__VA_ARGS__)
-//#else
-//	#define iPrintF(traceflags, fmt, ...) devComms::DoNothing(traceflags, PSTR(fmt), ##__VA_ARGS__) /* {	}  */
-//	#define PrintF(fmt, ...) devComms::_SerialPrintf(PSTR(fmt), ##__VA_ARGS__)
-//#endif
+#define ARRAY_SIZE(_array) (sizeof(_array) / sizeof((_array)[0]))
 
 /******************************************************************************
 Struct & Unions
@@ -112,21 +92,11 @@ const PROGMEM int pinDEBUG_5 	= 19;
 /******************************************************************************
 functions
 ******************************************************************************/
-int setFloatParam(float * param, float value, float min_Limit, float max_Limit);
-
-#ifdef CONSOLE_ENABLED
-	int setFloatParam(char * name, char * paramStr, char * valueStr, float * param, float min_Limit, float max_Limit);
-	int setFloatParam(char * name, char * paramStr, char * valueStr, float * param);
-	float FloatMathStr(char * Src, float floatValue);
-#endif /* CONSOLE_ENABLED */
-
-float FloatMathStr(char * Src, float value, bool absolute);
-char * floatToStr(float val, int precision);
-//	char * floatToStr(float fVal, int precision, char * dst, int maxlen);
-float FloatMathStr(char * Src, float value);
-bool isHexStr(char * str);
-byte hexToByte(char * hexDigits);
-byte charToNibble(char hexDigit);
+/*! An attempt to manage my outpts without the use of digitalWrite and a subsequent
+ *  f@#$ing about with clearing the interrupt flag
+ * @param[in] pin The pin to toggle
+ * @param[in] state The state to set the pin to
+*/
 void quickPinToggle(uint8_t pin, bool state);
 int quickPinRead(uint8_t pin);
 int debounceInput(ST_PIN_DEBOUNCE * input, int level, int count);
@@ -138,18 +108,6 @@ byte crc8_str(byte crc_start, const char *str);
 byte crc8_str_n(const byte *data, byte len);
 byte crc8_str_n(byte crc_start, const byte *data, byte len);
 byte crc8(byte crc_start, byte data);
-
-//char * SatusWordBinStr();
-char * TmpStrPrintf(char *dst, int len, const char *fmt, ...);
-char * TmpStrPrintf(const char *fmt, ...);
-
-bool isNaturalNumberStr(char * str);
-bool isFloatStr(char * str);
-
-void SetStatus(byte statusMask);
-void ClearStatus(byte statusMask = 0xFF);
-void ToggleStatus(byte statusMask, bool flag);
-bool GetStatus(byte statusMask);
 
 #endif /* __STD_UTILS_H__ */
 

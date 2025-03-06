@@ -28,12 +28,18 @@ Struct & Unions
 // structs
 typedef struct
 {
-  unsigned long msExpire;   // 1ms ~ 49 days.
-  unsigned long msPeriod;   // 1ms ~ 49 days.
-  bool Enabled;
-  bool Expired;
-} ST_MS_TIMER;
+  unsigned long ms_expire;   // 1ms ~ 49 days.
+  unsigned long ms_period;   // 1ms ~ 49 days.
+  bool enabled;
+  bool expired;
+  bool reload_mode; 
+} Timer_ms_t;
 
+typedef struct Stopwatch_ms_t
+{
+	unsigned long tick_start;   // 1ms ~ 49 days.
+	bool running;
+} Stopwatch_ms_t;
 /******************************************************************************
 variables
 ******************************************************************************/
@@ -42,12 +48,82 @@ variables
 functions
 ******************************************************************************/
 
-//devTimers(void);
-void msTimerStart(ST_MS_TIMER *t, unsigned long interval);
-void msTimerStop(ST_MS_TIMER *t);
-bool msTimerReset(ST_MS_TIMER *t);
-bool msTimerPoll(ST_MS_TIMER *t, bool restart = false);
-bool msTimerEnabled(ST_MS_TIMER *t);
+/*! Sets the timers interval and starts it. 
+ * @param t         a pointer to a static Timer_ms_t 
+ * @param interval  period (in ms) after which to expire (unsigned long)
+ * @param reload    Setting reload to true will ensure that a timer automatically 
+ *                  reset itself at the next poll after expiry
+ */
+void sys_poll_tmr_start(Timer_ms_t *t, unsigned long interval, bool reload);
+
+/** Resets the timers to its previously set interval and starts it (again). 
+ * Will only succeed if the interval has been set before.
+ * @param t a pointer to a static Timer_ms_t 
+ * @returns true if the timer could be enabled, false if not.
+*/
+bool sys_poll_tmr_reset(Timer_ms_t *t);
+
+/** Stops the timer. 
+ * DO NOT POLL A TIMER THAT HAS BEEN STOPPED.
+ * When polling a stopped timer, it will appear like it has not expired and it
+ * will never expire (the Poll will return false ad infinitum) .
+ * @param t a pointer to a static Timer_ms_t 
+*/
+void sys_poll_tmr_stop(Timer_ms_t *t);
+
+/** Check the timer to see if it has expired.
+ * Returns TRUE if the timer has expired, but only if it is still enabled. 
+ * If a timer has been stopped, it will always return false when polled, 
+ * appearing as if it doesn't expire.
+ * If the auto reload has been enabled, the timer will immediately be set to 
+ * expire (again) at the next interval period.  
+ * MAKE SURE THE TIMER IS POLLED AT LEAST 2x FASTER THAN THE INTERVAL PERIOD, 
+ * if the auto reload has been enabled... for an explanation of this, read up
+ * on Nyquist's theorem.
+ * @param t a pointer to a static Timer_ms_t 
+ * @returns true if the timer has expired, false otherwise
+*/
+bool sys_poll_tmr_expired(Timer_ms_t *t);
+
+/** Check if a timer is enabled
+ * @param t a pointer to a static Timer_ms_t 
+ * @returns true if the timer is enabled, false otherwise
+*/
+bool sys_poll_tmr_enabled(Timer_ms_t *t);
+
+/** Check if a timer is running. 
+ * NOTE: A timer running in auto-reload mode will ALWAYS appear to be running
+ * @param t a pointer to a static Timer_ms_t 
+ * @returns true if the timer is running, false otherwise
+*/
+bool sys_poll_tmr_is_running(Timer_ms_t *t);
+
+/** Starts a stopwatch (passed as a pointer)
+ * @param sw a pointer to a static Stopwatch_ms_t
+*/
+void sys_stopwatch_ms_start(Stopwatch_ms_t* sw);
+
+/*! returns the elapsed time in ms, without stopping or resetting the stopwatch
+ * @param sw a pointer to a static Stopwatch_ms_t
+ * @returns the elapsed time in ms
+*/
+unsigned long sys_stopwatch_ms_lap(Stopwatch_ms_t* sw);
+
+/*! returns the elapsed time in ms, and resetting the stopwatch
+ * @param sw a pointer to a static Stopwatch_ms_t
+ * @returns the elapsed time in ms
+*/
+unsigned long sys_stopwatch_ms_reset(Stopwatch_ms_t* sw);
+
+/*1 Stops a stopwatch (passed as a pointer) and returns the elapsed time in ms
+ * IMPORTANT: this stopwatch timer wraps at 1193h 2min 47.296s
+ * @param sw a pointer to a static Stopwatch_ms_t
+ * @returns the elapsed time in ms
+*/
+unsigned long sys_stopwatch_ms_stop(Stopwatch_ms_t* sw);
+
+/*! * @returns the number of seconds since the system started
+*/
 unsigned long SecondCount(void);
 
 #endif /* __HAL_TIMERS_H__ */

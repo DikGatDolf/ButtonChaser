@@ -12,12 +12,12 @@ The timer will act as a one-shot timer in normal operation.
 To make the timer behave as a recurring timer, reload the interval and start
 the timer once it has expired (using TimerStart()).
 
-The General Timer (ST_MS_TIMER type) - 1 kHz granularity
+The General Timer (Timer_ms_t type) - 1 kHz granularity
 The general Timers enables the program to create a downcounter with a
 preloaded value. This timer will then decrement every 1 ms until it has
 expired.
 Usage:
-The module making use of the timers must host a ST_MS_TIMER structure in RAM and
+The module making use of the timers must host a Timer_ms_t structure in RAM and
 add it to the linked list (TimerAdd) to ensure that it is maintained.
 Removing it from the linked list (TimerRemove) will  make it dormant.
 The Timer must be polled (TimerPoll) to see when it has expired
@@ -31,11 +31,17 @@ The Timer must be polled (TimerPoll) to see when it has expired
 #include "dev_console.h"
 #include "Arduino.h"
 #include "std_utils.h"
+#include "str_helper.h"
+
+#ifdef PRINTF_TAG
+#undef PRINTF_TAG
+#endif
+#define PRINTF_TAG ("PWM") /* This must be undefined at the end of the file*/
 
 /*******************************************************************************
 local defines
  *******************************************************************************/
-#define MAX_PWM_PINS	6
+#define MAX_PWM_PINS	4
 #define MAX_RESOLUTION	100
 
 typedef struct
@@ -56,21 +62,23 @@ typedef struct
 } st_pwm;
 
 #ifdef CONSOLE_ENABLED
-bool menuPWM(void);
+void _hal_pwm_menu_handler(void);
 #endif /* CONSOLE_ENABLED */
+
 void set_adjusted_duty_cycle(uint8_t index, int8_t target_dc);
 
 /*******************************************************************************
 local variables
  *******************************************************************************/
 #ifdef CONSOLE_ENABLED
-static st_console_menu_item hal_pwm_menu = { "pwm", menuPWM, "PWM Commands"};
+static console_menu_item_t _hal_pwm_menu_items[] =
+{
+    { "pwm", _hal_pwm_menu_handler, "PWM Commands"},
+};
 #endif /* CONSOLE_ENABLED */
 
 st_pwm hal_pwm;
 volatile uint8_t hal_pwm_tcnt2;
-
-char hal_pwm_tag[] = "[PWM]";
 
 /* Human perceived brightness is not linear... so we use a lookup table to 
     create the logarithmic curve for increasing brightness. 
@@ -140,12 +148,12 @@ bool hal_pwm_start(double period, int8_t percent_inc)
 	uint16_t prescaler_index = 0;
 
 #ifdef CONSOLE_ENABLED
-    addMenuItem(&hal_pwm_menu);
+    console_add_menu("hal", _hal_pwm_menu_items, ARRAY_SIZE(_hal_pwm_menu_items), "PWM Commands");
 #endif /* CONSOLE_ENABLED */
 
 	if ((hal_pwm.active) || (hal_pwm.pin_count > 0))
 	{
-		iPrintF(trPWM | trALWAYS, "%sAlready running with %d pin(s)\n", hal_pwm_tag, hal_pwm.pin_count);
+		iprintln(trPWM | trALWAYS, "#Already running with %d pin(s)", hal_pwm.pin_count);
 		return false;
 	} 	//Otherwise we can go ahead and re-initialize the PWM
 
@@ -164,11 +172,11 @@ bool hal_pwm_start(double period, int8_t percent_inc)
 		hal_pwm.percent_inc = percent_inc;
 	}
 
-    //iPrintF(trPWM | trALWAYS, "%sResolution = %d\n", hal_pwm_tag, hal_pwm_get_resolution());
+    //iprintln(trPWM | trALWAYS, "#Resolution = %d", hal_pwm_get_resolution());
 
 	double target_frequency = 100.0/period/hal_pwm.percent_inc;
 	
-    //iPrintF(trPWM, "%sTarget Freq = %s Hz\n", hal_pwm_tag, floatToStr(target_frequency, 2));
+    //iprintln(trPWM, "#Target Freq = %s Hz", floatToStr(target_frequency, 2));
 
 	//We want to find the prescaler that will give us the closest match to the desired period
 	//Typically one can assume that a lower presacaler will give less error, so we start from the lowest prescaler value
@@ -183,12 +191,15 @@ bool hal_pwm_start(double period, int8_t percent_inc)
 
 	if (prescaler_index >= 7) 
 	{
+        char freq_str[16];
+        if (!float2str(freq_str, target_frequency, 3, 16))
+            snprintf(freq_str, 16, "%d.????", (int)target_frequency);
 		//We could not find a prescaler that will give us the desired period
-		iPrintF(trPWM | trALWAYS, "%sCould not achieve %s Hz\n", hal_pwm_tag, floatToStr(target_frequency, 2));
+		iprintln(trPWM | trALWAYS, "#Could not achieve %s Hz", freq_str);
 		return false;
 	}
 
-    //iPrintF(trPWM | trALWAYS, "%sPrescaler = %d\n", hal_pwm_tag, hal_pwm.prescaler);
+    //iprintln(trPWM | trALWAYS, "#Prescaler = %d", hal_pwm.prescaler);
 
 	TIMSK2 &= ~(1<<TOIE2);					// Make sure the timer is stopped
 	TCCR2A &= ~((1<<WGM21) | (1<<WGM20));	// NORMAL MODE
@@ -232,7 +243,7 @@ bool hal_pwm_start(double period, int8_t percent_inc)
 	}
 
 	hal_pwm_tcnt2 = (256 - (uint8_t)((float)F_CPU / target_frequency / hal_pwm.prescaler));
-    //iPrintF(trPWM | trALWAYS, "%sTCNT2 = %d\n", hal_pwm_tag, hal_pwm_tcnt2);
+    //iprintln(trPWM | trALWAYS, "#TCNT2 = %d", hal_pwm_tcnt2);
 	hal_pwm.dc_cnt = 0;
 
 	TCNT2 = hal_pwm_tcnt2;
@@ -240,8 +251,10 @@ bool hal_pwm_start(double period, int8_t percent_inc)
 
 	hal_pwm.active = true;
 
-    iPrintF(trALWAYS, "PWM is ");
-    PrintF("running at %s Hz (%d%% Resolution)", floatToStr(((float)F_CPU)/((float)(256 - hal_pwm_tcnt2)*hal_pwm.prescaler*(MAX_RESOLUTION/hal_pwm.percent_inc)), 2), hal_pwm.percent_inc);
+    char freq_str[16];
+    if (!float2str(freq_str, ((float)F_CPU)/((float)(256 - hal_pwm_tcnt2)*hal_pwm.prescaler*(MAX_RESOLUTION/hal_pwm.percent_inc)), 2, 16))
+        snprintf(freq_str, 16, "%d.????", (int)(((float)F_CPU)/((float)(256 - hal_pwm_tcnt2)*hal_pwm.prescaler*(MAX_RESOLUTION/hal_pwm.percent_inc))));
+    iprintln(trPWM|trALWAYS, "#PWM is running at %s Hz (%d%% Resolution)", freq_str, hal_pwm.percent_inc);
 	return true;
 }
 
@@ -276,7 +289,7 @@ uint8_t hal_pwm_assign_pin(int pin, int8_t duty_cycle_percent)
 	// Do we have space for another pin?
 	if (hal_pwm.pin_count == MAX_PWM_PINS)
 	{
-		iPrintF(trPWM | trALWAYS, "%sMax # of PWM pins assigned (%d)\n", hal_pwm_tag, MAX_PWM_PINS);
+		iprintln(trPWM | trALWAYS, "#Max # of PWM pins assigned (%d)", MAX_PWM_PINS);
 		return -1;
 	}
 
@@ -285,7 +298,7 @@ uint8_t hal_pwm_assign_pin(int pin, int8_t duty_cycle_percent)
 	{
 		if (hal_pwm.pin[pin_index].pin_nr == pin)
 		{
-			iPrintF(trPWM, "\n%sPin %d already added (%d)\n", hal_pwm_tag, pin, pin_index);
+			iprintln(trPWM, "#Pin %d already added (%d)", pin, pin_index);
             //Just change the duty cycle
             set_adjusted_duty_cycle(pin_index, duty_cycle_percent);
 			return pin_index;
@@ -300,7 +313,7 @@ uint8_t hal_pwm_assign_pin(int pin, int8_t duty_cycle_percent)
 	hal_pwm.pin[pin_index].duty_cycle_adj = duty_cycle_percent;
 	hal_pwm.pin[pin_index].pin_nr = pin;
 
-	iPrintF(trPWM, "\n%sPin %d added (%d)\n", hal_pwm_tag, pin, pin_index);
+	iprintln(trPWM, "#Pin %d added (%d)", pin, pin_index);
 
 	hal_pwm.pin_count++;
 	return pin_index;
@@ -453,138 +466,124 @@ void hal_pwm_dec_duty_cycle(int pin, bool wrap)
 }
 
 #ifdef CONSOLE_ENABLED
-bool menuPWM(void)
+void _hal_pwm_menu_handler(void)
 {
-    char *argStr = paramsGetNext();
-    bool help_reqested = help_req();
+    char *argStr = console_arg_pop();
+    bool help_reqested = false;
 
-    if (!help_reqested)
+    if (!argStr) // Show the current state of the PWM
     {
-        if (!argStr) // Show the current state of the PWM
+        iprint(trALWAYS, "PWM is ");
+        if(hal_pwm.active)
         {
-            PrintF("PWM is ");
-            if(hal_pwm.active)
-            {
-                PrintF("running at %s Hz (%d%% Resolution)", floatToStr(((float)F_CPU)/((float)(256 - hal_pwm_tcnt2)*hal_pwm.prescaler*(MAX_RESOLUTION/hal_pwm.percent_inc)), 2), hal_pwm.percent_inc);
-            }
-            else
-            {
-                PrintF("stopped");
-            } 
-            PrintF("\n");
-            if (hal_pwm.pin_count > 0)
-            {
-                PrintF("\t%d/%d ", hal_pwm.pin_count, MAX_PWM_PINS);
-                PrintF("PWM pins");
-                PrintF(":");
-                PrintF("\n");
-            	for (int i = 0; (i < hal_pwm.pin_count) && (hal_pwm.pin_count > 0); i++)
-                {
-                    if (hal_pwm.pin[i].pin_nr >= 0)
-                        PrintF("\t\t%d) Pin %d : %d%% (%d%%)\n", i, hal_pwm.pin[i].pin_nr, hal_pwm.pin[i].duty_cycle_target, hal_pwm.pin[i].duty_cycle_adj);
-                }
-            }
-            else
-            {
-                PrintF("\tNO ");
-                PrintF("PWM pins");
-                PrintF(" assigned");
-            }
-            PrintF("\n");
-        }
-        //else got "pwm <something>"
-        else if (0 == strcasecmp(argStr, "?")) //is it a ?
-        {
-            help_reqested = true; //Disregard the rest of the arguments
-        }
-        else if (isNaturalNumberStr(argStr)) //is it a (pin) number 
-        {
-            //We are expecting 1 or 2 arguments... the pwm pin number and a duty cycle percentage
-            uint8_t pwmPinNum = atoi(argStr);
-            st_pwm_pin *pwmPin = NULL;
-            int8_t dc_target;
-            int8_t dc_adj;
-
-            for (int i = 0; i < hal_pwm.pin_count; i++)
-            {
-                if (hal_pwm.pin[i].pin_nr == pwmPinNum)
-                    pwmPin = &hal_pwm.pin[i];
-            }
-
-            if (NULL == pwmPin)
-            {
-                PrintF("Please specify a valid PWM-assigned pin nr [");
-                for (int i = 0; i < hal_pwm.pin_count; i++)
-                {
-                    PrintF("%d", hal_pwm.pin[i].pin_nr);
-                    if (i < (hal_pwm.pin_count-1))
-                        PrintF(", ");
-                    else
-                        PrintF("] (got %d)\n", pwmPinNum);
-                }
-                PrintF("\n");
-                return true;
-            }
-
-            PrintF("PWM Pin %d identified\n", pwmPin->pin_nr);
-            dc_target = pwmPin->duty_cycle_target;
-            dc_adj = pwmPin->duty_cycle_adj;
-
-            argStr = paramsGetNext();
-            if (argStr)
-            {
-                if (isNaturalNumberStr(argStr)) //is it a valid duty cycle percentage
-                {
-                    int pwm_percent = atoi(argStr);
-
-                    if ((pwm_percent < 0) || (pwm_percent > MAX_RESOLUTION))
-                    {
-                        PrintF("Please specify a duty cycle percentage from 0 and %d", MAX_RESOLUTION);
-                        PrintF(" (got %d)\n", pwm_percent);
-                    }
-                    else
-                    {
-                        hal_pwm_set_duty_cycle_percent(pwmPin->pin_nr, pwm_percent);
-                            
-                        PrintF("PWM Pin %d : %d%% (%d%%)", pwmPin->pin_nr, dc_target, dc_adj);
-                        PrintF(" -> %d%% (%d%%)\n", pwmPin->duty_cycle_target, pwmPin->duty_cycle_adj);
-                    }
-                }
-                else
-                {
-                    PrintF("Invalid argument \"%s\"\n", argStr);
-                    PrintF("Please specify a duty cycle percentage from 0 and %d", MAX_RESOLUTION);
-                    PrintF("\n");
-                }
-                PrintF("\n");
-                return true;
-            }
-            //else //No arguments passed, 
-            //just display the state of the pin
-            PrintF("PWM Pin %d : %d%% (%d%%)", pwmPin->pin_nr, dc_target, dc_adj);
-            PrintF("\n");
-            PrintF("\n");
-            return true;
+            char freq_str[16];
+            if (!float2str(freq_str, ((float)F_CPU)/((float)(256 - hal_pwm_tcnt2)*hal_pwm.prescaler*(MAX_RESOLUTION/hal_pwm.percent_inc)), 2, 16))
+                snprintf(freq_str, 16, "%d.????", (int)(((float)F_CPU)/((float)(256 - hal_pwm_tcnt2)*hal_pwm.prescaler*(MAX_RESOLUTION/hal_pwm.percent_inc))));
+            iprintln(trALWAYS, "running at %s Hz (%d%% Resolution)", freq_str, hal_pwm.percent_inc);
         }
         else
         {
-            help_reqested = true;
-            PrintF("Invalid argument \"%s\"\n", argStr);
-            PrintF("\n");
+            iprintln(trALWAYS, "stopped");
+        } 
+        if (hal_pwm.pin_count > 0)
+        {
+            iprintln(trALWAYS, "  %d/%d PWM pins:", hal_pwm.pin_count, MAX_PWM_PINS);
+            for (int i = 0; (i < hal_pwm.pin_count) && (hal_pwm.pin_count > 0); i++)
+            {
+                if (hal_pwm.pin[i].pin_nr >= 0)
+                    iprintln(trALWAYS, "    %d) Pin %d : %d%% (%d%%)", i, hal_pwm.pin[i].pin_nr, hal_pwm.pin[i].duty_cycle_target, hal_pwm.pin[i].duty_cycle_adj);
+            }
         }
+        else
+        {
+            iprintln(trALWAYS, "  NO PWM pins assigned");
+        }
+    }
+    //else got "pwm <something>"
+    else if (0 == strcasecmp(argStr, "?")) //is it a ?
+    {
+        help_reqested = true; //Disregard the rest of the arguments
+    }
+    else if (true == is_natural_number_str(argStr, 0)) //is it a (pin) number 
+    {
+        //We are expecting 1 or 2 arguments... the pwm pin number and a duty cycle percentage
+        uint8_t pwmPinNum = atoi(argStr);
+        st_pwm_pin *pwmPin = NULL;
+        int8_t dc_target;
+        int8_t dc_adj;
+
+        for (int i = 0; i < hal_pwm.pin_count; i++)
+        {
+            if (hal_pwm.pin[i].pin_nr == pwmPinNum)
+                pwmPin = &hal_pwm.pin[i];
+        }
+
+        if (NULL == pwmPin)
+        {
+            iprint(trALWAYS, "Please specify a valid PWM-assigned pin nr [");
+            for (int i = 0; i < hal_pwm.pin_count; i++)
+            {
+                iprint(trALWAYS, "%d", hal_pwm.pin[i].pin_nr);
+                if (i < (hal_pwm.pin_count-1))
+                    iprint(trALWAYS, ", ");
+                else
+                    iprintln(trALWAYS, "] (got %d)", pwmPinNum);
+            }
+            return;
+        }
+
+        iprintln(trALWAYS, "PWM Pin %d identified", pwmPin->pin_nr);
+        dc_target = pwmPin->duty_cycle_target;
+        dc_adj = pwmPin->duty_cycle_adj;
+
+        argStr = console_arg_pop();
+        if (argStr)
+        {
+            if (true == is_natural_number_str(argStr, 0)) //is it a valid duty cycle percentage
+            {
+                int pwm_percent = atoi(argStr);
+
+                if ((pwm_percent < 0) || (pwm_percent > MAX_RESOLUTION))
+                {
+                    iprint(trALWAYS, "Please specify a duty cycle percentage from 0 and %d", MAX_RESOLUTION);
+                    iprintln(trALWAYS, " (got %d)", pwm_percent);
+                }
+                else
+                {
+                    hal_pwm_set_duty_cycle_percent(pwmPin->pin_nr, pwm_percent);
+                        
+                    iprint(trALWAYS, "PWM Pin %d : %d%% (%d%%)", pwmPin->pin_nr, dc_target, dc_adj);
+                    iprintln(trALWAYS, " -> %d%% (%d%%)", pwmPin->duty_cycle_target, pwmPin->duty_cycle_adj);
+                }
+            }
+            else
+            {
+                iprintln(trALWAYS, "Invalid argument \"%s\"", argStr);
+                iprintln(trALWAYS, "Please specify a duty cycle percentage from 0 and %d", MAX_RESOLUTION);
+            }
+            return;
+        }
+        //else //No arguments passed, 
+        //just display the state of the pin
+        iprintln(trALWAYS, "PWM Pin %d : %d%% (%d%%)", pwmPin->pin_nr, dc_target, dc_adj);
+        return;
+    }
+    else
+    {
+        help_reqested = true;
+        iprintln(trALWAYS, "Invalid argument \"%s\"", argStr);
+        iprintln(trALWAYS, "");
     }
 
     if (help_reqested)
     {
-        PrintF("Valid PWM arguments are:\n");
-        PrintF(" \"\" - Displays the state of ALL assigned pins\n");
-        PrintF(" \"<#>\" - Displays state of pin #\n");
-        PrintF(" \"<#> <DUTY_CYCLE>\" - Sets the PWM duty cycle %% (0-100) for pin #\n");
-        PrintF("\n");
-        return true;
+        iprintln(trALWAYS, "Valid PWM arguments are:");
+        iprintln(trALWAYS, " \"\" - Displays the state of ALL assigned pins");
+        iprintln(trALWAYS, " \"<#>\" - Displays state of pin #");
+        iprintln(trALWAYS, " \"<#> <DUTY_CYCLE>\" - Sets the PWM duty cycle %% (0-100) for pin #");
     }
-    return false;
 }
 #endif /* CONSOLE_ENABLED */
 
+#undef PRINTF_TAG
 /*************************** END OF FILE *************************************/

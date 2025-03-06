@@ -13,11 +13,11 @@ defines
 
 //This is the firmware version of this Button Controller. The high nibble denotes 
 //the major version, while the low nibble denotes the minor version. 0x10 => V1.0
-#define BTN_CTRL_VERSION	0x10
+#define PROJECT_VERSION	    0x10
 
 /* The "CONSOLE_ENABLED" define includes all the Console's menu interfacing and
  * such like. This also takes up a lot of the available codespace. */
-#define CONSOLE_ENABLED
+#define CONSOLE_ENABLED     1
 
 /* The "USE_WAV_GEN" define includes the waveform generator code. The waveform
  * generator provides configurable waveforms on the DAC output: Sine, square,
