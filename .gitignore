@@ -59,6 +59,6 @@ Mkfile.old
 dkms.conf
 
 # Local files
-/PCB
-/Resources
+*/pcb
+*/resources
 

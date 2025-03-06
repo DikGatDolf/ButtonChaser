@@ -8,7 +8,9 @@ Include file for template.c
 #ifndef __template_H__
 #define __template_H__
 
-
+#ifdef __cplusplus
+extern "C" {
+#endif
 /******************************************************************************
 includes
 ******************************************************************************/
@@ -45,6 +47,10 @@ Global (public) function definitions
  * \return The sum of the two integers
  */
 int foo_public(int arg1, int arg2);
+
+#ifdef __cplusplus
+}
+#endif
 
 #undef EXT
 #endif /* __template_H__ */

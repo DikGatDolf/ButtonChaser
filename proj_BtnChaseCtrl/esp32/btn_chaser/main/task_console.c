@@ -271,7 +271,7 @@ sPrintFlagItem print_trace_flag_name[]=
 {
 		{"Application", trAPP,      "app"},
 		{"Console", 	trCONSOLE,  "con"},
-        {"RGB",        trRGB,       "rgb"},
+        {"RGBLED",      trLED,      "led"},
 		/* Not Implemented yet {"", 				PRINT_TR_TBD},*/
 };
 
@@ -281,7 +281,7 @@ sPrintFlagActionItem print_trace_combos[]=
 		{"app", 	eTraceTOGGLE,   trAPP,    },
 		{"con", 	eTraceTOGGLE,   trCONSOLE,},
 		{"none", 	eTraceOFF,      trALL,    },
-        {"rgb",     eTraceTOGGLE,   trRGB,    },
+        {"rgb",     eTraceTOGGLE,   trLED,    },
 };
 
 ConsoleMenuItem_t _console_menu_items[] =
@@ -294,7 +294,7 @@ ConsoleMenuItem_t _console_menu_items[] =
 
 static DeviceConsole_t _console = {
     .menu_grp_list.cnt = 0,
-	.tracemask = trCONSOLE|trAPP|trRGB,
+	.tracemask = trCONSOLE|trAPP|trLED,
     .task = {
         .init_done = false,
         .handle = NULL,
@@ -325,7 +325,7 @@ void _console_main_func(void * pvParameters)
     while (!_console.task.init_done)
         xTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(CONSOLE_READ_INTERVAL_MS));
 
-    dbgPrint(trRGB|trALWAYS, "#Task Started (%d). Running @ %d Hz", 0, (1000/CONSOLE_READ_INTERVAL_MS));
+    dbgPrint(trLED|trALWAYS, "#Task Started (%d). Running @ %d Hz", 0, (1000/CONSOLE_READ_INTERVAL_MS));
     
 
 	while (1)
@@ -847,9 +847,9 @@ void _console_handler_version(void)
 {
 	dbgPrint(trALWAYS, "");
 	dbgPrint(trALWAYS, "=====================================================");
-	dbgPrint(trALWAYS, "ButtonChaser - Slave Controller");
+	dbgPrint(trALWAYS, "ButtonChaser - Master Controller");
 	dbgPrint(trALWAYS, "[c] 2025 ZeroBadCafe Development (Pty) Ltd");
-	dbgPrint(trALWAYS, "Version   %d.%2ds.", PROJECT_VERSION / 0x10, PROJECT_VERSION % 0x10);
+	dbgPrint(trALWAYS, "Version   %d.%02d.", PROJECT_VERSION / 0x10, PROJECT_VERSION % 0x10);
 	dbgPrint(trALWAYS, "BuildInfo %s.", BUILD_TIME_DATA);
 	dbgPrint(trALWAYS, "ESP32-C3 (Clock %lu MHz)", configCPU_CLOCK_HZ / 1000000L);
 	dbgPrint(trALWAYS, "=====================================================");
