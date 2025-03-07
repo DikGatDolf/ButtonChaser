@@ -114,10 +114,16 @@ void setup() {
 	console_init(115200, SERIAL_8N1);
     console_add_menu("main", _main_menu_items, ARRAY_SIZE(_main_menu_items), "Main Menu");
 
-    hal_pwm_start(0.01, 1);
-    hal_pwm_assign_pin(13);
-    
-    sys_poll_tmr_start(&debugTmr, 10000L, true);	//Does something every 100ms
+    hal_pwm_start(100.0);
+    hal_pwm_assign_pin(eLED_Red,    13);
+    hal_pwm_assign_pin(eLED_Green,  14);
+    hal_pwm_assign_pin(eLED_Blue,   15);
+    hal_pwm_assign_pin(eLED_White,  16);
+
+    //Start the Red at half brightness
+    hal_pwm_set_duty_cycle(eLED_Red, 128);
+
+    sys_poll_tmr_start(&debugTmr, 10000L, true);	//Does something every 10s
 
 }
 
@@ -132,10 +138,10 @@ void loop() {
 
 	if (sys_poll_tmr_expired(&debugTmr))
 	{
-		iprintln(trMAIN, "Running for %lu s", SecondCount());
+		//iprintln(trMAIN, "Running for %lu s", SecondCount());
         // if (dc > 100)
         //     dc = 0;
-        // hal_pwm_set_duty_cycle_percent(13, dc++);
+        // hal_pwm_set_duty_cycle(13, dc++);
         //hal_pwm_inc_duty_cycle(13, true);
 	}
 }

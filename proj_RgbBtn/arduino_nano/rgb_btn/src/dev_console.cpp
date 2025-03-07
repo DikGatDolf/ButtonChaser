@@ -73,6 +73,11 @@ as it was received on the console */
 
 const char BACKSPACE_ECHO[] = {0x08, 0x20, 0x08, 0x00};
 
+#define PrintBackSpace()   {do{serialputc(0x08, NULL); serialputc(0x20, NULL); serialputc(0x08, NULL);}while (0);}
+//Turns out that calling serialputc() in a loop is not a good idea.... uses 4 bytes more RAM and 6 bytes more flash
+//#define PrintBackSpace()   {int _x = 0; do{serialputc(BACKSPACE_ECHO[_x++], NULL); }while (BACKSPACE_ECHO[_x]);}
+    
+
 const char BUILD_TIME_DATA[] = {__TIME__ " " __DATE__}; /* Used in our startup Banner*/
 
 //const char ARGUMENT_DELIMITERS[] = {' ', '\t', 0x00};
@@ -837,7 +842,7 @@ bool console_service(void)
 	{
 		// read the incoming byte:
 		rxData = Serial.read();
-		//printf("Received: %c (0x%02X)  - Inptr @ %d\n", rxData, rxData, stDev_Console.InPtr);
+		//iprintln(trALWAYS, "Received: \'%c\' (0x%02X)  - Inptr @ %d\n", rxData, rxData, _console.rx.cnt);
 		retVal = true;
 
 		// Lines are terminated on Carriage returns and/or newlines.
@@ -850,7 +855,7 @@ bool console_service(void)
 
 		// ****** Newline ******
 		case '\n':
-            Serial.print("\n");
+            serialputc('\n', NULL);
 			// Serial.write('\n');
 			//  Now parse the line if it is Valid
 			if (_console.rx.cnt > 0)
@@ -865,7 +870,7 @@ bool console_service(void)
 			if (_console.rx.cnt)
 			{
 				_console.rx.cnt--;
-				Serial.print(BACKSPACE_ECHO);
+                PrintBackSpace(); // Serial.print(BACKSPACE_ECHO);
 			}
 			break;
 
@@ -881,10 +886,9 @@ bool console_service(void)
 			// Clear the line...
 			while (_console.rx.cnt)
 			{
-				printf(BACKSPACE_ECHO);
+                PrintBackSpace();
 				_console.rx.cnt--;
 			}
-			_console.rx.cnt = 0;
 			break;
 
 			// ****** All other chars ******

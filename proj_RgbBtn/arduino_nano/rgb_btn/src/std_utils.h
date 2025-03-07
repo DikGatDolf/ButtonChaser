@@ -20,41 +20,12 @@ includes
 definitions
 ******************************************************************************/
 
-typedef unsigned char u8;
-typedef unsigned short u16;
-typedef unsigned long u32;
-typedef signed short s16;
-typedef signed long s32;
-
 #define sign_f(a)	((a < 0)? -1.0 : 1.0)
 #define INPUT_EDGE_NONE		0
 #define INPUT_EDGE_FALLING	1
 #define INPUT_EDGE_RISING	2
 
-
 #define CRC_POLYNOMIAL 0x8C
-
-#define statusOK			0x01	/* Done */
-//#define statusMOVING		0x02	/* Done */
-//#define statusDIRECTION		0x04	/* Done */
-//#define statusPID_BUSY		0x08	/* Done */
-//#define statusPID_DONE		0x10	/* Done */
-//#define statusCALIB_BUSY	0x20 	/* Done */
-//#define status			0x40 	/* Done */
-//#define status 			0x80 	/* Done */
-
-//#define stateIDLE			1
-//#define stateCAL_SEARCH		2
-//#define stateCAL_GOTO_0		3
-//#define state			0x0
-//#define state			0x0
-//#define state			0x0
-//#define state			0x0
-
-//#define status	0x20
-//#define status	0x40
-//#define status	0x80
-
 
 /******************************************************************************
 Macros
