@@ -47,7 +47,7 @@
 #include "std_utils.h"
 #include "str_helper.h"
 #include "hal_timers.h"
-#include "hal_pwm.h"
+#include "rgb_led_pwm.h"
 
 
 #ifdef CONSOLE_ENABLED
@@ -114,14 +114,14 @@ void setup() {
 	console_init(115200, SERIAL_8N1);
     console_add_menu("main", _main_menu_items, ARRAY_SIZE(_main_menu_items), "Main Menu");
 
-    hal_pwm_start(100.0);
-    hal_pwm_assign_pin(eLED_Red,    13);
-    hal_pwm_assign_pin(eLED_Green,  14);
-    hal_pwm_assign_pin(eLED_Blue,   15);
-    hal_pwm_assign_pin(eLED_White,  16);
+    rgb_led_pwm_start(120.0);
+    rgb_led_pwm_assign_pin(eLED_Red,    13);
+    rgb_led_pwm_assign_pin(eLED_Green,  14);
+    rgb_led_pwm_assign_pin(eLED_Blue,   15);
+    //rgb_led_pwm_assign_pin(eLED_White,  16);
 
     //Start the Red at half brightness
-    hal_pwm_set_duty_cycle(eLED_Red, 128);
+    rgb_led_pwm_set_duty_cycle(eLED_Red, 128);
 
     sys_poll_tmr_start(&debugTmr, 10000L, true);	//Does something every 10s
 
@@ -141,8 +141,8 @@ void loop() {
 		//iprintln(trMAIN, "Running for %lu s", SecondCount());
         // if (dc > 100)
         //     dc = 0;
-        // hal_pwm_set_duty_cycle(13, dc++);
-        //hal_pwm_inc_duty_cycle(13, true);
+        // rgb_led_pwm_set_duty_cycle(13, dc++);
+        //rgb_led_pwm_inc_duty_cycle(13, true);
 	}
 }
 
