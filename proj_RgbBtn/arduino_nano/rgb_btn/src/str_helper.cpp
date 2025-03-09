@@ -347,7 +347,7 @@ bool ms2dhms_str(char *buff, uint32_t ms)
     return true;
 }
 
-bool float2str(char *buff, double fVal, unsigned int decimalpoints, size_t max_len)
+char * float2str(char *buff, double fVal, unsigned int decimalpoints, size_t max_len)
 {
 	long int  multiplier_divider = 1;
 	long int  workingVal;
@@ -359,7 +359,7 @@ bool float2str(char *buff, double fVal, unsigned int decimalpoints, size_t max_l
 	char negSign[2];
 
     if (buff == NULL){    
-        return false;
+        return buff;
     }
 
 	//Limit the requsted decimal points between 0 and 4
@@ -445,7 +445,7 @@ bool float2str(char *buff, double fVal, unsigned int decimalpoints, size_t max_l
         }
     }
     //iprintln(trALWAYS, "#fmt: \"%s\", neg: (%s), int: %ld, dec: %ld, pts: %u", __fmt, negSign, intVal, decVal, decimalpoints);
-	return true;
+    return buff;
 }
 
 #undef PRINTF_TAG

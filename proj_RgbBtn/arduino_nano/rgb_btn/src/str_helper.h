@@ -62,12 +62,14 @@ bool ms2dhms_str(char *buff, uint32_t ms);
 
 /*! Converts a float to a string
  * @param buff a pointer to a buffer to store the string (the caller must 
-                ensure that the buffer is large enough)
+                ensure that the buffer is large enough). If NULL pointer is passed, 
+                the function will return immediately.
  * @param fVal the float value to convert
  * @param decimalpoints the number of decimal points to display (max: 4)
  * @param max_len the maximum length of the buffer
+ * @returns a pointer to the buffer passed as the first argument
 */
-bool float2str(char *buff, double fVal, unsigned int decimalpoints, size_t max_len);
+char * float2str(char *buff, double fVal, unsigned int decimalpoints, size_t max_len);
 
 
 #undef EXT

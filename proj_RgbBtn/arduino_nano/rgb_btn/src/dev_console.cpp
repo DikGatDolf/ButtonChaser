@@ -40,7 +40,7 @@ includes
 #include "std_utils.h"
 #include "str_helper.h"
 #include "hal_timers.h"
-#include "rgb_led_pwm.h"
+#include "dev_rgb.h"
 
 #define __NOT_EXTERN__
 #include "dev_console.h"

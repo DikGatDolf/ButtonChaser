@@ -1,12 +1,12 @@
 /*****************************************************************************
 
-rgb_led_pwm.h
+dev_rgb.h
 
-Include file for rgb_led_pwm.c
+Include file for dev_rgb.c
 
 ******************************************************************************/
-#ifndef __rgb_led_pwm_H__
-#define __rgb_led_pwm_H__
+#ifndef __dev_rgb_H__
+#define __dev_rgb_H__
 
 
 /******************************************************************************
@@ -25,11 +25,11 @@ definitions
  * the colours can be easily indexed using (u32_col_word >> (e_led_colour*8))*/
 typedef enum e_led_colour
 {
-    eLED_Blue   = 0,
-    eLED_Green  = 1,
-    eLED_Red    = 2,
-    eLED_White  = 3,
-    eLED_MAX    = 4
+    rgbBlue   = 0,
+    rgbGreen  = 1,
+    rgbRed    = 2,
+    rgbWhite  = 3,
+    rgbMAX    = 4
 }led_colour_type;
 
 /******************************************************************************
@@ -44,20 +44,16 @@ variables
 functions
 ******************************************************************************/
 
-bool rgb_led_pwm_start(double target_frequency);
-void rgb_led_pwm_stop();
-bool rgb_led_pwm_enabled();
-// double rgb_led_pwm_get_frequency();
-// double rgb_led_pwm_get_period();
-// uint8_t rgb_led_pwm_get_resolution();
-bool rgb_led_pwm_assign_pin(led_colour_type col, int pin);
-void rgb_led_pwm_unassign_pin(led_colour_type col);
-void rgb_led_pwm_set_duty_cycle(led_colour_type col, uint8_t duty_cycle_target);
-// uint8_t rgb_led_pwm_get_duty_cycle(led_colour_type col);
-// uint8_t rgb_led_pwm_get_adj_duty_cycle(led_colour_type col);
-// void rgb_led_pwm_inc_duty_cycle(led_colour_type col, uint8_t inc_val = 1, bool wrap = false);
-// void rgb_led_pwm_dec_duty_cycle(led_colour_type col, uint8_t dec_val = 1, bool wrap = false);
+bool        dev_rgb_start(int pin_red, int pin_green, int pin_blue, int pin_white);
+void        dev_rgb_stop();
+bool        dev_rgb_enabled();
+void        dev_rgb_set_1col(led_colour_type col, uint8_t duty_cycle_target);
+void        dev_rgb_set_wrgb(uint32_t wrgb);
+uint32_t    dev_rgb_get_wrgb(void);
+// double dev_rgb_get_frequency();
+// double dev_rgb_get_period();
+// uint8_t dev_rgb_get_resolution();
 
-#endif /* __rgb_led_pwm_H__ */
+#endif /* __dev_rgb_H__ */
 
 /****************************** END OF FILE **********************************/

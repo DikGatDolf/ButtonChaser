@@ -13,23 +13,11 @@
  Processor: Arduino Nano (ATmega328P)
  Compiler:	Arduino AVR Compiler
 
- SHORT SUMMARY OF OPERATION GOES HERE
-
- The included classes are:
-
- ** dev_console **
- A class which exposes the serial port for debugging purposes and maintains a
- linked list of menu functions for the other classes
-
- ** CLASS_1 **
-
- ** CLASS_2 **
- 
-  //TODO
- * 1 - 
- * 2 - 
- * 3 - 
- * 4 - 
+This (slave) device  is responsible for:
+  1) Controlling a single set RGB LED (3 wires, see dev_rgb.c/h)
+  2) Reading a single button inputs
+  3) Measuring timing
+  4) Responding to all communication with the master devices
 
  *******************************************************************************/
  /*******************************************************************************
@@ -47,7 +35,7 @@
 #include "std_utils.h"
 #include "str_helper.h"
 #include "hal_timers.h"
-#include "rgb_led_pwm.h"
+#include "dev_rgb.h"
 
 
 #ifdef CONSOLE_ENABLED
@@ -114,14 +102,9 @@ void setup() {
 	console_init(115200, SERIAL_8N1);
     console_add_menu("main", _main_menu_items, ARRAY_SIZE(_main_menu_items), "Main Menu");
 
-    rgb_led_pwm_start(120.0);
-    rgb_led_pwm_assign_pin(eLED_Red,    13);
-    rgb_led_pwm_assign_pin(eLED_Green,  14);
-    rgb_led_pwm_assign_pin(eLED_Blue,   15);
-    //rgb_led_pwm_assign_pin(eLED_White,  16);
+    dev_rgb_start(btnChasePin_RED, 15 /*btnChasePin_GREEN*/, 16 /*btnChasePin_BLUE*/, 17 /*-1*/);
+    dev_rgb_set_1col(rgbRed, 128);
 
-    //Start the Red at half brightness
-    rgb_led_pwm_set_duty_cycle(eLED_Red, 128);
 
     sys_poll_tmr_start(&debugTmr, 10000L, true);	//Does something every 10s
 
@@ -141,8 +124,8 @@ void loop() {
 		//iprintln(trMAIN, "Running for %lu s", SecondCount());
         // if (dc > 100)
         //     dc = 0;
-        // rgb_led_pwm_set_duty_cycle(13, dc++);
-        //rgb_led_pwm_inc_duty_cycle(13, true);
+        // dev_rgb_set_duty_cycle(13, dc++);
+        //dev_rgb_inc_duty_cycle(13, true);
 	}
 }
 

@@ -15,6 +15,19 @@ defines
 //the major version, while the low nibble denotes the minor version. 0x10 => V1.0
 #define PROJECT_VERSION	    0x10
 
+
+#define btnChasePin_RED     (13)
+// #define btnChasePin_GREEN   (14)
+// #define btnChasePin_BLUE    (15)
+// #define btnChasePin_WHITE   (16)
+#define btnChasePin_Addr0   (14)
+#define btnChasePin_Addr1   (15)
+#define btnChasePin_Addr2   (16)
+#define btnChasePin_Addr3   (17)
+#define btnChasePin_SDA     (18)
+#define btnChasePin_SCL     (19)
+
+
 /* The "CONSOLE_ENABLED" define includes all the Console's menu interfacing and
  * such like. This also takes up a lot of the available codespace. */
 #define CONSOLE_ENABLED     1
