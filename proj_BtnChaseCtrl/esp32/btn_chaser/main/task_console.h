@@ -25,19 +25,10 @@ extern void console_printline(uint8_t traceflags, const char * tag, const char *
 extern void console_print(uint8_t traceflags, const char * tag, const char *fmt, ...);
 #endif /* __NOT_EXTERN__ */
 
-#define BIT_POS(pos)			(1U << pos)
-
-#define SET_BIT(x, pos)			(x |= BIT_POS(pos))
-#define CLEAR_BIT(x, pos) 		(x &= (~BIT_POS(pos)))
-#define TOGGLE_BIT(x, pos) 		(x ^= BIT_POS(pos))
-
-#define BIT_IS_SET(x,pos) 		((x) & BIT_POS(pos))
-#define BIT_IS_CLEAR(x,pos) 	(~BIT_IS_SET(x,pos))
-
 #define trAPP		((uint8_t)BIT_POS(0))
 #define trCONSOLE	((uint8_t)BIT_POS(1))
 #define trLED		((uint8_t)BIT_POS(2))
-//#define trLED		((uint8_t)BIT_POS(2))
+#define trBTN       ((uint8_t)BIT_POS(3))
 
 #define trALWAYS	((uint8_t)BIT_POS(7))
 
@@ -50,11 +41,11 @@ Print an entire line (or not). A leading '#' is replaced with the PRINTF_TAG,
 The passed traceflags is compared with the system set trace print flag(s) to
  determine if the print can happen or not.
 ******************************************************************************/
-#define dbgPrint(traceflags, fmtstr, ...) console_printline(traceflags, PRINTF_TAG, fmtstr, ##__VA_ARGS__)
+#define iprintln(traceflags, fmtstr, ...) console_printline(traceflags, PRINTF_TAG, fmtstr, ##__VA_ARGS__)
 /******************************************************************************
-"Incomplete" version of dbgPrint.... no "\n" added at the end
+"Incomplete" version of iprintln.... no "\n" added at the end
 ******************************************************************************/
-#define dbgPrint_i(traceflags, fmtstr, ...) console_print(traceflags, PRINTF_TAG, fmtstr, ##__VA_ARGS__)
+#define iprint(traceflags, fmtstr, ...) console_print(traceflags, PRINTF_TAG, fmtstr, ##__VA_ARGS__)
 
 /******************************************************************************
 Struct & Unions
@@ -111,6 +102,11 @@ char * console_arg_peek(int offset);
  * @return The count of arguments left to pop
  */
 int console_arg_cnt(void);
+
+/*! Prints a section of memory
+ */
+void console_print_memory(int Flags, void * Src, unsigned long Address, int Len);
+
 
 #undef EXT
 #endif /* __task_console_H__ */

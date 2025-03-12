@@ -1,20 +1,22 @@
 /*****************************************************************************
 
-sys_utils.h
+common_comms.h
 
-Include file for sys_utils.c
+Common include file for both sets of fw (ESP32 and Arduino Nano) in the 
+ ButtonChaser project 
 
 ******************************************************************************/
-#ifndef __SYSUTILS_H__
-#define __SYSUTILS_H__
+#ifndef __common_comms_H__
+#define __common_comms_H__
 
-
+#ifdef __cplusplus
+extern "C" {
+#endif
 /******************************************************************************
 includes
 ******************************************************************************/
-#include "defines.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
+#include <stdint.h>
+
 
 /******************************************************************************
 definitions
@@ -25,49 +27,59 @@ definitions
 #define EXT extern
 #endif /* __NOT_EXTERN__ */
 
-#define BIT_POS(pos)			(1U << pos)
-
-#define SET_BIT(x, pos)			(x |= BIT_POS(pos))
-#define CLEAR_BIT(x, pos) 		(x &= (~BIT_POS(pos)))
-#define TOGGLE_BIT(x, pos) 		(x ^= BIT_POS(pos))
-
-#define BIT_IS_SET(x,pos) 		((x) & BIT_POS(pos))
-#define BIT_IS_CLEAR(x,pos) 	(~BIT_IS_SET(x,pos))
-
-#define CRC_8_POLYNOMIAL 0x8C
-
-#ifndef NULL_PTR
-#define NULL_PTR (void*)0
-#endif
-
-#define ARRAY_SIZE(_array) (sizeof(_array) / sizeof((_array)[0]))
-
-#define SWOP_U64(x, y) do { uint64_t(x) _z = x; x = y; y = _z; } while(0)
-#define SWOP_U32(x, y) do { uint32_t(x) _z = x; x = y; y = _z; } while(0)
-#define SWOP_U16(x, y) do { uint16_t(x) _z = x; x = y; y = _z; } while(0)
-#define SWOP_U8(x, y) do { uint8_t(x) _z = x; x = y; y = _z; } while(0)
-
 /******************************************************************************
 Macros
 ******************************************************************************/
+#define RGB_BTN_I2C_ADDR_BITS   (4)     /* b0000 xxxx - 0x00 to 0x0F*/
+#define RGB_BTN_MAX             (BIT_POS(RGB_BTN_I2C_ADDR_BITS)) /* 1<<4 = 16 */
+#define RGB_BTN_I2C_ADDR_MASK   (RGB_BTN_MAX-1)  /* 16-1 = 15 =  0x0F */
+#define RGB_BTN_I2C_TYPE_MASK   (0xFF ^ (RGB_BTN_I2C_ADDR_MASK))  /* 0xFF ^ 0x0F =  0xF0 */
+#define RGB_BTN_I2C_TYPE_ID     (0x00)  /* b0000 xxxx - 0x00 to 0x0F*/
+
 
 /******************************************************************************
 Struct & Unions
 ******************************************************************************/
 
+typedef enum comms_command_e
+{
+    cmd_nop       = 0,
+    cmd_set_rgb   = BIT_POS(0),
+    cmd_get_btn   = BIT_POS(1),
+    cmd_reset_btn = BIT_POS(2),
+    //Keep this at the end
+}comms_command_t;
+
+typedef struct comms_package_st
+{
+    uint8_t command;
+    union {
+        uint8_t  u8 [4];
+        uint16_t u16[2];
+        uint32_t u32;
+    } data;
+    uint8_t crc;
+} comms_tx_package_t;
 /******************************************************************************
-variables
+Global (public) variables
 ******************************************************************************/
 
 /******************************************************************************
-functions
+Global (public) function definitions
 ******************************************************************************/
 
-uint8_t crc8_str(uint8_t crc_start, const char *str);
-uint8_t crc8_str_n(uint8_t crc_start, const uint8_t *data, size_t len);
-uint8_t crc8(uint8_t crc_start, uint8_t data);
+/*! \brief A public function that adds two integers
+ * \param arg1 The first integer
+ * \param arg2 The second integer
+ * \return The sum of the two integers
+ */
+int foo_public(int arg1, int arg2);
+
+#ifdef __cplusplus
+}
+#endif
 
 #undef EXT
-#endif /* __SYSUTILS_H__ */
+#endif /* __common_comms_H__ */
 
 /****************************** END OF FILE **********************************/

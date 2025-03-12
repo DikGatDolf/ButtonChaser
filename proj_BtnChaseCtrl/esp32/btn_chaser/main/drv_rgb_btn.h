@@ -1,20 +1,21 @@
 /*****************************************************************************
 
-sys_utils.h
+drv_rgb_btn.h
 
-Include file for sys_utils.c
+Include file for drv_rgb_btn.c
 
 ******************************************************************************/
-#ifndef __SYSUTILS_H__
-#define __SYSUTILS_H__
+#ifndef __drv_rgb_btn_H__
+#define __drv_rgb_btn_H__
 
-
+#ifdef __cplusplus
+extern "C" {
+#endif
 /******************************************************************************
 includes
 ******************************************************************************/
-#include "defines.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
+#include "sys_utils.h"
+#include "../../../../common/common_comms.h"
 
 /******************************************************************************
 definitions
@@ -25,28 +26,6 @@ definitions
 #define EXT extern
 #endif /* __NOT_EXTERN__ */
 
-#define BIT_POS(pos)			(1U << pos)
-
-#define SET_BIT(x, pos)			(x |= BIT_POS(pos))
-#define CLEAR_BIT(x, pos) 		(x &= (~BIT_POS(pos)))
-#define TOGGLE_BIT(x, pos) 		(x ^= BIT_POS(pos))
-
-#define BIT_IS_SET(x,pos) 		((x) & BIT_POS(pos))
-#define BIT_IS_CLEAR(x,pos) 	(~BIT_IS_SET(x,pos))
-
-#define CRC_8_POLYNOMIAL 0x8C
-
-#ifndef NULL_PTR
-#define NULL_PTR (void*)0
-#endif
-
-#define ARRAY_SIZE(_array) (sizeof(_array) / sizeof((_array)[0]))
-
-#define SWOP_U64(x, y) do { uint64_t(x) _z = x; x = y; y = _z; } while(0)
-#define SWOP_U32(x, y) do { uint32_t(x) _z = x; x = y; y = _z; } while(0)
-#define SWOP_U16(x, y) do { uint16_t(x) _z = x; x = y; y = _z; } while(0)
-#define SWOP_U8(x, y) do { uint8_t(x) _z = x; x = y; y = _z; } while(0)
-
 /******************************************************************************
 Macros
 ******************************************************************************/
@@ -56,18 +35,39 @@ Struct & Unions
 ******************************************************************************/
 
 /******************************************************************************
-variables
+Global (public) variables
 ******************************************************************************/
 
 /******************************************************************************
-functions
+Global (public) function definitions
 ******************************************************************************/
 
-uint8_t crc8_str(uint8_t crc_start, const char *str);
-uint8_t crc8_str_n(uint8_t crc_start, const uint8_t *data, size_t len);
-uint8_t crc8(uint8_t crc_start, uint8_t data);
+/*! \brief Initialise the RGB Button driver
+ */
+void drv_rgb_btn_init(void);
+
+/*! \brief De-initialise the RGB Button driver
+ */
+void drv_rgb_btn_deinit(void);
+
+/*! \brief Probe the RGB Button device to see if it is present on the bus
+ */
+esp_err_t drv_rgb_btn_probe(uint8_t id_mask);
+
+/*! \brief Transmit data to the RGB Button device
+ */
+esp_err_t drv_rgb_btn_tx(uint8_t *tx_data, size_t tx_size);
+
+/*! \brief Transmit and receive data to/from the RGB Button device
+ */
+esp_err_t drv_rgb_btn_txrx(uint8_t *tx_data, size_t tx_size, uint8_t *rx_data, size_t rx_size);
+
+
+#ifdef __cplusplus
+}
+#endif
 
 #undef EXT
-#endif /* __SYSUTILS_H__ */
+#endif /* __drv_rgb_btn_H__ */
 
 /****************************** END OF FILE **********************************/

@@ -24,6 +24,10 @@ includes
 /*******************************************************************************
 local defines
  *******************************************************************************/
+#ifdef PRINTF_TAG
+#undef PRINTF_TAG
+#endif
+#define PRINTF_TAG ("StrHelper") /* This must be undefined at the end of the file*/
 
 /*******************************************************************************
 local variables
@@ -80,4 +84,7 @@ uint8_t crc8(uint8_t crc_start, uint8_t data) {
 }
 
 #undef EXT
+
+#undef PRINTF_TAG
+
 /*************************** END OF FILE *************************************/

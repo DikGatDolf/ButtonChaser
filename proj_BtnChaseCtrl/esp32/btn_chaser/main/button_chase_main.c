@@ -33,6 +33,7 @@
   #include "task_console.h"
 #endif
 #include "task_rgb_led.h"
+#include "drv_rgb_btn.h"
 
 #ifdef PRINTF_TAG
 #undef PRINTF_TAG
@@ -94,13 +95,11 @@ void app_main(void)
 
 #ifdef CONSOLE_ENABLED
     sys_task_add((TaskInfo_t *)console_init_task());
-#endif
-    sys_task_add((TaskInfo_t *)rgb_led_init_task());
-    
-        //typeof(_task_main_menu_items)
-#ifdef CONSOLE_ENABLED
     console_add_menu("sys", _task_main_menu_items, ARRAY_SIZE(_task_main_menu_items), "System");
 #endif
+    sys_task_add((TaskInfo_t *)rgb_led_init_task());
+
+    drv_rgb_btn_init();
 
     xLastWakeTime = xTaskGetTickCount();
 
@@ -110,7 +109,7 @@ void app_main(void)
     	//task_main_info.stack_unused = uxTaskGetStackHighWaterMark2( NULL );
 
 
-		//dbgPrint(trALWAYS, "#Task Running");
+		//iprintln(trALWAYS, "#Task Running");
 
     	//We're not all that busy from this point onwards.... might as well check in every 1000ms.
         //vTaskDelay(1000 / portTICK_PERIOD_MS);
@@ -124,6 +123,7 @@ void app_main(void)
     //     printf("Restarting in %d seconds...\n", i);
     //     vTaskDelay(1000 / portTICK_PERIOD_MS);
     // }
+    
     printf("Restarting now.\n");
     fflush(stdout);
     esp_restart();
@@ -142,22 +142,22 @@ void _sys_handler_reset(void)
         if (!argStr)
         {
             reset_lock = true;
-            dbgPrint(trALWAYS, "Now type 'reset Y', IF YOU ARE SURE.\n");
+            iprintln(trALWAYS, "Now type 'reset Y', IF YOU ARE SURE.\n");
             return;
         }
-        dbgPrint(trALWAYS, "No arguments expected (got \"%s\").\n", argStr);
+        iprintln(trALWAYS, "No arguments expected (got \"%s\").\n", argStr);
     }
     else //if (reset_lock)
     {
 		if (0 == strcasecmp(argStr, "Y"))
         {
             // ok, do the reset.
-            dbgPrint(trALWAYS, "Resetting. Goodbye, cruel world!\n");
+            iprintln(trALWAYS, "Resetting. Goodbye, cruel world!\n");
             fflush(stdout);
             esp_restart();
             return;
         }        
-        dbgPrint(trALWAYS, "'reset Y' expected. Starting over.\n");
+        iprintln(trALWAYS, "'reset Y' expected. Starting over.\n");
     }
     reset_lock = false;
 }
@@ -183,7 +183,7 @@ void _sys_handler_tasks(void)
             int index = atoi(args[0]);
             if ((index >= eTaskIndexMax) || (index < 0))
             {
-                dbgPrint(trALWAYS, "Please specify a number from 0 and %d, or alternatively the task name.");
+                iprintln(trALWAYS, "Please specify a number from 0 and %d, or alternatively the task name.");
                 task_index = -1;
             }
         }
@@ -197,10 +197,10 @@ void _sys_handler_tasks(void)
     }
     // else, keep the values unchanged and print the entire list
 
-    dbgPrint(trALWAYS, "Task Information");
-    dbgPrint(trALWAYS, "+---+------------+------------+-------+------------+--------------------+");
-    dbgPrint(trALWAYS, "+ # | Name       | Status     | Pr'ty | Runtime    | Stack Usage        |");
-    dbgPrint(trALWAYS, "+---+------------+------------+-------+------------+--------------------+");
+    iprintln(trALWAYS, "Task Information");
+    iprintln(trALWAYS, "+---+------------+------------+-------+------------+--------------------+");
+    iprintln(trALWAYS, "+ # | Name       | Status     | Pr'ty | Runtime    | Stack Usage        |");
+    iprintln(trALWAYS, "+---+------------+------------+-------+------------+--------------------+");
     for (int i = print_start; i < print_end; i++)
     {
         float s_depth_f;
@@ -215,7 +215,7 @@ void _sys_handler_tasks(void)
         s_used_u16 = (configSTACK_DEPTH_TYPE)(sys_tasks[i]->stack_depth - sys_tasks[i]->stack_unused);
         s_depth_f = (float)(s_used_u16 * 100.0f)/(s_depth_u16 * 1.0f);
 
-        dbgPrint(trALWAYS, "| %d | %-10s | %-10s | %02d/%02d | %10u | %04u/%04u (%2.2f%%) |",
+        iprintln(trALWAYS, "| %d | %-10s | %-10s | %02d/%02d | %10u | %04u/%04u (%2.2f%%) |",
             i, 
             sys_tasks[i]->details.pcTaskName,
             taskStateName[sys_tasks[i]->details.eCurrentState],
@@ -226,15 +226,15 @@ void _sys_handler_tasks(void)
             s_depth_u16,
             s_depth_f);
     }
-    dbgPrint(trALWAYS, "+---+------------+------------+-------+------------+--------------------+");
-    dbgPrint(trALWAYS, "");
+    iprintln(trALWAYS, "+---+------------+------------+-------+------------+--------------------+");
+    iprintln(trALWAYS, "");
 
-    dbgPrint(trALWAYS, "System generated Task List:");
+    iprintln(trALWAYS, "System generated Task List:");
     vTaskList(task_list_buff);
-    dbgPrint(trALWAYS, "%s", task_list_buff);
-    dbgPrint(trALWAYS, "Done.");
+    iprintln(trALWAYS, "%s", task_list_buff);
+    iprintln(trALWAYS, "Done.");
 #else
-    dbgPrint(trALWAYS, "Not Supported in this build.");
+    iprintln(trALWAYS, "Not Supported in this build.");
 #endif
 }
 

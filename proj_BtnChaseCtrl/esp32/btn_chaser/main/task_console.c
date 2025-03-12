@@ -73,7 +73,7 @@ const char BACKSPACE_ECHO[] = {0x08, 0x20, 0x08, 0x00};
 
 const char BUILD_TIME_DATA[] = {__TIME__ " " __DATE__}; /* Used in our startup Banner*/
 
-const char ARGUMENT_DELIMITERS[] = {' ', '\t', 0x00};
+//const char ARGUMENT_DELIMITERS[] = {' ', '\t', 0x00};
 
 #if ( configUSE_TRACE_FACILITY == 1 )
 const char * taskStateName[] = {
@@ -123,7 +123,7 @@ sPrintFlagActionItem;
 
 typedef struct
 {
-    bool init_done;
+    //bool init_done;
 	struct
 	{
 		char buff[CONSOLE_RX_BUFF + 1]; /* The rx buff for data read from the console. */
@@ -228,14 +228,18 @@ void _show_help_on_command(char * cmd);
  */
 void _console_handler_help(void);
 
-/*! CONSOLE MENU ITEM - Handles the toggling of trace flags to enable/disable 
+/*! Handles the toggling of trace flags to enable/disable 
  * print traces
  */
 void _console_handler_trace(void);
 
-/*! CONSOLE MENU HANDLER - Displays the application version
+/*! Displays the application version
  */
 void _console_handler_version(void);
+
+/*! Prints a section of memory
+ */
+void _console_handler_dump(void);
 
 /*! Prints an entire line (or not). A leading '#' is replaced with the PRINTF_TAG, 
  * and the print is concluded with an newline character.
@@ -262,7 +266,7 @@ void console_printline(uint8_t traceflags, const char * tag, const char *fmt, ..
 /*! Prints the default action passed to the function
  * @param[in] def_act The default action to print
  */ 
-void _console_handler_trace_dbgPrint_i_action(eTraceFlagAction def_act);
+void _console_handler_trace_iprint_action(eTraceFlagAction def_act);
 
 /*******************************************************************************
 local variables
@@ -287,14 +291,16 @@ sPrintFlagActionItem print_trace_combos[]=
 ConsoleMenuItem_t _console_menu_items[] =
 {
 										    // 01234567890123456789012345678901234567890123456789012345678901234567890123456789
-		{"version", _console_handler_version,   "Displays application version"},
+//        {"dump",    _console_handler_dump,      "Prints a section of memory"},
+        {"version", _console_handler_version,   "Displays application version"},
 		{"help",  	_console_handler_help,      "Displays information on the available Console commands"},
 		{"trace",   _console_handler_trace,     "Displays the status, or Enables/Disables print traces"},
 };
 
 static DeviceConsole_t _console = {
     .menu_grp_list.cnt = 0,
-	.tracemask = trCONSOLE|trAPP|trLED,
+	.tracemask = trALL,//trCONSOLE|trAPP|trLED|trBTN,
+    .rx.cnt = 0,
     .task = {
         .init_done = false,
         .handle = NULL,
@@ -325,7 +331,7 @@ void _console_main_func(void * pvParameters)
     while (!_console.task.init_done)
         xTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(CONSOLE_READ_INTERVAL_MS));
 
-    dbgPrint(trLED|trALWAYS, "#Task Started (%d). Running @ %d Hz", 0, (1000/CONSOLE_READ_INTERVAL_MS));
+    iprintln(trLED|trALWAYS, "#Task Started (%d). Running @ %d Hz", 0, (1000/CONSOLE_READ_INTERVAL_MS));
     
 
 	while (1)
@@ -346,7 +352,7 @@ void _console_main_func(void * pvParameters)
 
 void _parse_rx_line(void)
 {
-//	dbgPrint(PRINT_TR_CONSOLE, "Parseline() called for \"%s\"", _console.rx.buff);
+//	iprintln(PRINT_TR_CONSOLE, "Parseline() called for \"%s\"", _console.rx.buff);
 
     ConsoleMenuTableGroup_t *_group = NULL;
     //char *_command = NULL;
@@ -355,7 +361,7 @@ void _parse_rx_line(void)
 
 	if ((arg == NULL) || (*arg == 0))
 	{
-		dbgPrint(trALWAYS, "What?!");
+		iprintln(trALWAYS, "What?!");
 		return;
 	}
 
@@ -369,7 +375,7 @@ void _parse_rx_line(void)
     _group = _find_menu_group(arg);
     if (_group != NULL)
     {
-        //dbgPrint(trALWAYS, "\"%s\" identified as a group (%s)", _command, _group->description);
+        //iprintln(trALWAYS, "\"%s\" identified as a group (%s)", _command, _group->description);
 
         //A group, so we expect the next one to be a command (or help/?), 
         if (console_arg_cnt() == 0)
@@ -384,11 +390,11 @@ void _parse_rx_line(void)
 
     //We suspect we have a command now, but if there are multiple commands like this in different groups, we cannot decide
     uint32_t _cmd_cnt = _count_menu_commands(arg);
-    // dbgPrint(trCONSOLE, "#Command = \"%s\" (%d)", arg, _cmd_cnt);
+    // iprintln(trCONSOLE, "#Command = \"%s\" (%d)", arg, _cmd_cnt);
     if ((_cmd_cnt > 1) && (_group == NULL))
     {
         //We have more than one command with this name, we need to find out which one the user wants
-        dbgPrint(trALWAYS, "Disambiguation needed for \"%s\":", arg);
+        iprintln(trALWAYS, "Disambiguation needed for \"%s\":", arg);
         _show_help_on_command(arg);
         return;
     }
@@ -413,25 +419,25 @@ void _parse_rx_line(void)
                 continue; // with the for-loop (search for the next command in a different group)
             //else, the group is really not relevant as this command is unique
 
-            dbgPrint(trALWAYS, "");
+            iprintln(trALWAYS, "");
             if (menu_item->func != NULL)
                 menu_item->func();
-            dbgPrint(trALWAYS, "");
+            iprintln(trALWAYS, "");
             return;
         }
     }    
-	dbgPrint(trALWAYS, "Unknown Command: \"%s\"", arg);
-	dbgPrint(trALWAYS, "");
+	iprintln(trALWAYS, "Unknown Command: \"%s\"", arg);
+	iprintln(trALWAYS, "");
 }
 
 void _show_help_on_command(char * cmd)
 {
-    //dbgPrint(trALWAYS, "Help called for group (%s):", cmd);
+    //iprintln(trALWAYS, "Help called for group (%s):", cmd);
     //Stick this in the argument list and call help!
     _console.args.item[_console.args.cnt++] = cmd;
     _console.args.item[_console.args.cnt] = NULL;
     _console_handler_help();
-    dbgPrint(trALWAYS, "");
+    iprintln(trALWAYS, "");
 }
 
 void _parse_args(char * arg_str)
@@ -468,7 +474,7 @@ void _print_arg_stack(void)
     for (int i = 0; i < task_console_MAX_ARGS; i++)
     {
         if (_console.args.item[i])
-    		dbgPrint(trCONSOLE, "#%d: \"%s\" (%d)", i, _console.args.item[i], i - _console.args.pop_index);
+    		iprintln(trCONSOLE, "#%d: \"%s\" (%d)", i, _console.args.item[i], i - _console.args.pop_index);
         else 
             break;
     }
@@ -481,7 +487,7 @@ char * console_arg_pop(void)
     if (arg)
         _console.args.pop_index++;
     // {
-    //     dbgPrint(trCONSOLE, "Popped \"%s\" (%d)", arg, _console.args.pop_index);
+    //     iprintln(trCONSOLE, "Popped \"%s\" (%d)", arg, _console.args.pop_index);
     //     _console.args.pop_index++;
     // }
 
@@ -514,11 +520,11 @@ uint32_t _count_menu_commands(char *_command)
     //Iterate through each group 
 	for (int tbl_idx = 0; tbl_idx < _console.menu_grp_list.cnt; tbl_idx++)
 	{
-        //dbgPrint(trALWAYS, "Checking group %s (\"%s\")", _console.menu_grp_list.group[tbl_idx].description, _console.menu_grp_list.group[tbl_idx].name);
+        //iprintln(trALWAYS, "Checking group %s (\"%s\")", _console.menu_grp_list.group[tbl_idx].description, _console.menu_grp_list.group[tbl_idx].name);
         //Iterate through each item in the group 
 		for (int i = 0; i < _console.menu_grp_list.group[tbl_idx].item_cnt; i++)
 		{
-            //dbgPrint(trALWAYS, "Checking cmd \"%s %s\" -> \"%s\"", _console.menu_grp_list.group[tbl_idx].name, _console.menu_grp_list.group[tbl_idx].table_ptr[i].command, _command);
+            //iprintln(trALWAYS, "Checking cmd \"%s %s\" -> \"%s\"", _console.menu_grp_list.group[tbl_idx].name, _console.menu_grp_list.group[tbl_idx].table_ptr[i].command, _command);
 			if (!strcasecmp(_console.menu_grp_list.group[tbl_idx].table_ptr[i].command, _command))
                 _count++;
 		}
@@ -603,7 +609,7 @@ void _console_handler_help(void)
                 else //Not known?
                 {
                     help_requested = true;
-                    dbgPrint(trALWAYS, "\t\"%s\" is not a valid group or menu item", arg);
+                    iprintln(trALWAYS, "\t\"%s\" is not a valid group or menu item", arg);
 
                 }
                 //Either way, we are done looping through the arguments.    
@@ -625,15 +631,15 @@ void _console_handler_help(void)
 
                 if (grp)
 				{
-					//dbgPrint(trALWAYS, "The %s (%s) commands are:", grp->description, grp->name);
+					//iprintln(trALWAYS, "The %s (%s) commands are:", grp->description, grp->name);
 					for (int j = 0; j < grp->item_cnt; j++)
-						dbgPrint(trALWAYS, "  %s %-8s - %s", grp->name, grp->table_ptr[j].command, grp->table_ptr[j].description);
+						iprintln(trALWAYS, "  %s %-8s - %s", grp->name, grp->table_ptr[j].command, grp->table_ptr[j].description);
 				}
                 else // (_cmd_cnt > 0)
                 {
                     for (int j = 0; j < _cmd_cnt; j++)
                         if (ESP_OK == _find_menu_command(arg, j, &cmd, &grp))
-                            dbgPrint(trALWAYS, "  %s %-8s - %s", grp->name, cmd->command, cmd->description);
+                            iprintln(trALWAYS, "  %s %-8s - %s", grp->name, cmd->command, cmd->description);
                 }
 			}
 			return;
@@ -642,36 +648,36 @@ void _console_handler_help(void)
 	}
 
 	//Reaching this point means we are printing EVERYTHING
-	dbgPrint(trALWAYS, "The list of available commands are:");
+	iprintln(trALWAYS, "The list of available commands are:");
 
 	for (int i = 0; i < _console.menu_grp_list.cnt; i++)
 	{
 		ConsoleMenuTableGroup_t * grp = &_console.menu_grp_list.group[i];
-		//dbgPrint(trALWAYS, " * %s - %s *", grp->name, grp->description);
-		dbgPrint(trALWAYS, " \"%s\" (%s)", grp->name, grp->description);
-		//dbgPrint(trALWAYS, "    |");
-		//dbgPrint(trALWAYS, "");
+		//iprintln(trALWAYS, " * %s - %s *", grp->name, grp->description);
+		iprintln(trALWAYS, " \"%s\" (%s)", grp->name, grp->description);
+		//iprintln(trALWAYS, "    |");
+		//iprintln(trALWAYS, "");
 		for (int j = 0; j < grp->item_cnt; j++)
-		    dbgPrint(trALWAYS, "    + %-8s - %s", 
+		    iprintln(trALWAYS, "    + %-8s - %s", 
                 grp->table_ptr[j].command, 
                 grp->table_ptr[j].description);
         // if (i < (_console.menu_grp_list.cnt - 1))
-        //     dbgPrint(trALWAYS, "   |");
-        dbgPrint(trALWAYS, "");
+        //     iprintln(trALWAYS, "   |");
+        iprintln(trALWAYS, "");
 	}
 
 	//printf("\n%sNOTE: Enter Arguments after the command, separated by a space.");
-	dbgPrint(trALWAYS, "Command strings longer than %d chars are invalid.", CONSOLE_RX_BUFF);
+	iprintln(trALWAYS, "Command strings longer than %d chars are invalid.", CONSOLE_RX_BUFF);
 }
 
-void _console_handler_trace_dbgPrint_i_action(eTraceFlagAction def_act)
+void _console_handler_trace_iprint_action(eTraceFlagAction def_act)
 {
     switch (def_act)
     {
-        case eTraceON:      dbgPrint_i(trALWAYS, "ON");         break;
-        case eTraceOFF:     dbgPrint_i(trALWAYS, "OFF");        break;
-        case eTraceTOGGLE:  dbgPrint_i(trALWAYS, "Toggle");     break;
-        default:            dbgPrint_i(trALWAYS, "No Action");  break;
+        case eTraceON:      iprint(trALWAYS, "ON");         break;
+        case eTraceOFF:     iprint(trALWAYS, "OFF");        break;
+        case eTraceTOGGLE:  iprint(trALWAYS, "Toggle");     break;
+        default:            iprint(trALWAYS, "No Action");  break;
     }
 }
 
@@ -733,7 +739,7 @@ void _console_handler_trace(void)
                 //Increment the unselected cound regardless of whether we found a valid trace name or not (thus ignoring it)
                 un_selected_cnt++;
                 if (!found)
-                    dbgPrint(trALWAYS, "\t\"%s\" is not a valid trace name or action. Argument ignored!!!", arg);
+                    iprintln(trALWAYS, "\t\"%s\" is not a valid trace name or action. Argument ignored!!!", arg);
                 else
                     valid_traces_cnt++;
                 }
@@ -754,7 +760,7 @@ void _console_handler_trace(void)
         {
             //_print_arg_stack();
             //We have a valid trace mask, but no state was selected, so we'll toggle it
-            dbgPrint(trALWAYS, " No action selected for %d valid tag(s), performing default action(s):", valid_traces_cnt /*un_selected_cnt*/);
+            iprintln(trALWAYS, " No action selected for %d valid tag(s), performing default action(s):", valid_traces_cnt /*un_selected_cnt*/);
             for (int offset = (0-un_selected_cnt); offset < 0; offset++)
             {
                 arg = console_arg_peek(offset);
@@ -763,9 +769,9 @@ void _console_handler_trace(void)
                     if(!strcasecmp(print_trace_combos[i].name, arg))
                     {
                         valid_traces_cnt--;
-                        dbgPrint_i(trALWAYS, "   %10s : ", (const char *)print_trace_combos[i].name);
-                        _console_handler_trace_dbgPrint_i_action(print_trace_combos[i].default_action);
-                        dbgPrint_i(trALWAYS, "\n");
+                        iprint(trALWAYS, "   %10s : ", (const char *)print_trace_combos[i].name);
+                        _console_handler_trace_iprint_action(print_trace_combos[i].default_action);
+                        iprintln(trALWAYS, "");
                         switch (print_trace_combos[i].default_action)
                         {
                             case eTraceON:      change_mask_on |= print_trace_combos[i].combo_mask;     break;
@@ -777,7 +783,7 @@ void _console_handler_trace(void)
                 }
                 //Reaching this point with found == false means that the argument was not found in the list of valid trace names... that is a big problem!!!
                 // if (!found)
-                //     dbgPrint(trALWAYS, "\t\t %10s : Unknown (Ignored)", arg);
+                //     iprintln(trALWAYS, "\t\t %10s : Unknown (Ignored)", arg);
             }
         }
 
@@ -794,48 +800,48 @@ void _console_handler_trace(void)
 
     if (help_requested)
     {
-        dbgPrint(trALWAYS, "Usage: \"trace <tag(s)> <action (optional)> \"");
-        dbgPrint(trALWAYS, "  <action> can be \"ON\", \"OFF\" or \"Toggle\"");
-        dbgPrint(trALWAYS, "  <tag(s)> can be 1 or more of the following (Default Action):");
-        // dbgPrint_i(trALWAYS, "\t\t[");
+        iprintln(trALWAYS, "Usage: \"trace <tag(s)> <action (optional)> \"");
+        iprintln(trALWAYS, "  <action> can be \"ON\", \"OFF\" or \"Toggle\"");
+        iprintln(trALWAYS, "  <tag(s)> can be 1 or more of the following (Default Action):");
+        // iprint(trALWAYS, "\t\t[");
         // for (int i = 0; i < (sizeof(print_trace_combos)/sizeof(sPrintFlagActionItem)); i++)
-        //     dbgPrint_i(trALWAYS, "%s%s", (const char *)print_trace_combos[i].name, (const char *)((i < (sizeof(print_trace_combos)/sizeof(sPrintFlagActionItem)-1))? ", ":"]\n"));
+        //     iprint(trALWAYS, "%s%s", (const char *)print_trace_combos[i].name, (const char *)((i < (sizeof(print_trace_combos)/sizeof(sPrintFlagActionItem)-1))? ", ":"]\n"));
 
-        //dbgPrint(trCONSOLE, " ==== Trace Menu ==== ");
+        //iprintln(trCONSOLE, " ==== Trace Menu ==== ");
         for (int i = 0; i < (sizeof(print_trace_combos)/sizeof(sPrintFlagActionItem)); i++)
         {
             uint8_t combo_mask = print_trace_combos[i].combo_mask;
-            dbgPrint_i(trALWAYS, "    %6s - ", (const char *)print_trace_combos[i].name);
+            iprint(trALWAYS, "    %6s - ", (const char *)print_trace_combos[i].name);
             //Run through the active bits and find their relative names in print_trace_flag_name
             bool multi_flag = false;
             for (int j = 0; j < (sizeof(print_trace_flag_name)/sizeof(sPrintFlagItem)); j++)
             {
                 if(print_trace_flag_name[j].mask & combo_mask)
                 {
-                    dbgPrint_i(trALWAYS, "%s%s", ((multi_flag)? "|":""), print_trace_flag_name[j].abbr_name);
+                    iprint(trALWAYS, "%s%s", ((multi_flag)? "|":""), print_trace_flag_name[j].abbr_name);
                     multi_flag = true;
                 }
             }
-            dbgPrint_i(trALWAYS, " %12s", "(");
-            _console_handler_trace_dbgPrint_i_action(print_trace_combos[i].default_action);
-            dbgPrint_i(trALWAYS, ")\n");
+            iprint(trALWAYS, " %12s", "(");
+            _console_handler_trace_iprint_action(print_trace_combos[i].default_action);
+            iprint(trALWAYS, ")\n");
         }
         //                  01234567890123456789012345678901234567890123456789012345678901234567890123456789
-        dbgPrint(trALWAYS, "");
-        dbgPrint(trALWAYS, "  Combination of flags switching can be performed in a single line");
-        dbgPrint(trALWAYS, "   by specifying tag(s) then action(s)");
-        dbgPrint(trALWAYS, "   e.g. \"trace tag_1 tag_2 ON tag_3 tag_4 OFF...\" etc");
-        dbgPrint(trALWAYS, "  If an action is not specified, the default action for the relevant");
-        dbgPrint(trALWAYS, "   flag is performed");
-        dbgPrint(trALWAYS, "");
+        iprintln(trALWAYS, "");
+        iprintln(trALWAYS, "  Combination of flags switching can be performed in a single line");
+        iprintln(trALWAYS, "   by specifying tag(s) then action(s)");
+        iprintln(trALWAYS, "   e.g. \"trace tag_1 tag_2 ON tag_3 tag_4 OFF...\" etc");
+        iprintln(trALWAYS, "  If an action is not specified, the default action for the relevant");
+        iprintln(trALWAYS, "   flag is performed");
+        iprintln(trALWAYS, "");
     }
 
-	dbgPrint(trALWAYS, "The current state of Print Trace Flags are:");
+	iprintln(trALWAYS, "The current state of Print Trace Flags are:");
 
 	for (int i = 0; i < (sizeof(print_trace_flag_name)/sizeof(sPrintFlagItem)); i++)
 	{
 		uint8_t trace_mask = print_trace_flag_name[i].mask;
-		dbgPrint(trALWAYS, " %15s - %s%s",
+		iprintln(trALWAYS, " %15s - %s%s",
 				print_trace_flag_name[i].long_name,
 				(print_trace_flag_name[i].mask & _console.tracemask)? "ON  " : "OFF ",
 				/* Add an asterisk if this trace flag has been changed in this operation */
@@ -845,14 +851,111 @@ void _console_handler_trace(void)
 
 void _console_handler_version(void)
 {
-	dbgPrint(trALWAYS, "");
-	dbgPrint(trALWAYS, "=====================================================");
-	dbgPrint(trALWAYS, "ButtonChaser - Master Controller");
-	dbgPrint(trALWAYS, "[c] 2025 ZeroBadCafe Development (Pty) Ltd");
-	dbgPrint(trALWAYS, "Version   %d.%02d.", PROJECT_VERSION / 0x10, PROJECT_VERSION % 0x10);
-	dbgPrint(trALWAYS, "BuildInfo %s.", BUILD_TIME_DATA);
-	dbgPrint(trALWAYS, "ESP32-C3 (Clock %lu MHz)", configCPU_CLOCK_HZ / 1000000L);
-	dbgPrint(trALWAYS, "=====================================================");
+	iprintln(trALWAYS, "");
+	iprintln(trALWAYS, "=====================================================");
+	iprintln(trALWAYS, "ButtonChaser - Master Controller");
+	iprintln(trALWAYS, "[c] 2025 ZeroBadCafe Development (Pty) Ltd");
+	iprintln(trALWAYS, "Version   %d.%02d.", PROJECT_VERSION / 0x10, PROJECT_VERSION % 0x10);
+	iprintln(trALWAYS, "BuildInfo %s.", BUILD_TIME_DATA);
+	iprintln(trALWAYS, "ESP32-C3 (Clock %lu MHz)", configCPU_CLOCK_HZ / 1000000L);
+	iprintln(trALWAYS, "=====================================================");
+}
+
+void _console_handler_dump(void)
+{
+    //RVN - continue from here:
+    static uint32_t memDumpAddr = 0l;//0x10000L;
+    static unsigned int memDumpLen = 256;
+
+    uint32_t tmp_addr = memDumpAddr;
+    uint32_t tmp_len = memDumpLen;
+    bool is_ram_not_flash = true;//(memStart == RAMSTART);
+    bool help_reqested = false;
+
+	while (console_arg_cnt() > 0)
+	{
+        char *arg = console_arg_pop();
+        if ((0 == strcasecmp(arg, "help")) || (0 == strcasecmp(arg, "?"))) //is it a ?
+        {
+            help_reqested = true; //Disregard the rest of the arguments
+            break;
+        }
+        else if (is_hex_str(arg, 0))
+        {
+            hex2u32(&tmp_addr, arg, 0);
+            iprintln(trALWAYS, "Got Address: 0x%06X from \"%s\"", tmp_addr, arg);
+
+            // 8MB External Memory - Data Bus
+            // 0x3C000000 - 0x3C7FFFFF
+
+            // 384KB Internal Memory (SRAM) - Data Bus
+            // 0x3FC80000 - 0x3FCDFFFF
+
+            // 128KB Internal Memory (ROM) - Data Bus
+            // 0x3FF00000 - 0x3FF1FFFF
+
+            // 384KB Internal Memory (ROM) - Instruction Bus
+            // 0x40000000 - 0x4005FFFF
+
+            // 400KB Internal Memory (SRAM) - Instruction Bus
+            // 0x4037C000 - 0x403DFFFF
+
+            // 8MB External Memory - Instruction Bus
+            //0x42000000 - 0x427FFFFF
+
+            // 8KB Internal Memory (RTC FAST Memory) - Data/Instruction Bus
+            //0x50000000 - 0x50001FFF
+
+            // 836KB Peripheral - Data/Instruction Bus
+            //0x60000000 - 0x600D0FFF
+            if (tmp_addr >= 0x600D0FFF)
+            {
+                iprint(trALWAYS, "Invalid Start address (0x%06X)", tmp_addr);
+                iprintln(trALWAYS, "Please use address between 0x%06lX and 0x%06lX", 0, 0x600D0FFF);
+                return;
+            }
+            memDumpAddr = tmp_addr;
+        }
+        else if (is_natural_number_str(arg, 0)) //Length
+        {
+            str2uint32(&tmp_len, arg, 0); //sscanf(argStr, "%lu", &tmp_len);
+            iprintln(trALWAYS, "Got Length: %lu from \"%s\"", tmp_len, arg);
+            //if ((tmp_len >= ((memEnd + 1l) - tmp_addr)))
+            if (tmp_len > 1024)
+            {
+                tmp_len = 1024;//memEnd - tmp_addr + 1;
+                iprintln(trALWAYS, "Dump length limited to %ld bytes: 0x%06lX to 0x%06lX", 1024, tmp_len, tmp_addr);
+            }
+            memDumpLen = (unsigned int)tmp_len;
+            //TODO - RVN, you should perform better handling of invalid length values here
+        }
+        else
+        {
+            help_reqested = true;
+            iprintln(trALWAYS, "Invalid argument \"%s\"", arg);
+            break;
+        }
+    }
+
+    if (!help_reqested)
+    {
+        console_print_memory(trALWAYS, (void *)memDumpAddr, memDumpAddr, memDumpLen);
+    }
+
+    if (help_reqested)
+    {
+        //                  01234567890123456789012345678901234567890123456789012345678901234567890123456789
+        iprintln(trALWAYS, "Usage: \"dump [<address>] [<length>]\"");        
+        iprintln(trALWAYS, "    <address>: Hexadecimal Value - Any address below 0x%08lu", 0x600D0FFF);
+        iprintln(trALWAYS, "                If <address> is omitted the dump will continue from where the");
+        iprintln(trALWAYS, "                last dump ended (0x%06lX)", memDumpAddr);
+        iprintln(trALWAYS, "    <length>:  Decimal Value - Any length below %u", 1024);
+        iprintln(trALWAYS, "                If <length> is omitted the same number of bytes as in the");
+        iprintln(trALWAYS, "                previous call will be dumperd (%u)", memDumpLen);
+    }    
+
+
+
 }
 
 bool _console_service(void)
@@ -951,12 +1054,12 @@ void * console_init_task(void)
 	// The Console will run on the Debug port
 	// Serial.begin(115200, SERIAL_8N1);
 
-	// dbgPrint(trALWAYS,	"ALWAYS  - Print a number %d", 1);
-	// dbgPrint(trBAT, 		"BAT     - Print a number %d", 2);
-	// dbgPrint(trCONSOLE,	"CONSOLE - Print a number %d", 3);
-	// dbgPrint(trGPS, 		"GPS     - Print a number %d", 4);
-	// dbgPrint(trAPP, 		"APP     - Print a number %d", 5);
-	// dbgPrint(trNONE,   	"NONE    - Print a number %d", 6);
+	// iprintln(trALWAYS,	"ALWAYS  - Print a number %d", 1);
+	// iprintln(trBAT, 		"BAT     - Print a number %d", 2);
+	// iprintln(trCONSOLE,	"CONSOLE - Print a number %d", 3);
+	// iprintln(trGPS, 		"GPS     - Print a number %d", 4);
+	// iprintln(trAPP, 		"APP     - Print a number %d", 5);
+	// iprintln(trNONE,   	"NONE    - Print a number %d", 6);
 
 	// Create the task, storing the handle.  Note that the passed parameter ucParameterToPass
 	// must exist for the lifetime of the task, so in this case is declared static.  If it was just an
@@ -964,7 +1067,7 @@ void * console_init_task(void)
 	// the new task attempts to access it.
 	if (xTaskCreate( _console_main_func, PRINTF_TAG, _console.task.stack_depth, _console.task.parameter_to_pass, tskIDLE_PRIORITY, &_console.task.handle ) != pdPASS)
 	{
-		dbgPrint(trALWAYS, "#Unable to start %s Task!", PRINTF_TAG);
+		iprintln(trALWAYS, "#Unable to start %s Task!", PRINTF_TAG);
 		return NULL;
 	}
 
@@ -976,7 +1079,7 @@ void * console_init_task(void)
 
 	console_add_menu("con", _console_menu_items, ARRAY_SIZE(_console_menu_items), "Console Interface");
 
-	dbgPrint(trALWAYS, "#Init OK (Traces: 0x%02X)", _console.tracemask);
+	iprintln(trALWAYS, "#Init OK (Traces: 0x%02X)", _console.tracemask);
 
 	return &_console.task;
 }
@@ -986,14 +1089,14 @@ int console_add_menu(const char *_group_name, ConsoleMenuItem_t *_tbl, size_t _c
 	// Do not bother if we have not been initialized
 	if (!_console.task.handle)
 	{
-		dbgPrint(trALWAYS, "#Not Initialized yet (%s)", _group_name);
+		iprintln(trALWAYS, "#Not Initialized yet (%s)", _group_name);
 		return 0;
 	}
 
 	// First we need to decide if we have space?
 	if (_console.menu_grp_list.cnt >= task_console_MAX_MENU_ITEMS_MAX)
 	{
-		dbgPrint(trCONSOLE, "#menu list: %s (%d)\n",
+		iprintln(trCONSOLE, "#menu list: %s (%d)\n",
 			   _group_name,
 			   "Out of Space",
 			   _console.menu_grp_list.cnt);
@@ -1003,7 +1106,7 @@ int console_add_menu(const char *_group_name, ConsoleMenuItem_t *_tbl, size_t _c
 	//Don't add an empty table or a table with dulicate entries
     if (_cnt == 0)
     {
-        dbgPrint(trCONSOLE, "#Empty table for \"%s\" (%d)", _group_name, _cnt);
+        iprintln(trCONSOLE, "#Empty table for \"%s\" (%d)", _group_name, _cnt);
         return 0;
     }
 
@@ -1014,7 +1117,7 @@ int console_add_menu(const char *_group_name, ConsoleMenuItem_t *_tbl, size_t _c
         {
             if (!strcasecmp(_tbl[i].command, _tbl[j].command))
             {
-                dbgPrint(trCONSOLE, "#Duplicate command \"%s\" in \"%s\" (%d & %d)", _tbl[i].command, _group_name, i, j);
+                iprintln(trCONSOLE, "#Duplicate command \"%s\" in \"%s\" (%d & %d)", _tbl[i].command, _group_name, i, j);
                 return 0;
             }
         }
@@ -1023,7 +1126,7 @@ int console_add_menu(const char *_group_name, ConsoleMenuItem_t *_tbl, size_t _c
 
 	int index = 0;
 
-	// dbgPrint(trALWAYS, "#Adding: %s", _group_name);
+	// iprintln(trALWAYS, "#Adding: %s", _group_name);
 
     // Check if we already have this group in the list
 	for (index = 0; index < _console.menu_grp_list.cnt; index++)
@@ -1031,7 +1134,7 @@ int console_add_menu(const char *_group_name, ConsoleMenuItem_t *_tbl, size_t _c
 		// We don't want to add duplicate tables or groups
 		if (!strcasecmp(_console.menu_grp_list.group[index].name, _group_name))
 		{
-			dbgPrint(trCONSOLE, "#Group \"%s\" already added @ %d)",
+			iprintln(trCONSOLE, "#Group \"%s\" already added @ %d)",
 				   _group_name,
 				   _cnt);
 			return 0;
@@ -1039,7 +1142,7 @@ int console_add_menu(const char *_group_name, ConsoleMenuItem_t *_tbl, size_t _c
 		
         if (_console.menu_grp_list.group[index].table_ptr == _tbl)
 		{
-			dbgPrint(trCONSOLE, "#Table for group \"%s\" already added @ %d under \"%s\"",
+			iprintln(trCONSOLE, "#Table for group \"%s\" already added @ %d under \"%s\"",
 				   _group_name,
 				   _cnt,
                    _console.menu_grp_list.group[index].name);
@@ -1052,7 +1155,7 @@ int console_add_menu(const char *_group_name, ConsoleMenuItem_t *_tbl, size_t _c
 			continue; // with the for loop
 		// else, this item group is alphabetically larger.
 
-        //dbgPrint(trCONSOLE, "#Adding \"%s\" (%d) @ index %d", _group_name, _cnt, index);
+        //iprintln(trCONSOLE, "#Adding \"%s\" (%d) @ index %d", _group_name, _cnt, index);
 		// Add this items right here
 		break; // from the for-loop
 	}
@@ -1060,12 +1163,12 @@ int console_add_menu(const char *_group_name, ConsoleMenuItem_t *_tbl, size_t _c
 	//Depending on the current value of index, we may or may not need to make some space.
 	if (index < _console.menu_grp_list.cnt)
 	{
-		//dbgPrint(trCONSOLE, "#Opening up space at position %d/%d", index+1, _console.menu_grp_list.cnt);
+		//iprintln(trCONSOLE, "#Opening up space at position %d/%d", index+1, _console.menu_grp_list.cnt);
 		// Open up a slot by moving everything else on with one space.
         memmove(&_console.menu_grp_list.group[index + 1], &_console.menu_grp_list.group[index], sizeof(ConsoleMenuTableGroup_t) * (_console.menu_grp_list.cnt - index));
 	}
 
-    // dbgPrint(trCONSOLE, "#No need to move anything (%d-%d)", index, _console.menu_grp_list.cnt);
+    // iprintln(trCONSOLE, "#No need to move anything (%d-%d)", index, _console.menu_grp_list.cnt);
 
 	// Reaching this point means we can add our next table at the end.
 	_console.menu_grp_list.group[index].name = _group_name;
@@ -1073,7 +1176,7 @@ int console_add_menu(const char *_group_name, ConsoleMenuItem_t *_tbl, size_t _c
 	_console.menu_grp_list.group[index].table_ptr = _tbl;
 	_console.menu_grp_list.group[index].item_cnt = _cnt;
 	_console.menu_grp_list.cnt++;
-	//dbgPrint(trCONSOLE, "#Added \"%s\" @ position %d/%d", _console.menu_grp_list.group[index].name, index+1, _console.menu_grp_list.cnt);
+	//iprintln(trCONSOLE, "#Added \"%s\" @ position %d/%d", _console.menu_grp_list.group[index].name, index+1, _console.menu_grp_list.cnt);
 
     //RVN - I guess we can check if possible duplicate commands exist under different groups
     for (int i = 0; i < _cnt; i++)
@@ -1082,12 +1185,55 @@ int console_add_menu(const char *_group_name, ConsoleMenuItem_t *_tbl, size_t _c
         ConsoleMenuTableGroup_t *_group_base;
         if (ESP_OK == _find_menu_command(_tbl[i].command, 0, NULL, &_group_base))
             if (strcasecmp(_group_base->name, _group_name) != 0)
-                dbgPrint(trCONSOLE, "#\"%s\" is duplicated in \"%s\" (%s) and \"%s\" (%s)", 
+                iprintln(trCONSOLE, "#\"%s\" is duplicated in \"%s\" (%s) and \"%s\" (%s)", 
                     _tbl[i].command, 
                     _group_base->name, _group_base->description,
                     _console.menu_grp_list.group[index].name, _console.menu_grp_list.group[index].description);
     }
 	return _cnt;
+}
+
+void console_print_memory(int Flags, void * Src, unsigned long Address, int Len)
+{
+uint8_t *s;
+uint8_t x;
+int cnt;
+//RAMSTART     (0x100)
+//RAMEND       0x8FF     /* Last On-Chip SRAM Location */
+
+	s = (uint8_t *)Src;
+
+	while(Len)
+	{
+		// print offset
+		iprint(Flags, "%06lX : ", Address);
+		// print hex data
+		for(x = 0; x < 16; x++)
+		{
+			if (x < Len)
+                iprint(Flags, "%02X%c", (uint8_t)s[x], (uint8_t)((x == 7) ? '-' : ' '));
+			else
+                iprint(Flags, "  %c", (uint8_t)((x == 7) ? '-' : ' '));
+
+		}
+		// print ASCII data
+		iprint(Flags, " ");
+		for(x = 0; x < 16; x++)
+		{
+			if (x < Len)
+                iprint(Flags, "%c", (uint8_t)(((s[x] >= 0x20) && (s[x] <= 0x7f))? s[x] : '.'));
+			else
+				break;
+		}
+		// goto next line
+		cnt = (Len > 16) ? 16 : Len;
+		s       += cnt;
+		Len     -= cnt;
+		iprintln(Flags, "");
+		Address += 16;
+	}
+
+//  iprintf(Flags, "\n");
 }
 
 void console_print(uint8_t traceflags, const char * tag, const char *fmt, ...)

@@ -28,7 +28,7 @@ includes
 #include "sys_task_utils.h"
 #include "str_helper.h"
 #include "task_console.h"
-#include "rgbledstrip.h"
+#include "drv_rgb_led_strip.h"
 
 #define __NOT_EXTERN__
 #include "task_rgb_led.h"
@@ -265,7 +265,7 @@ void _led_main_func(void * pvParameters)
     while (!_rgb_led.task.init_done)
         xTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(LED_UPDATE_INTERVAL_MS));
 
-    dbgPrint(trLED|trALWAYS, "#Task Started (%d). Running @ %d Hz", _rgb_led.cnt, (1000/LED_UPDATE_INTERVAL_MS));
+    iprintln(trLED|trALWAYS, "#Task Started (%d). Running @ %d Hz", _rgb_led.cnt, (1000/LED_UPDATE_INTERVAL_MS));
 
     while (1) 
     {
@@ -282,20 +282,20 @@ void _led_main_func(void * pvParameters)
 
     _led_teardown();
 
-    dbgPrint(trLED|trALWAYS, "#LED Task Complete!");
+    iprintln(trLED|trALWAYS, "#LED Task Complete!");
 }
 
 void _led_setup(void)
 {
     if (_rgb_led.cnt > 0)
     {
-        dbgPrint(trLED|trALWAYS, "#Already initialised");
+        iprintln(trLED|trALWAYS, "#Already initialised");
         return; //Already initialised
     }
 
-    _rgb_led.cnt = rgbledstrip_init();
+    _rgb_led.cnt = drv_rgb_led_strip_init();
 
-    //dbgPrint(trLED|trALWAYS, "#LED Task init done (%d LEDs in total)", _rgb_led.cnt);
+    //iprintln(trLED|trALWAYS, "#LED Task init done (%d LEDs in total)", _rgb_led.cnt);
 
 #ifdef CONSOLE_ENABLED
     console_add_menu("led", _led_menu_items, ARRAY_SIZE(_led_menu_items), "LED Control");
@@ -306,7 +306,7 @@ void _led_setup(void)
     if(_rgb_led.msg_queue == 0 )
     {
         // Queue was not created and must not be used.
-        dbgPrint(trLED|trALWAYS, "#Unable to create Msg Queue for LED task");
+        iprintln(trLED|trALWAYS, "#Unable to create Msg Queue for LED task");
         assert(0);
     }
 
@@ -315,7 +315,7 @@ void _led_setup(void)
     if (_rgb_led.array == NULL)
     {
         // Queue was not created and must not be used.
-        dbgPrint(trLED|trALWAYS, "#Unable to create Timers for LED task");
+        iprintln(trLED|trALWAYS, "#Unable to create Timers for LED task");
         assert(0);
     }
     else
@@ -358,7 +358,7 @@ void _led_teardown(void)
 
     _rgb_led.cnt = 0;
 
-    rgbledstrip_deinit();
+    drv_rgb_led_strip_deinit();
 
 }
 
@@ -371,7 +371,7 @@ void _read_msg_queue(void)
     {
         if (rx_msg.led_addr == 0)
         {
-            dbgPrint(trLED, "#Empty address list msg rx'd in queue: action", rx_msg.cmd);
+            iprintln(trLED, "#Empty address list msg rx'd in queue: action", rx_msg.cmd);
             continue;  //No LEDs are affected by this message
         }
 
@@ -389,24 +389,24 @@ void _read_msg_queue(void)
                     //Does nothing except use up a space in the msg queue
                     break;
                 case led_action_off:
-                    dbgPrint(trLED, "#%s -> OFF", rgbledstrip_index2name(_led_nr));
+                    iprintln(trLED, "#%s -> OFF", drv_rgb_led_strip_index2name(_led_nr));
                     //Val_0, Val_1 and Val_2 are not used
                     _rgb_led.array[_led_nr].col_1 = 0;
-                    rgbledstrip_set_colour(_led_nr, 0);
+                    drv_rgb_led_strip_set_colour(_led_nr, 0);
                     _rgb_led.array[_led_nr].state = led_state_off;
                     sys_poll_tmr_stop(&_rgb_led.array[_led_nr].timer);
                     break;
                 case led_action_colour:
-                    dbgPrint(trLED, "#%s -> ON (colour: 0x%06X)", rgbledstrip_index2name(_led_nr), rx_msg.val_0);
+                    iprintln(trLED, "#%s -> ON (colour: 0x%06X)", drv_rgb_led_strip_index2name(_led_nr), rx_msg.val_0);
                     //Val_0 is the colour
                     //Val_1 and Val_2 are not used
                     _rgb_led.array[_led_nr].col_1 = rx_msg.val_0;
-                    rgbledstrip_set_colour(_led_nr, rx_msg.val_0);
+                    drv_rgb_led_strip_set_colour(_led_nr, rx_msg.val_0);
                     _rgb_led.array[_led_nr].state = (rx_msg.val_0 == 0)? led_state_off : led_state_on; //If the colour is black, then the state is off, otherwise it is on
                     sys_poll_tmr_stop(&_rgb_led.array[_led_nr].timer);
                     break;
                 case led_action_blink:            
-                    dbgPrint(trLED, "#%s -> Set to Blink (0x%06X <-> 0x%06X) at %dms", rgbledstrip_index2name(_led_nr), rx_msg.val_0, (rx_msg.val_2 & 0x00FFFFFF), rx_msg.val_1);
+                    iprintln(trLED, "#%s -> Set to Blink (0x%06X <-> 0x%06X) at %dms", drv_rgb_led_strip_index2name(_led_nr), rx_msg.val_0, (rx_msg.val_2 & 0x00FFFFFF), rx_msg.val_1);
                     //Val_0 is the 1st (primary) colour
                     //Val_1 is the period (in ms)
                     //Val_2 is the 2nd/alternating  colour
@@ -421,7 +421,7 @@ void _read_msg_queue(void)
                         rx_msg.val_1 = LED_BLINK_PERIOD_MS_MIN;
 
                         //Start the timer and assign the primary colour
-                    rgbledstrip_set_colour(_led_nr, rx_msg.val_0);
+                    drv_rgb_led_strip_set_colour(_led_nr, rx_msg.val_0);
                     //Swop the primary and secondary colours for the next iteration
                     _rgb_led.array[_led_nr].col_1 = (rx_msg.val_2 & 0x00FFFFFF);
                     _rgb_led.array[_led_nr].col_2 = (rx_msg.val_0 & 0x00FFFFFF);
@@ -429,7 +429,7 @@ void _read_msg_queue(void)
                     sys_poll_tmr_start(&_rgb_led.array[_led_nr].timer, (uint64_t)rx_msg.val_1/2, true);
                     break;
                 case led_action_rainbow:
-                    dbgPrint(trLED, "#%s LED -> Rainbow at %dms", rgbledstrip_index2name(_led_nr), rx_msg.val_1);
+                    iprintln(trLED, "#%s LED -> Rainbow at %dms", drv_rgb_led_strip_index2name(_led_nr), rx_msg.val_1);
                     //Val_0 is not used
                     //Val_1 is the period (in ms)
                     //Val_2 is not used
@@ -445,14 +445,14 @@ void _read_msg_queue(void)
                     if (rx_msg.val_1 > LED_RAINBOW_PER_MAX_MS)
                         rx_msg.val_1 = LED_RAINBOW_PER_MAX_MS;
                     
-                    rgbledstrip_set_colour(_led_nr, 0);
+                    drv_rgb_led_strip_set_colour(_led_nr, 0);
                     //The minimum timer value is 20ms (LED_UPDATE_INTERVAL_MS).
                     //Dividing the period by LED_UPDATE_INTERVAL_MS gives us a count of how many task cycles it takes to loop through the 360 degree hue spectrum,
                     //No need to start a timer... we use the task cycle interval to update the hue (if needed)
                     _rgb_led.array[_led_nr].col_1 = 0;
                     _rgb_led.array[_led_nr].col_2 = (rx_msg.val_1/LED_UPDATE_INTERVAL_MS) & 0xFFFF;
-                    // dbgPrint(trLED, "#%s LED: Rainbow effect at %dms (%d x %d = %d)", 
-                    //     rgbledstrip_index2name(_led_nr), rx_msg.val_1, _rgb_led.array[_led_nr].col_2, LED_UPDATE_INTERVAL_MS, _rgb_led.array[_led_nr].col_2 * LED_UPDATE_INTERVAL_MS);
+                    // iprintln(trLED, "#%s LED: Rainbow effect at %dms (%d x %d = %d)", 
+                    //     drv_rgb_led_strip_index2name(_led_nr), rx_msg.val_1, _rgb_led.array[_led_nr].col_2, LED_UPDATE_INTERVAL_MS, _rgb_led.array[_led_nr].col_2 * LED_UPDATE_INTERVAL_MS);
                     _rgb_led.array[_led_nr].state = led_state_rainbow;
                     // sys_stopwatch_ms_start(&_rgb_led.sw);
                     sys_poll_tmr_stop(&_rgb_led.array[_led_nr].timer);
@@ -461,7 +461,7 @@ void _read_msg_queue(void)
                 {
                     _led_info_print(_led_nr);
                     if (_led_nr == (_rgb_led.cnt - 1))
-                        dbgPrint(trALWAYS, "");
+                        iprintln(trALWAYS, "");
                     break;
                 }
                 default:
@@ -486,7 +486,7 @@ void _led_service(void)
                 {
                     uint32_t _temp_col = rgb_led->col_1;
                     //Set the current colour                    
-                    rgbledstrip_set_colour(_led_nr, rgb_led->col_1);
+                    drv_rgb_led_strip_set_colour(_led_nr, rgb_led->col_1);
                     //Swop the primary and secondary colours for the next iteration
                     rgb_led->col_1 = rgb_led->col_2;
                     rgb_led->col_2 = _temp_col;
@@ -500,13 +500,13 @@ void _led_service(void)
                 uint32_t _count = (rgb_led->col_2 >> 16) & 0x0000FFFF;
                 hue = (HUE_MAX *_count/_total)%HUE_MAX;
                 hsv2rgb(hue, SAT_MAX, VAL_MAX, &rgb_led->col_1);
-                rgbledstrip_set_colour(_led_nr, rgb_led->col_1);
-                //dbgPrint(trLED, "#Rainbow: %d/%d - H: %d -> 0x%06x)", _count, _total, hue, rgb_led->col_1);
+                drv_rgb_led_strip_set_colour(_led_nr, rgb_led->col_1);
+                //iprintln(trLED, "#Rainbow: %d/%d - H: %d -> 0x%06x)", _count, _total, hue, rgb_led->col_1);
                 _count++;
                 if (_count >= _total)
                 {
                     // uint32_t _lap = sys_stopwatch_ms_reset(&_rgb_led.sw);
-                    // dbgPrint(trLED, "#Rainbow (re)starting after %dms", _lap);
+                    // iprintln(trLED, "#Rainbow (re)starting after %dms", _lap);
                     _count = 0;
                 }
                 rgb_led->col_2 = ((((uint32_t)_count) << 16) & 0xFFFF0000) | ((uint32_t)_total & 0x0000FFFF);
@@ -527,21 +527,21 @@ void _led_info_print(int _index)
     switch (rgb_led->state)
     {
         case led_state_off:
-            dbgPrint(trALWAYS, "%s LED - OFF", rgbledstrip_index2name(_index));
+            iprintln(trALWAYS, "%s LED - OFF", drv_rgb_led_strip_index2name(_index));
             break;
         case led_state_on:
-            dbgPrint(trALWAYS, "%s LED - ON (0x%06X)", rgbledstrip_index2name(_index), rgb_led->col_1, rgb_led->state);
+            iprintln(trALWAYS, "%s LED - ON (0x%06X)", drv_rgb_led_strip_index2name(_index), rgb_led->col_1, rgb_led->state);
             break;
         case led_state_blink:
             //Remember, the timer period is half the blink period (on/off)
-            dbgPrint(trALWAYS, "%s LED - Blinking (0x%06X <-> 0x%06X), %.2f Hz", rgbledstrip_index2name(_index), rgb_led->col_1, rgb_led->col_2, (500.0f/rgb_led->timer.ms_period));
+            iprintln(trALWAYS, "%s LED - Blinking (0x%06X <-> 0x%06X), %.2f Hz", drv_rgb_led_strip_index2name(_index), rgb_led->col_1, rgb_led->col_2, (500.0f/rgb_led->timer.ms_period));
             break;
         case led_state_rainbow:
             //Remember, the bottom 16 bits of col_2 is the total count.... x LED_UPDATE_INTERVAL_MS gives the period
-            dbgPrint(trALWAYS, "%s LED - Rainbow, %dms", rgbledstrip_index2name(_index), (rgb_led->col_2 & 0xFFFF) * LED_UPDATE_INTERVAL_MS);
+            iprintln(trALWAYS, "%s LED - Rainbow, %dms", drv_rgb_led_strip_index2name(_index), (rgb_led->col_2 & 0xFFFF) * LED_UPDATE_INTERVAL_MS);
             break;
         default:
-            dbgPrint(trALWAYS, "%s LED - UNKNOWN State (%d)", rgbledstrip_index2name(_index), rgb_led->state);
+            iprintln(trALWAYS, "%s LED - UNKNOWN State (%d)", drv_rgb_led_strip_index2name(_index), rgb_led->state);
         break;
     }
 
@@ -563,7 +563,7 @@ esp_err_t _handler_parse_address_str(uint32_t * addr_mask, const char * str)
         //This would be a single led index
         if (value >= led_bit_max)
         {
-            dbgPrint(trALWAYS, "Invalid LED Address (\"%s\" -> %d)", str, value);
+            iprintln(trALWAYS, "Invalid LED Address (\"%s\" -> %d)", str, value);
             return ESP_ERR_INVALID_ARG;
         }
         *addr_mask = BIT(value);
@@ -578,7 +578,7 @@ esp_err_t _handler_parse_address_str(uint32_t * addr_mask, const char * str)
     }
 
     //The strip name parsing is handled by the driver
-    if (rgbledstrip_name2index(str, &index, &count))
+    if (drv_rgb_led_strip_name2index(str, &index, &count))
     {        
         //This could be a single led index or a whole mask
         for (int i = index; i < (index + count); i++)
@@ -645,7 +645,7 @@ esp_err_t _handler_parse_colour_hsv(char * str, uint32_t *value, uint32_t limit,
 {
     if (value == NULL)
     {
-        dbgPrint(trALWAYS, "Invalid dst ptr passed (NULL) - %s", type_str);
+        iprintln(trALWAYS, "Invalid dst ptr passed (NULL) - %s", type_str);
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -659,11 +659,11 @@ esp_err_t _handler_parse_colour_hsv(char * str, uint32_t *value, uint32_t limit,
             return ESP_OK;
 
         //Value is over the limit
-        dbgPrint(trALWAYS, "Invalid %s value (%d > %d)", type_str, *value, limit);
+        iprintln(trALWAYS, "Invalid %s value (%d > %d)", type_str, *value, limit);
         return ESP_ERR_INVALID_ARG;
     }
     //Could not parse the string as a number
-    dbgPrint(trALWAYS, "Invalid %s value (\"%s\")", type_str, str);
+    iprintln(trALWAYS, "Invalid %s value (\"%s\")", type_str, str);
     return ESP_ERR_INVALID_ARG;
 }
 
@@ -711,7 +711,7 @@ void _led_handler_common_action(void/*rgb_led_action_cmd action*/)
                 {
                     //Ooooh... this could be a period
                     if (led_msg.val_1 != 0)
-                        dbgPrint(trALWAYS, "Overwriting previously set period (%dms) with \"%s\" (%dms)", led_msg.val_1, arg, parse_value);
+                        iprintln(trALWAYS, "Overwriting previously set period (%dms) with \"%s\" (%dms)", led_msg.val_1, arg, parse_value);
                     led_msg.val_1 = parse_value;
                     continue;
                 }
@@ -728,7 +728,7 @@ void _led_handler_common_action(void/*rgb_led_action_cmd action*/)
                 if (action == led_action_colour)
                 {
                     if (led_msg.val_0 != (uint32_t)-1)
-                        dbgPrint(trALWAYS, "Overwriting previously set colour (%06X) with \"%s\" (%06X)", led_msg.val_0, arg, parse_value);
+                        iprintln(trALWAYS, "Overwriting previously set colour (%06X) with \"%s\" (%06X)", led_msg.val_0, arg, parse_value);
     
                     led_msg.val_0 = parse_value;
                 }
@@ -741,7 +741,7 @@ void _led_handler_common_action(void/*rgb_led_action_cmd action*/)
                     else
                     {
                         if (led_msg.val_2 != (uint32_t)-1)
-                            dbgPrint(trALWAYS, "Overwriting previously set colour (%06X) with \"%s\" (%06X)", led_msg.val_2, arg, parse_value);            
+                            iprintln(trALWAYS, "Overwriting previously set colour (%06X) with \"%s\" (%06X)", led_msg.val_2, arg, parse_value);            
                         led_msg.val_2 = parse_value;
                     }
                 }
@@ -769,7 +769,7 @@ void _led_handler_common_action(void/*rgb_led_action_cmd action*/)
             break;
         }
         //else if (err == ESP_ERR_NOT_FOUND) /// fall through to colour check
-        dbgPrint(trALWAYS, "Invalid Argument (\"%s\")", arg);
+        iprintln(trALWAYS, "Invalid Argument (\"%s\")", arg);
         help_requested = true;
         break;
     }
@@ -783,7 +783,7 @@ void _led_handler_common_action(void/*rgb_led_action_cmd action*/)
                 // No colour? We'll assign both using a very silly RNG based on the time since boot in us (mod 360)
                 uint32_t rand_hue = (uint32_t)(esp_timer_get_time()%360L);
                 hsv2rgb(rand_hue, SAT_MAX, VAL_MAX, &led_msg.val_0);
-                dbgPrint(trALWAYS, "No Colour specified, using 0x%06X", led_msg.val_0);
+                iprintln(trALWAYS, "No Colour specified, using 0x%06X", led_msg.val_0);
             }
         }
         else if (action == led_action_blink)
@@ -795,7 +795,7 @@ void _led_handler_common_action(void/*rgb_led_action_cmd action*/)
                 hsv2rgb(rand_hue, SAT_MAX, VAL_MAX, &led_msg.val_0);
                 //The second colour is the complementary colour on the other side (+180 degrees) of the colour wheel
                 hsv2rgb(rand_hue+(HUE_MAX/2), SAT_MAX, VAL_MAX, &led_msg.val_2);
-                dbgPrint(trALWAYS, "No Colours specified, using 0x%06X and 0x%06X", led_msg.val_0, led_msg.val_2);
+                iprintln(trALWAYS, "No Colours specified, using 0x%06X and 0x%06X", led_msg.val_0, led_msg.val_2);
             }
             else if (led_msg.val_2 == (uint32_t)-1)
             {
@@ -803,7 +803,7 @@ void _led_handler_common_action(void/*rgb_led_action_cmd action*/)
                 rgb2hsv(led_msg.val_0, &hue, &sat, &val);
                 // No 2nd colour? We'll assign a complimentary colour from the one selected in val_0
                 hsv2rgb(hue+(HUE_MAX/2), sat, val, &led_msg.val_2);
-                dbgPrint(trALWAYS, "No Colour specified, using 0x%06X", led_msg.val_2);
+                iprintln(trALWAYS, "No Colour specified, using 0x%06X", led_msg.val_2);
             }
         }        
 
@@ -813,7 +813,7 @@ void _led_handler_common_action(void/*rgb_led_action_cmd action*/)
             {
                 // No period? We'll assign one using a very silly RNG based on the time since boot in us (mod 360)
                 led_msg.val_1 = (action == led_action_rainbow) ? LED_RAINBOW_PERIOD_MS_DEF : LED_BLINK_PERIOD_MS_DEF;
-                dbgPrint(trALWAYS, "Using default period of %dms", led_msg.val_1);
+                iprintln(trALWAYS, "Using default period of %dms", led_msg.val_1);
             }
         }
 
@@ -831,45 +831,45 @@ void _led_handler_common_action(void/*rgb_led_action_cmd action*/)
     if (help_requested)
     {
         //Opening line
-        dbgPrint_i(trALWAYS, "Usage: \"%s ", arg);        
-        if (action == led_action_colour)    dbgPrint_i(trALWAYS, "[<colour>] ");
-        if ((action == led_action_rainbow) || (action == led_action_blink))   dbgPrint_i(trALWAYS, "[<period>] ");
-        if (action == led_action_blink)     dbgPrint_i(trALWAYS, "[<colour_1>] [<colour_2>]");        
-        dbgPrint(trALWAYS, " [<led_addr>]\"");
+        iprint(trALWAYS, "Usage: \"%s ", arg);        
+        if (action == led_action_colour)    iprint(trALWAYS, "[<colour>] ");
+        if ((action == led_action_rainbow) || (action == led_action_blink))   iprint(trALWAYS, "[<period>] ");
+        if (action == led_action_blink)     iprint(trALWAYS, "[<colour_1>] [<colour_2>]");        
+        iprintln(trALWAYS, " [<led_addr>]\"");
 
 
         // Describe "period"
         if ((action == led_action_blink) || (action == led_action_rainbow))
         {
-            dbgPrint(trALWAYS, "    <period>:   A value indicating the period of the %s cycle in ms", arg);
-            dbgPrint(trALWAYS, "                            (min: %dms)", (action == led_action_blink)? LED_BLINK_PERIOD_MS_DEF*2 : LED_RAINBOW_PER_MIN_MS);
-            dbgPrint(trALWAYS, "        If <period> is omitted, a default period of %dms is used", (action == led_action_blink)? LED_BLINK_PERIOD_MS_DEF*2 : LED_RAINBOW_PER_MIN_MS);
+            iprintln(trALWAYS, "    <period>:   A value indicating the period of the %s cycle in ms", arg);
+            iprintln(trALWAYS, "                            (min: %dms)", (action == led_action_blink)? LED_BLINK_PERIOD_MS_DEF*2 : LED_RAINBOW_PER_MIN_MS);
+            iprintln(trALWAYS, "        If <period> is omitted, a default period of %dms is used", (action == led_action_blink)? LED_BLINK_PERIOD_MS_DEF*2 : LED_RAINBOW_PER_MIN_MS);
         }
 
         // Describe "colour"
         if ((action == led_action_colour) || (action == led_action_blink))
         {
-            dbgPrint(trALWAYS, "    <colour>:   String   - Any one of the assigned colour names");
-            dbgPrint(trALWAYS, "                            e.g. \"Black\", \"wh\", etc");
-            dbgPrint(trALWAYS, "                \"HSV:<csv>\" - An HSV string in the format \"HSV:<h>[,<s>[,<v>]]\"");
-            dbgPrint(trALWAYS, "                            e.g. \"HSV:120\", \"HSV:180,50,50\", etc");
-            dbgPrint(trALWAYS, "                  <h> must be in the range 0 to %d degrees", HUE_MAX-1);
-            dbgPrint(trALWAYS, "                  If <s> or <v> is omitted, it will be set to 100%%");
+            iprintln(trALWAYS, "    <colour>:   String   - Any one of the assigned colour names");
+            iprintln(trALWAYS, "                            e.g. \"Black\", \"wh\", etc");
+            iprintln(trALWAYS, "                \"HSV:<csv>\" - An HSV string in the format \"HSV:<h>[,<s>[,<v>]]\"");
+            iprintln(trALWAYS, "                            e.g. \"HSV:120\", \"HSV:180,50,50\", etc");
+            iprintln(trALWAYS, "                  <h> must be in the range 0 to %d degrees", HUE_MAX-1);
+            iprintln(trALWAYS, "                  If <s> or <v> is omitted, it will be set to 100%%");
             if (action == led_action_blink)
-                dbgPrint(trALWAYS, "        If one or both <colour> are omitted, they will be selected at random");
+                iprintln(trALWAYS, "        If one or both <colour> are omitted, they will be selected at random");
             else
-                dbgPrint(trALWAYS, "        If <colour> is omitted, one will be selected at random");
+                iprintln(trALWAYS, "        If <colour> is omitted, one will be selected at random");
         }
 
         // Describe "led_addr"
-        dbgPrint(trALWAYS, "    <led_addr>: <#>      - a single index (0 to %d), e.g. 0, 1, 2, 3, etc", _rgb_led.cnt-1);
-        dbgPrint(trALWAYS, "                0xHHHH   - a 16 bit mask of the LEDs to affect, e.g. \"0x003\"");
-        dbgPrint(trALWAYS, "                \"<strip>[:<nr>]\" - a string and number (seperated by a colon)");
-        dbgPrint(trALWAYS, "                            indicating the LED strip and LED # to use");
-        dbgPrint(trALWAYS, "                            e.g. \"debug\", \"button:1\", \"button:2\", etc");
-        dbgPrint(trALWAYS, "                  If <nr> is omitted, %s applies to the entire strip", arg);
-        dbgPrint(trALWAYS, "        If <led_addr> is omitted, \"debug\" is assumed");
-        dbgPrint(trALWAYS, " Multiple <led_addr> values can be specified, separated by spaces");
+        iprintln(trALWAYS, "    <led_addr>: <#>      - a single index (0 to %d), e.g. 0, 1, 2, 3, etc", _rgb_led.cnt-1);
+        iprintln(trALWAYS, "                0xHHHH   - a 16 bit mask of the LEDs to affect, e.g. \"0x003\"");
+        iprintln(trALWAYS, "                \"<strip>[:<nr>]\" - a string and number (seperated by a colon)");
+        iprintln(trALWAYS, "                            indicating the LED strip and LED # to use");
+        iprintln(trALWAYS, "                            e.g. \"debug\", \"button:1\", \"button:2\", etc");
+        iprintln(trALWAYS, "                  If <nr> is omitted, %s applies to the entire strip", arg);
+        iprintln(trALWAYS, "        If <led_addr> is omitted, \"debug\" is assumed");
+        iprintln(trALWAYS, " Multiple <led_addr> values can be specified, separated by spaces");
     }
 }
 
@@ -900,7 +900,7 @@ void _led_handler_status(void)
             continue;
         }
         if (err == ESP_ERR_NOT_FOUND)   //ESP_ERR_INVALID_ARG has already been handled ito user feedback
-            dbgPrint(trALWAYS, "Invalid Argument (\"%s\")", arg);
+            iprintln(trALWAYS, "Invalid Argument (\"%s\")", arg);
         // help_requested = true;
         break;
     }
@@ -919,16 +919,16 @@ void _led_handler_status(void)
     if (help_requested)
     {
         //                  01234567890123456789012345678901234567890123456789012345678901234567890123456789
-        dbgPrint(trALWAYS, "Usage: \"ledstat [<led_addr>]\"");        
-        dbgPrint(trALWAYS, "    <led_addr>: <#>      - a single index (0 to %d), e.g. 0, 1, 2, 3, etc", _rgb_led.cnt-1);
-        dbgPrint(trALWAYS, "                0xHHHH   - a 16 bit mask of the LEDs to affect, e.g. \"0x003\"");
-        dbgPrint(trALWAYS, "                \"<strip>[:<nr>]\" - a string and number (seperated by a colon)");
-        dbgPrint(trALWAYS, "                            indicating the LED strip and LED # to use");
-        dbgPrint(trALWAYS, "                            e.g. \"debug\", \"button:1\", \"button:2\", etc");
-        dbgPrint(trALWAYS, "                  If <nr> is omitted, %s applies to the entire strip", "STATUS");
-        dbgPrint(trALWAYS, "        If <led_addr> is omitted, \"debug\" is assumed");
-        dbgPrint(trALWAYS, " Multiple <led_addr> values can be specified, separated by spaces");
-        //        dbgPrint(trALWAYS, "   e.g. \"off 0 1 2 3\", \"off debug:0 button:1...\" etc");
+        iprintln(trALWAYS, "Usage: \"ledstat [<led_addr>]\"");        
+        iprintln(trALWAYS, "    <led_addr>: <#>      - a single index (0 to %d), e.g. 0, 1, 2, 3, etc", _rgb_led.cnt-1);
+        iprintln(trALWAYS, "                0xHHHH   - a 16 bit mask of the LEDs to affect, e.g. \"0x003\"");
+        iprintln(trALWAYS, "                \"<strip>[:<nr>]\" - a string and number (seperated by a colon)");
+        iprintln(trALWAYS, "                            indicating the LED strip and LED # to use");
+        iprintln(trALWAYS, "                            e.g. \"debug\", \"button:1\", \"button:2\", etc");
+        iprintln(trALWAYS, "                  If <nr> is omitted, %s applies to the entire strip", "STATUS");
+        iprintln(trALWAYS, "        If <led_addr> is omitted, \"debug\" is assumed");
+        iprintln(trALWAYS, " Multiple <led_addr> values can be specified, separated by spaces");
+        //        iprintln(trALWAYS, "   e.g. \"off 0 1 2 3\", \"off debug:0 button:1...\" etc");
     }
 }
 
@@ -979,7 +979,7 @@ void _led_handler_col_list(void)
         if (err == ESP_ERR_NOT_FOUND)
         {
             //No a parsable colour
-            dbgPrint(trALWAYS, "Invalid Argument (\"%s\")", arg);
+            iprintln(trALWAYS, "Invalid Argument (\"%s\")", arg);
             help_requested = true;
             break;
         }
@@ -988,7 +988,7 @@ void _led_handler_col_list(void)
 
     if (show_hues)
     {
-        dbgPrint(trALWAYS, "The RGB value for all 359 HUEs (100%% Sat and Val) are:");
+        iprintln(trALWAYS, "The RGB value for all 359 HUEs (100%% Sat and Val) are:");
         for (int i = 0; i < HUE_MAX; i++)
         {
             const char * col_name = NULL;
@@ -996,31 +996,31 @@ void _led_handler_col_list(void)
             uint32_t hue, sat, val;
             hsv2rgb(i, SAT_MAX, VAL_MAX, &rgb_val);
             rgb2hsv(rgb_val, &hue, &sat, &val);
-            dbgPrint_i(trALWAYS, " Hue: % 3d -> 0x%06X", i, rgb_val);
+            iprint(trALWAYS, " Hue: % 3d -> 0x%06X", i, rgb_val);
             col_name = rgb2name(rgb_val);
-            dbgPrint_i(trALWAYS, " - HSV: %3d, %3d, %3d", hue, sat, val);
+            iprint(trALWAYS, " - HSV: %3d, %3d, %3d", hue, sat, val);
             if (col_name != NULL)
-                dbgPrint_i(trALWAYS, " (%s)", col_name);
-            dbgPrint_i(trALWAYS, "\n");
+                iprint(trALWAYS, " (%s)", col_name);
+            iprint(trALWAYS, "\n");
         }
         return;
     }
     
     if (show_all)
     {
-        dbgPrint(trALWAYS, "The RGB and HSV values for the named colours are:");
+        iprintln(trALWAYS, "The RGB and HSV values for the named colours are:");
         int i = 0;
         const char *col_name = colour_list_item(i);
         while (col_name != NULL)
         {
             uint32_t rgb_val;
             if (str2rgb(&rgb_val, col_name) != ESP_OK)
-                dbgPrint(trALWAYS, " % 2d: %s -> Invalid Colour", i, col_name); //Should never happen
+                iprintln(trALWAYS, " % 2d: %s -> Invalid Colour", i, col_name); //Should never happen
             else
             {
                 uint32_t hue, sat, val;
                 rgb2hsv(rgb_val, &hue, &sat, &val);
-                dbgPrint(trALWAYS, " % 8s -> 0x%06X - HSV: %3d, %3d, %3d", col_name, rgb_val, hue, sat, val);
+                iprintln(trALWAYS, " % 8s -> 0x%06X - HSV: %3d, %3d, %3d", col_name, rgb_val, hue, sat, val);
             }
             col_name = colour_list_item(++i);
         }
@@ -1041,11 +1041,11 @@ void _led_handler_col_list(void)
                 continue;   //Skip.... already handled
             if (ESP_OK == _handler_parse_colour(&parse_value, arg))
             {
-                dbgPrint_i(trALWAYS, " % 8s -> 0x%06X", arg, parse_value);
+                iprint(trALWAYS, " % 8s -> 0x%06X", arg, parse_value);
                 const char *col_name = rgb2name(parse_value);
                 if (col_name != NULL)
-                    dbgPrint_i(trALWAYS, " (%s)", col_name);
-                dbgPrint_i(trALWAYS, "\n");
+                    iprint(trALWAYS, " (%s)", col_name);
+                iprint(trALWAYS, "\n");
             }
         }
         return;
@@ -1054,17 +1054,17 @@ void _led_handler_col_list(void)
     if (help_requested)
     {
         //                  01234567890123456789012345678901234567890123456789012345678901234567890123456789
-        dbgPrint(trALWAYS, "Usage: \"rgb [<colour>]\"");        
-        dbgPrint(trALWAYS, "    <colour>:   String   - Any one of the assigned colour names");
-        dbgPrint(trALWAYS, "                            e.g. \"Black\", \"wh\", etc");
-        dbgPrint(trALWAYS, "                \"HSV:<csv>\" - An HSV string in the format \"HSV:<h>[,<s>[,<v>]]\"");
-        dbgPrint(trALWAYS, "                            e.g. \"HSV:120\", \"HSV:180,50,50\", etc");
-        dbgPrint(trALWAYS, "                  <h> must be in the range 0 to %d degrees", HUE_MAX-1);
-        dbgPrint(trALWAYS, "                  If <s> or <v> is omitted, it will be set to 100%%");
-        dbgPrint(trALWAYS, "                \"all|list\" - Lists ALL the available named colours");
-        dbgPrint(trALWAYS, "                \"hues\" - Lists the RGB values for all 359 HUE values");
-        dbgPrint(trALWAYS, "        If <colour> is omitted \"rgb all\" is assumed");
-        dbgPrint(trALWAYS, " Multiple <colour> values can be specified, separated by spaces");
+        iprintln(trALWAYS, "Usage: \"rgb [<colour>]\"");        
+        iprintln(trALWAYS, "    <colour>:   String   - Any one of the assigned colour names");
+        iprintln(trALWAYS, "                            e.g. \"Black\", \"wh\", etc");
+        iprintln(trALWAYS, "                \"HSV:<csv>\" - An HSV string in the format \"HSV:<h>[,<s>[,<v>]]\"");
+        iprintln(trALWAYS, "                            e.g. \"HSV:120\", \"HSV:180,50,50\", etc");
+        iprintln(trALWAYS, "                  <h> must be in the range 0 to %d degrees", HUE_MAX-1);
+        iprintln(trALWAYS, "                  If <s> or <v> is omitted, it will be set to 100%%");
+        iprintln(trALWAYS, "                \"all|list\" - Lists ALL the available named colours");
+        iprintln(trALWAYS, "                \"hues\" - Lists the RGB values for all 359 HUE values");
+        iprintln(trALWAYS, "        If <colour> is omitted \"rgb all\" is assumed");
+        iprintln(trALWAYS, " Multiple <colour> values can be specified, separated by spaces");
     }
 }
 
@@ -1101,7 +1101,7 @@ void _led_handler_reset(void)
             break;
         }
         //else if (err == ESP_ERR_NOT_FOUND) /// fall through to colour check
-        dbgPrint(trALWAYS, "Invalid Argument (\"%s\")", arg);
+        iprintln(trALWAYS, "Invalid Argument (\"%s\")", arg);
         help_requested = true;
         break;
     }
@@ -1124,16 +1124,16 @@ void _led_handler_reset(void)
     if (help_requested)
     {
         //                  01234567890123456789012345678901234567890123456789012345678901234567890123456789
-        dbgPrint(trALWAYS, "Usage: \"reset [<led_addr>]\"");        
-        dbgPrint(trALWAYS, "    <led_addr>: <#>      - a single index (0 to %d), e.g. 0, 1, 2, 3, etc", _rgb_led.cnt-1);
-        dbgPrint(trALWAYS, "                0xHHHH   - a 16 bit mask of the LEDs to affect, e.g. \"0x003\"");
-        dbgPrint(trALWAYS, "                \"<strip>[:<nr>]\" - a string and number (seperated by a colon)");
-        dbgPrint(trALWAYS, "                            indicating the LED strip and LED # to use");
-        dbgPrint(trALWAYS, "                            e.g. \"debug\", \"button:1\", \"button:2\", etc");
-        dbgPrint(trALWAYS, "                  If <nr> is omitted, %s applies to the entire strip", "RESET");
-        dbgPrint(trALWAYS, "        If <led_addr> is omitted, \"debug\" is assumed");
-        dbgPrint(trALWAYS, " Multiple <led_addr> values can be specified, separated by spaces");
-//        dbgPrint(trALWAYS, "   e.g. \"off 0 1 2 3\", \"off debug:0 button:1...\" etc");
+        iprintln(trALWAYS, "Usage: \"reset [<led_addr>]\"");        
+        iprintln(trALWAYS, "    <led_addr>: <#>      - a single index (0 to %d), e.g. 0, 1, 2, 3, etc", _rgb_led.cnt-1);
+        iprintln(trALWAYS, "                0xHHHH   - a 16 bit mask of the LEDs to affect, e.g. \"0x003\"");
+        iprintln(trALWAYS, "                \"<strip>[:<nr>]\" - a string and number (seperated by a colon)");
+        iprintln(trALWAYS, "                            indicating the LED strip and LED # to use");
+        iprintln(trALWAYS, "                            e.g. \"debug\", \"button:1\", \"button:2\", etc");
+        iprintln(trALWAYS, "                  If <nr> is omitted, %s applies to the entire strip", "RESET");
+        iprintln(trALWAYS, "        If <led_addr> is omitted, \"debug\" is assumed");
+        iprintln(trALWAYS, " Multiple <led_addr> values can be specified, separated by spaces");
+//        iprintln(trALWAYS, "   e.g. \"off 0 1 2 3\", \"off debug:0 button:1...\" etc");
     }
 }
 /*******************************************************************************
@@ -1151,7 +1151,7 @@ void * rgb_led_init_task(void)
 	// the new task attempts to access it.
 	if (xTaskCreate( _led_main_func, PRINTF_TAG, _rgb_led.task.stack_depth, _rgb_led.task.parameter_to_pass, 10, &_rgb_led.task.handle ) != pdPASS)
 	{
-		dbgPrint(trALWAYS, "#Unable to start %s Task!", PRINTF_TAG);
+		iprintln(trALWAYS, "#Unable to start %s Task!", PRINTF_TAG);
 		return NULL;
 	}
 
@@ -1185,7 +1185,7 @@ esp_err_t rgb_led_off(uint16_t address_mask)
     if (xQueueSend(_rgb_led.msg_queue, &led_msg, 0) == pdTRUE)
         return ESP_OK;
 
-    dbgPrint(trLED, "#Failed to queue message (%s)", __FUNCTION__);
+    iprintln(trLED, "#Failed to queue message (%s)", __FUNCTION__);
     return ESP_FAIL;
 }
 
@@ -1214,7 +1214,7 @@ esp_err_t rgb_led_on(uint16_t address_mask, uint32_t rgb_colour)
     
     if (rgb_colour > RGB_MAX)
     {
-        dbgPrint(trLED, "#Invalid RGB value (%d: 0x%06X)", 1, rgb_colour);
+        iprintln(trLED, "#Invalid RGB value (%d: 0x%06X)", 1, rgb_colour);
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -1226,7 +1226,7 @@ esp_err_t rgb_led_on(uint16_t address_mask, uint32_t rgb_colour)
     if (xQueueSend(_rgb_led.msg_queue, &led_msg, 0) == pdTRUE)
         return ESP_OK;
 
-    dbgPrint(trLED, "#Failed to queue message (%s)", __FUNCTION__);
+    iprintln(trLED, "#Failed to queue message (%s)", __FUNCTION__);
     return ESP_FAIL;
 }
 
@@ -1248,7 +1248,7 @@ esp_err_t rgb_led_blink(uint16_t address_mask, uint32_t period, uint32_t rgb_col
 
     if (period < (LED_BLINK_PERIOD_MS_MIN*2))
     {
-        dbgPrint(trLED, "#Min blink period = %dms (got %dms)", (LED_BLINK_PERIOD_MS_MIN*2), period);
+        iprintln(trLED, "#Min blink period = %dms (got %dms)", (LED_BLINK_PERIOD_MS_MIN*2), period);
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -1262,7 +1262,7 @@ esp_err_t rgb_led_blink(uint16_t address_mask, uint32_t period, uint32_t rgb_col
     
     if (rgb_colour_1 > RGB_MAX)
     {
-        dbgPrint(trLED, "#Invalid RGB value (%d: 0x%06X)", 1, rgb_colour_1);
+        iprintln(trLED, "#Invalid RGB value (%d: 0x%06X)", 1, rgb_colour_1);
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -1279,7 +1279,7 @@ esp_err_t rgb_led_blink(uint16_t address_mask, uint32_t period, uint32_t rgb_col
 
     if (rgb_colour_2 > RGB_MAX)
     {
-        dbgPrint(trLED, "#Invalid RGB value (%d: 0x%06X)", 2, rgb_colour_2);
+        iprintln(trLED, "#Invalid RGB value (%d: 0x%06X)", 2, rgb_colour_2);
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -1293,7 +1293,7 @@ esp_err_t rgb_led_blink(uint16_t address_mask, uint32_t period, uint32_t rgb_col
     if (xQueueSend(_rgb_led.msg_queue, &led_msg, 0) == pdTRUE)
         return ESP_OK;
 
-    dbgPrint(trLED, "#Failed to queue message (%s)", __FUNCTION__);
+    iprintln(trLED, "#Failed to queue message (%s)", __FUNCTION__);
     return ESP_FAIL;
 }
 
@@ -1313,7 +1313,7 @@ esp_err_t rgb_led_demo(uint16_t address_mask, uint32_t period)
 
     if (period < (LED_BLINK_PERIOD_MS_MIN*2))
     {
-        dbgPrint(trLED, "#Min blink period = %dms (got %dms)", (LED_BLINK_PERIOD_MS_MIN*2), period);
+        iprintln(trLED, "#Min blink period = %dms (got %dms)", (LED_BLINK_PERIOD_MS_MIN*2), period);
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -1325,7 +1325,7 @@ esp_err_t rgb_led_demo(uint16_t address_mask, uint32_t period)
     if (xQueueSend(_rgb_led.msg_queue, &led_msg, 0) == pdTRUE)
         return ESP_OK;
 
-    dbgPrint(trLED, "#Failed to queue message (%s)", __FUNCTION__);
+    iprintln(trLED, "#Failed to queue message (%s)", __FUNCTION__);
     return ESP_FAIL;
 }
 
