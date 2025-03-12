@@ -30,17 +30,13 @@ includes
  *******************************************************************************/
 #include <Arduino.h>
 #include <avr/pgmspace.h>
-//#include <SPI.h>
+
 #include "defines.h"
 
-//#include "devMotorControl.h"
-//#include "halAMT203.h"
-//#include "halTLC5615.h"
-//#include "paramCtrl.h"
-#include "std_utils.h"
-#include "str_helper.h"
+#include "sys_utils.h"
 #include "hal_timers.h"
 #include "dev_rgb.h"
+#include "str_helper.h"
 
 #define __NOT_EXTERN__
 #include "dev_console.h"
@@ -222,14 +218,27 @@ void _show_help_on_command(char * cmd);
  */
 void _console_handler_help(void);
 
-/*! CONSOLE MENU ITEM - Handles the toggling of trace flags to enable/disable 
+/*! Handles the toggling of trace flags to enable/disable 
  * print traces
  */
 void _console_handler_trace(void);
 
-/*! CONSOLE MENU HANDLER - Displays the application version
+/*! Displays the application version
  */
 void _console_handler_version(void);
+
+/*! Displays RAM information or dumps the RAM contents
+ */
+void _console_handler_dump_ram(void);
+
+/*! Displays Flash information or dumps the RAM contents
+ */
+void _console_handler_dump_flash(void);
+
+/*! Generig handler for the Dump RAM and Dump FLASH Console menus
+ */
+void _console_handler_dump_generic(char * memType, unsigned long memStart, unsigned long memEnd, unsigned long * memDumpAddr, unsigned int * memDumpLen);
+
 
 /*! Prints an entire line (or not). A leading '#' is replaced with the PRINTF_TAG, 
  * and the print is concluded with an newline character.
@@ -256,7 +265,7 @@ void console_printline(uint8_t traceflags, const char * tag, const char *fmt, ..
 /*! Prints the default action passed to the function
  * @param[in] def_act The default action to print
  */ 
-void _console_handler_trace_dbgPrint_i_action(eTraceFlagAction def_act);
+void _console_handler_trace_action(eTraceFlagAction def_act);
 
 /*******************************************************************************
 local variables
@@ -265,7 +274,7 @@ sPrintFlagItem print_trace_flag_name[]=
 {
 		{"Main",        trMAIN,     "main"},
 		{"Console", 	trCONSOLE,  "con"},
-        {"PWM",         trPWM,      "pwm"},
+        {"PWM",         trRGB,      "pwm"},
 		/* Not Implemented yet {"", 				PRINT_TR_TBD},*/
 };
 
@@ -275,13 +284,15 @@ sPrintFlagActionItem print_trace_combos[]=
 		{"app", 	eTraceTOGGLE,   trMAIN,    },
 		{"con", 	eTraceTOGGLE,   trCONSOLE,},
 		{"none", 	eTraceOFF,      trALL,    },
-        {"pwm",     eTraceTOGGLE,   trPWM,    },
+        {"pwm",     eTraceTOGGLE,   trRGB,    },
 };
 
 static console_menu_item_t _console_menu_items[] =
 {
 										    // 01234567890123456789012345678901234567890123456789012345678901234567890123456789
-		{"version", _console_handler_version,   "Displays application version"},
+        {"ram",     _console_handler_dump_ram,  "Display RAM information"},
+        {"flash",   _console_handler_dump_flash,"Display FLASH information"},
+        {"version", _console_handler_version,   "Displays application version"},
 		{"help",  	_console_handler_help,      "Displays information on the available Console commands"},
 		{"trace",   _console_handler_trace,     "Displays the status, or Enables/Disables print traces"}
 };
@@ -601,7 +612,7 @@ void _console_handler_help(void)
 	iprintln(trALWAYS, "Command strings longer than %d chars are invalid.", CONSOLE_RX_BUFF);
 }
 
-void _console_handler_trace_dbgPrint_i_action(eTraceFlagAction def_act)
+void _console_handler_trace_action(eTraceFlagAction def_act)
 {
     switch (def_act)
     {
@@ -701,7 +712,7 @@ void _console_handler_trace(void)
                     {
                         valid_traces_cnt--;
                         iprint(trALWAYS, "   %10s : ", (const char *)print_trace_combos[i].name);
-                        _console_handler_trace_dbgPrint_i_action(print_trace_combos[i].default_action);
+                        _console_handler_trace_action(print_trace_combos[i].default_action);
                         iprint(trALWAYS, "\n");
                         switch (print_trace_combos[i].default_action)
                         {
@@ -736,7 +747,7 @@ void _console_handler_trace(void)
         iprintln(trALWAYS, "  <tag(s)> can be 1 or more of the following (Default Action):");
         // iprint(trALWAYS, "\t\t[");
         // for (int i = 0; i < (sizeof(print_trace_combos)/sizeof(sPrintFlagActionItem)); i++)
-        //     iprint(trALWAYS, "%s%s", (const char *)print_trace_combos[i].name, (const char *)((i < (sizeof(print_trace_combos)/sizeof(sPrintFlagActionItem)-1))? ", ":"]\n"));
+        //     iprint(trALWAYS, "%s%s", (const char *)print_trace_combos[i].name, (const char *)((i < (sizeof(print_trace_combos)/sizeof(sPrintFlagActionItem)-1))? ", ":"]"));
 
         //iprintln(trCONSOLE, " ==== Trace Menu ==== ");
         for (unsigned int i = 0; i < ARRAY_SIZE(print_trace_combos); i++)
@@ -754,8 +765,8 @@ void _console_handler_trace(void)
                 }
             }
             iprint(trALWAYS, " %12s", "(");
-            _console_handler_trace_dbgPrint_i_action(print_trace_combos[i].default_action);
-            iprint(trALWAYS, ")\n");
+            _console_handler_trace_action(print_trace_combos[i].default_action);
+            iprintln(trALWAYS, ")");
         }
         //                  01234567890123456789012345678901234567890123456789012345678901234567890123456789
         iprintln(trALWAYS, "");
@@ -793,6 +804,129 @@ void _console_handler_version(void)
 }
 
 /*******************************************************************************
+
+Dumps a block of RAM memory in Byte Access
+
+*******************************************************************************/
+void _console_handler_dump_ram(void)
+{
+    static unsigned long RAM_DumpAddr = RAMSTART;
+    static unsigned int RAM_DumpLen = 256;
+
+    _console_handler_dump_generic((char *)"RAM", RAMSTART, RAMEND, &RAM_DumpAddr, &RAM_DumpLen);
+}
+
+/*******************************************************************************
+
+Dumps a block of FLASH memory in Byte Access
+
+*******************************************************************************/
+void _console_handler_dump_flash(void)
+{
+    static unsigned long FLASH_DumpAddr = 0l;//0x10000L;
+    static unsigned int FLASH_DumpLen = 256;
+
+    _console_handler_dump_generic((char *)"FLASH", 0, FLASHEND, &FLASH_DumpAddr, &FLASH_DumpLen);
+}
+
+/*******************************************************************************
+
+Dumps a block of RAM/FLASH memory in Byte Access (Generic)
+
+*******************************************************************************/
+void _console_handler_dump_generic(char * memType, unsigned long memStart, unsigned long memEnd, unsigned long * memDumpAddr, unsigned int * memDumpLen)
+{
+    uint32_t tmp_addr = *memDumpAddr;
+    uint32_t tmp_len = (unsigned long)*memDumpLen;
+    bool is_ram_not_flash = (memStart == RAMSTART);
+    bool help_reqested = false;
+
+    if (console_arg_cnt() == 0)
+    {
+        //Show RAM status
+        if (is_ram_not_flash)
+        {
+            extern int __heap_start, *__brkval;//, __malloc_heap_start;
+            iprintln(trALWAYS, "  HEAP Start: 0x%06lX", (int)&__heap_start);
+            iprintln(trALWAYS, "  HEAP End:   0x%06lX", (int)__brkval);
+            iprintln(trALWAYS, "  Free RAM:   %d bytes\n", freeRam());
+        }
+        else
+        {
+            iprintln(trALWAYS, "  FLASH Start: 0x%06X\n", 0);
+            iprintln(trALWAYS, "  FLASH End:   0x%06lX\n", (unsigned long)(FLASHEND));
+        }
+        iprintln(trALWAYS, "  Next read:   %d bytes from 0x%06lX\n", *memDumpLen, *memDumpAddr);
+        return;
+    }
+
+    while (console_arg_cnt() > 0)
+	{
+        char *arg = console_arg_pop();
+        if ((0 == strcasecmp(arg, "help")) || (0 == strcasecmp(arg, "?"))) //is it a ?
+        {
+            help_reqested = true; //Disregard the rest of the arguments
+            break;
+        }
+        else if (hex2u32(&tmp_addr, arg, 0))
+        {
+            //sscanf(strupr(argStr), "%lX", &tmp_addr);
+            //hex2u32(&tmp_addr, arg, 0);
+            iprintln(trALWAYS, "Got Address: 0x%06X from \"%s\"", tmp_addr, arg);
+
+            if ((tmp_addr < memStart) || (tmp_addr >= memEnd))
+            {
+                iprint(trALWAYS, "Invalid %s Start address (", memType);
+                iprintln(trALWAYS, "0x%06X)", tmp_addr);
+                iprintln(trALWAYS, "Please use address between 0x%06lX and 0x%06lX", memStart, memEnd);
+                help_reqested = true; //Disregard the rest of the arguments
+                break;
+            }    
+            *memDumpAddr = tmp_addr;
+        }
+        else if (str2uint32(&tmp_len, arg, 0)) //Length
+        {
+            //str2uint32(&tmp_len, arg, 0); //sscanf(argStr, "%lu", &tmp_len);
+            iprintln(trALWAYS, "Got Length: %lu from \"%s\"", tmp_len, arg);
+            //TODO - RVN, you should perform better handling of invalid length values here
+            *memDumpLen = (unsigned int)tmp_len;
+        }
+        else
+        {
+            help_reqested = true;
+            iprintln(trALWAYS, "Invalid argument \"%s\"", arg);
+        }
+    }
+
+    if (help_reqested)
+    {
+        //Does the read run over the end of the FLASH?
+        if ((tmp_len >= ((memEnd + 1l) - tmp_addr)))
+        {
+            tmp_len = memEnd - tmp_addr + 1;
+            iprintln(trALWAYS, "%s Dump length limited to %ld bytes: 0x%06lX to 0x%06lX", memType, tmp_len, tmp_addr, memEnd);
+        }
+
+        // OK, I honestly did not think the compiler will allow this. Cool.
+        ((is_ram_not_flash)? console_print_ram : console_print_flash)(trALWAYS, (void *)*memDumpAddr, (u32)*memDumpAddr, tmp_len);
+
+        *memDumpAddr += *memDumpLen;
+        //If we reach the end of RAM, reset the address
+        if (*memDumpAddr > memEnd)
+            *memDumpAddr = memStart;
+    }
+    
+    if (help_reqested)
+    {
+        iprintln(trALWAYS, "Valid commands:\n");
+        iprintln(trALWAYS, " <No Args> - Shows %s summary\n", memType);
+        iprintln(trALWAYS, " \"dump <ADDR> <LEN>\" - Dumps N bytes of %s starting at <ADDR>\n", memType);
+        iprintln(trALWAYS, " \"dump\" - Dumps previously set N bytes (default: 256) of %s starting\n", memType);
+        iprintln(trALWAYS, "           at end of last call (default: %s Start)\n", memType);
+        return;
+    }    
+}
+/*******************************************************************************
 Global (public) Functions
 *******************************************************************************/
 void console_init(unsigned long baud, uint8_t config)
@@ -801,7 +935,7 @@ void console_init(unsigned long baud, uint8_t config)
 	if (_console_init_done)
 		return;
 
-    _console.tracemask = trCONSOLE|trMAIN|trPWM,
+    _console.tracemask = trCONSOLE|trMAIN|trRGB|trCOMMS,
     _console.menu_grp_list.cnt = 0;
     for (unsigned int i = 0; i < dev_console_MAX_MENU_ITEMS_MAX; i++)
     {
@@ -1070,6 +1204,67 @@ void console_printline(uint8_t traceflags, const char * tag, const char * fmt, .
 	//Ends with a newline.
     //Serial.write('\r');
     serialputc('\n', NULL); //Serial.write('\n');
+}
+
+void console_print_ram(int Flags, void * Src, unsigned long Address, int Len)
+{
+u8 *s;
+u8 x;
+u16 cnt;
+//RAMSTART     (0x100)
+//RAMEND       0x8FF     /* Last On-Chip SRAM Location */
+
+	s = (u8 *)Src;
+
+	while(Len)
+	{
+		// print offset
+		iprint(Flags, "%06lX : ", Address);
+		// print hex data
+		for(x = 0; x < 16; x++)
+		{
+			if (x < Len)
+                iprint(Flags, "%02X%c", (byte)s[x], (byte)((x == 7) ? '-' : ' '));
+			else
+                iprint(Flags, "  %c", (byte)((x == 7) ? '-' : ' '));
+
+		}
+		// print ASCII data
+		iprint(Flags, " ");
+		for(x = 0; x < 16; x++)
+		{
+			if (x < Len)
+                iprint(Flags, "%c", (byte)(((s[x] >= 0x20) && (s[x] <= 0x7f))? s[x] : '.'));
+			else
+				break;
+		}
+		// goto next line
+		cnt = (Len > 16) ? 16 : Len;
+		s       += cnt;
+		Len     -= cnt;
+		iprintln(Flags, "");
+		Address += 16;
+	}
+
+//  iprintf(Flags, "\n");
+}
+
+void console_print_flash(int Flags, void * Src, unsigned long Address, int Len)
+{
+    u8 buf[16];
+    u8 *s = (u8 *)Src;
+
+	while(Len)
+	{
+        for (int i = 0; i < 16; i++)
+            buf[i] = pgm_read_byte(s++);
+        
+        console_print_ram(Flags, buf, Address, 16);
+		Address += 16;
+		Len     -= 16;
+	}
+
+//  iprintf(Flags, "\n");
 }
 
 #undef PRINTF_TAG

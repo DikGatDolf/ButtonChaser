@@ -63,6 +63,7 @@ bool hex2u32(uint32_t *val, const char * str, int expected_len)
     if (val == NULL)
         return false;
 
+
     if (!is_hex_str(str, expected_len))
         return false;
 
@@ -278,7 +279,7 @@ bool is_hex_str(const char * str, unsigned int expected_len)
 
 char * str_trim_l(const char *str) 
 {
-    while (isspace((int)*str))
+    while (isblank((int)*str))
     {
         str++;
         if (*str == 0)

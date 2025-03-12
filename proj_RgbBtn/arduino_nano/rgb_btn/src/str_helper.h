@@ -48,7 +48,7 @@ bool is_float_str(const char * str);
 
 bool is_natural_number_str(const char * str, int32_t expected_len);
 
-bool is_hex_str(const char * str, int expected_len);
+bool is_hex_str(const char * str, unsigned int expected_len);
 
 char * str_trim_l(const char *str);
 char * str_next_word(const char *str);
@@ -73,6 +73,6 @@ char * float2str(char *buff, double fVal, unsigned int decimalpoints, size_t max
 
 
 #undef EXT
-#endif /* __SYSUTILS_H__ */
+#endif /* __str_helper_H__ */
 
 /****************************** END OF FILE **********************************/

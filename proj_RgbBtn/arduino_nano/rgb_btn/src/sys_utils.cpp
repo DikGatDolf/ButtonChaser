@@ -1,6 +1,6 @@
 /******************************************************************************
 Project:   RGB Button Chaser
-Module:     std_utils.c
+Module:     sys_utils.c
 Purpose:    This file contains the std utilited
 Author:     Rudolph van Niekerk
 Processor:  Arduino Nano (ATmega328)
@@ -31,7 +31,7 @@ includes
 #include <stdarg.h>
 
 #define __NOT_EXTERN__
-#include "std_utils.h"
+#include "sys_utils.h"
 #undef __NOT_EXTERN__
 
 #ifdef CONSOLE_ENABLED

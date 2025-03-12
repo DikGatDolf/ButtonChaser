@@ -1,12 +1,12 @@
 /*****************************************************************************
 
-std_utils.h
+sys_utils.h
 
-Include file for std_utils.c
+Include file for sys_utils.c
 
 ******************************************************************************/
-#ifndef __STD_UTILS_H__
-#define __STD_UTILS_H__
+#ifndef __sys_utils_H__
+#define __sys_utils_H__
 
 
 /******************************************************************************
@@ -80,6 +80,6 @@ byte crc8_str_n(const byte *data, byte len);
 byte crc8_str_n(byte crc_start, const byte *data, byte len);
 byte crc8(byte crc_start, byte data);
 
-#endif /* __STD_UTILS_H__ */
+#endif /* __sys_utils_H__ */
 
 /****************************** END OF FILE **********************************/

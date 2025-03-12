@@ -37,8 +37,9 @@ extern void console_print(uint8_t traceflags, const char * tag, const char *fmt,
 
 #define trMAIN		((uint8_t)BIT_POS(0))
 #define trCONSOLE	((uint8_t)BIT_POS(1))
-#define trPWM		((uint8_t)BIT_POS(2))
-// #define trRGB		0x04
+#define trRGB		((uint8_t)BIT_POS(2))
+#define trCOMMS	    ((uint8_t)BIT_POS(3))
+//#define trRGB		0x04
 // #define trBUTTON	0x08
 // #define trI2C		0x10
 // #define trYYY		0x40
@@ -121,6 +122,15 @@ char * console_arg_peek(int offset);
  * @return The count of arguments left to pop
  */
 int console_arg_cnt(void);
+
+/*! Prints a section of RAM
+ */
+void console_print_ram(int Flags, void * Src, unsigned long Address, int Len);
+
+/*! Prints a section of Flash
+ */
+void console_print_flash(int Flags, void * Src, unsigned long Address, int Len);
+
 
 #undef EXT
 #endif /* __task_console_H__ */
