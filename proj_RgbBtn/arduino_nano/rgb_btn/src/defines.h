@@ -15,6 +15,7 @@ defines
 //the major version, while the low nibble denotes the minor version. 0x10 => V1.0
 #define PROJECT_VERSION	    0x10
 
+#define btnChasePin_BTN     (2)     /* Source for INT0 */
 
 #define btnChasePin_RED     (13)
 // #define btnChasePin_GREEN   (14)

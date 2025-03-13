@@ -17,7 +17,6 @@ includes
 ******************************************************************************/
 #include <stdint.h>
 
-
 /******************************************************************************
 definitions
 ******************************************************************************/
@@ -36,30 +35,25 @@ Macros
 #define RGB_BTN_I2C_TYPE_MASK   (0xFF ^ (RGB_BTN_I2C_ADDR_MASK))  /* 0xFF ^ 0x0F =  0xF0 */
 #define RGB_BTN_I2C_TYPE_ID     (0x00)  /* b0000 xxxx - 0x00 to 0x0F*/
 
+#define RGB_BTN_I2C_CLK_FREQ    (200000)    /* 200kHz */
+
+#define RGB_BTN_MSG_MAX_LEN     (32)    /* Keep as a multiple of 4 */
 
 /******************************************************************************
 Struct & Unions
 ******************************************************************************/
 
-typedef enum comms_command_e
+typedef enum rgb_btn_command_e
 {
-    cmd_nop       = 0,
-    cmd_set_rgb   = BIT_POS(0),
-    cmd_get_btn   = BIT_POS(1),
-    cmd_reset_btn = BIT_POS(2),
-    //Keep this at the end
-}comms_command_t;
+    cmd_set_rgb,            /* Set the LED colour (1 - colour - primary colour (8+24bits) = 4 bytes payload) */
+    cmd_set_blink,          /* Set the LED blink state (2 colours (8+24bits) + blink timer (32bits) = 12 bytes payload) */
+    cmd_sw_start,           /* Set the button state (0 byte payload */
+    cmd_wr_console,         /* Write to the console (full buffer) */
 
-typedef struct comms_package_st
-{
-    uint8_t command;
-    union {
-        uint8_t  u8 [4];
-        uint16_t u16[2];
-        uint32_t u32;
-    } data;
-    uint8_t crc;
-} comms_tx_package_t;
+    //Keep at the end
+    cmd_max,         /* Read from the console (full buffer) */
+}rgb_btn_command_t;
+
 /******************************************************************************
 Global (public) variables
 ******************************************************************************/

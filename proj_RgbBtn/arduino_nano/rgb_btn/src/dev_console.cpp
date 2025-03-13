@@ -803,11 +803,6 @@ void _console_handler_version(void)
 	iprintln(trALWAYS, "=====================================================");
 }
 
-/*******************************************************************************
-
-Dumps a block of RAM memory in Byte Access
-
-*******************************************************************************/
 void _console_handler_dump_ram(void)
 {
     static unsigned long RAM_DumpAddr = RAMSTART;
@@ -816,11 +811,6 @@ void _console_handler_dump_ram(void)
     _console_handler_dump_generic((char *)"RAM", RAMSTART, RAMEND, &RAM_DumpAddr, &RAM_DumpLen);
 }
 
-/*******************************************************************************
-
-Dumps a block of FLASH memory in Byte Access
-
-*******************************************************************************/
 void _console_handler_dump_flash(void)
 {
     static unsigned long FLASH_DumpAddr = 0l;//0x10000L;
@@ -829,11 +819,6 @@ void _console_handler_dump_flash(void)
     _console_handler_dump_generic((char *)"FLASH", 0, FLASHEND, &FLASH_DumpAddr, &FLASH_DumpLen);
 }
 
-/*******************************************************************************
-
-Dumps a block of RAM/FLASH memory in Byte Access (Generic)
-
-*******************************************************************************/
 void _console_handler_dump_generic(char * memType, unsigned long memStart, unsigned long memEnd, unsigned long * memDumpAddr, unsigned int * memDumpLen)
 {
     uint32_t tmp_addr = *memDumpAddr;
@@ -926,9 +911,11 @@ void _console_handler_dump_generic(char * memType, unsigned long memStart, unsig
         return;
     }    
 }
+
 /*******************************************************************************
 Global (public) Functions
 *******************************************************************************/
+
 void console_init(unsigned long baud, uint8_t config)
 {
 	//Let's not re-initialise this task by accident
@@ -960,15 +947,14 @@ void console_init(unsigned long baud, uint8_t config)
 	iprintln(trCONSOLE|trALWAYS, "#Init OK (Traces: 0x%02X)", _console.tracemask);
 }
 
-bool console_service(void)
+void console_service(void)
 {
 	int rxData;
-	bool retVal = false;
 
     if (!_console_init_done)
 	{
 		iprintln(trCONSOLE | trALWAYS, "#Not Initialized yet");
-		return false;
+		return;
 	}
 
 	// read the incoming char:
@@ -977,77 +963,78 @@ bool console_service(void)
 		// read the incoming byte:
 		rxData = Serial.read();
 		//iprintln(trALWAYS, "Received: \'%c\' (0x%02X)  - Inptr @ %d\n", rxData, rxData, _console.rx.cnt);
-		retVal = true;
-
-		// Lines are terminated on Carriage returns and/or newlines.
-		switch (rxData)
-		{
-		// ****** Carriage Return ******
-		case '\r':
-			// Skip Carriage Return characters
-			continue;
-
-		// ****** Newline ******
-		case '\n':
-            serialputc('\n', NULL);
-			// Serial.write('\n');
-			//  Now parse the line if it is Valid
-			if (_console.rx.cnt > 0)
-				_parse_rx_line();
-			// Start a new line now....
-			_console.rx.cnt = 0; // Reset index pointer
-			break;
-
-			// ****** Backspace ******
-		case 0x08:
-			// Move one char back in buffer
-			if (_console.rx.cnt)
-			{
-				_console.rx.cnt--;
-                PrintBackSpace(); // Serial.print(BACKSPACE_ECHO);
-			}
-			break;
-
-			// ****** Escape ******
-		case '\t':
-			// RVN TODO - Auto-complete?
-			/// Naaah.... too much hassle for this scope.
-			printf("\t");
-			break;
-
-			// ****** Escape ******
-		case 0x1B:
-			// Clear the line...
-			while (_console.rx.cnt)
-			{
-                PrintBackSpace();
-				_console.rx.cnt--;
-			}
-			break;
-
-			// ****** All other chars ******
-		default:
-			// Must we echo the data on the console?
-			Serial.write(rxData);
-
-			// Do we still have space in the rx buffer?
-			if (_console.rx.cnt < CONSOLE_RX_BUFF) // Wrap index?
-			{
-				// Add char and Null Terminate string
-				_console.rx.buff[_console.rx.cnt++] = rxData;
-			}
-			else // The index pointer now wraps, our data is invalid.
-			{
-				_console.rx.cnt = 0; // Reset the index pointer
-			}
-			break;
-		}
-
-		// Always NULL terminate whatever is in the buffer.
-		_console.rx.buff[_console.rx.cnt] = 0; // Null Terminate
+        console_add_byte_to_rd_buff((uint8_t)rxData);
 	}
+}
 
-	return retVal;
+void console_add_byte_to_rd_buff(uint8_t data_byte)
+{
+    // Lines are terminated on Carriage returns and/or newlines.
+    switch (data_byte)
+    {
+    // ****** Carriage Return ******
+    case '\r':
+        // Skip Carriage Return characters
+        return;
+
+    // ****** Newline ******
+    case '\n':
+        serialputc('\n', NULL);
+        // Serial.write('\n');
+        //  Now parse the line if it is Valid
+        if (_console.rx.cnt > 0)
+            _parse_rx_line();
+        // Start a new line now....
+        _console.rx.cnt = 0; // Reset index pointer
+        break;
+
+        // ****** Backspace ******
+    case 0x08:
+        // Move one char back in buffer
+        if (_console.rx.cnt)
+        {
+            _console.rx.cnt--;
+            PrintBackSpace(); // Serial.print(BACKSPACE_ECHO);
+        }
+        break;
+
+        // ****** Escape ******
+    case '\t':
+        // RVN TODO - Auto-complete?
+        /// Naaah.... too much hassle for this scope.
+        printf("\t");
+        break;
+
+        // ****** Escape ******
+    case 0x1B:
+        // Clear the line...
+        while (_console.rx.cnt)
+        {
+            PrintBackSpace();
+            _console.rx.cnt--;
+        }
+        break;
+
+        // ****** All other chars ******
+    default:
+        // Must we echo the data on the console?
+        Serial.write(data_byte);
+
+        // Do we still have space in the rx buffer?
+        if (_console.rx.cnt < CONSOLE_RX_BUFF) // Wrap index?
+        {
+            // Add char and Null Terminate string
+            _console.rx.buff[_console.rx.cnt++] = data_byte;
+        }
+        else // The index pointer now wraps, our data is invalid.
+        {
+            _console.rx.cnt = 0; // Reset the index pointer
+        }
+        break;
+    }
+
+    // Always NULL terminate whatever is in the buffer.
+    _console.rx.buff[_console.rx.cnt] = 0; // Null Terminate
 }
 
 int console_add_menu(const char *_group_name, const console_menu_item_t *_tbl, size_t _cnt, const char *_desc)

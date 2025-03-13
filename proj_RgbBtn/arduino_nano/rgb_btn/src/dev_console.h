@@ -26,15 +26,6 @@ extern void console_printline(uint8_t traceflags, const char * tag, const char *
 extern void console_print(uint8_t traceflags, const char * tag, const char *fmt, ...);
 #endif /* __NOT_EXTERN__ */
 
-#define BIT_POS(pos)			(1U << pos)
-
-#define SET_BIT(x, pos)			(x |= BIT_POS(pos))
-#define CLEAR_BIT(x, pos) 		(x &= (~BIT_POS(pos)))
-#define TOGGLE_BIT(x, pos) 		(x ^= BIT_POS(pos))
-
-#define BIT_IS_SET(x,pos) 		((x) & BIT_POS(pos))
-#define BIT_IS_CLEAR(x,pos) 	(~BIT_IS_SET(x,pos))
-
 #define trMAIN		((uint8_t)BIT_POS(0))
 #define trCONSOLE	((uint8_t)BIT_POS(1))
 #define trRGB		((uint8_t)BIT_POS(2))
@@ -91,7 +82,9 @@ void console_init(unsigned long baud, uint8_t config);
  /*! Reads the data on the serial port and parses the line when a carriage return 
  * is encountered.
  */
-bool console_service(void);
+void console_service(void);
+
+void console_add_byte_to_rd_buff(uint8_t data_byte);
 
 /*! Adds a menu item to the console
  * @param[in] _group_name The name of the group of commands to which this item is added

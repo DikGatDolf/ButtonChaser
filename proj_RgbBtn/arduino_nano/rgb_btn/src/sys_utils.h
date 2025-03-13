@@ -19,6 +19,18 @@ includes
 /******************************************************************************
 definitions
 ******************************************************************************/
+/******************************************************************************
+Macros
+******************************************************************************/
+
+#define BIT_POS(pos)			(1U << pos)
+
+#define SET_BIT(x, pos)			(x |= BIT_POS(pos))
+#define CLEAR_BIT(x, pos) 		(x &= (~BIT_POS(pos)))
+#define TOGGLE_BIT(x, pos) 		(x ^= BIT_POS(pos))
+
+#define BIT_IS_SET(x,pos) 		((x) & BIT_POS(pos))
+#define BIT_IS_CLEAR(x,pos) 	(~BIT_IS_SET(x,pos))
 
 #define sign_f(a)	((a < 0)? -1.0 : 1.0)
 #define INPUT_EDGE_NONE		0
@@ -27,11 +39,16 @@ definitions
 
 #define CRC_POLYNOMIAL 0x8C
 
-/******************************************************************************
-Macros
-******************************************************************************/
+#ifndef NULL_PTR
+#define NULL_PTR (void*)0
+#endif
 
 #define ARRAY_SIZE(_array) (sizeof(_array) / sizeof((_array)[0]))
+
+#define SWOP_U64(x, y) do { uint64_t(x) _z = x; x = y; y = _z; } while(0)
+#define SWOP_U32(x, y) do { uint32_t(x) _z = x; x = y; y = _z; } while(0)
+#define SWOP_U16(x, y) do { uint16_t(x) _z = x; x = y; y = _z; } while(0)
+#define SWOP_U8(x, y) do { uint8_t(x) _z = x; x = y; y = _z; } while(0)
 
 /******************************************************************************
 Struct & Unions

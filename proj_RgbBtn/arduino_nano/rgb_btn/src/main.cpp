@@ -36,6 +36,7 @@ This (slave) device  is responsible for:
 #include "str_helper.h"
 #include "hal_timers.h"
 #include "dev_rgb.h"
+#include "dev_comms.h"
 
 
 #ifdef CONSOLE_ENABLED
@@ -59,6 +60,19 @@ This (slave) device  is responsible for:
 #define SYS_STATE_ERROR			9	/* */
 
 /*******************************************************************************
+Structures and unions
+ *******************************************************************************/
+typedef struct
+{
+    rgb_colour_t colour[2];
+    uint32_t blink_ms;
+    Stopwatch_ms_t btn_sw;
+    unsigned long sw_time;
+}rgb_btn_t;
+
+Timer_ms_t blink_tmr;
+
+/*******************************************************************************
  Function prototypes
  *******************************************************************************/
 //Menu Commands (without any owners)
@@ -70,6 +84,8 @@ void _sys_handler_reset(void);
 //bool menuVersion(void);
 #endif /* CONSOLE_ENABLED */
 #endif /* MAIN_DEBUG */
+
+void _handle_master_msg_rx(void);
 
 /*******************************************************************************
  local variables
@@ -88,10 +104,7 @@ static console_menu_item_t _main_menu_items[] =
 //int SystemState;		/* Movement State Machine variable */
 
 const char BuildTimeData[] = { __TIME__ " " __DATE__ }; /* Used in our startup Banner*/
-
-Timer_ms_t debugTmr;
-
-
+rgb_btn_t rgb_btn;
 /*******************************************************************************
  Functions
  *******************************************************************************/
@@ -105,8 +118,9 @@ void setup() {
     dev_rgb_start(btnChasePin_RED, 15 /*btnChasePin_GREEN*/, 16 /*btnChasePin_BLUE*/, 17 /*-1*/);
     dev_rgb_set_1col(rgbRed, 128);
 
+    dev_comms_init();
 
-    sys_poll_tmr_start(&debugTmr, 10000L, true);	//Does something every 10s
+    sys_poll_tmr_start(&blink_tmr, 10000L, true);	//Does something every 10s
 
 }
 
@@ -116,16 +130,17 @@ void loop() {
 	//Check for anything coming in on the Serial Port and process it
     console_service();
 
-    //static uint8_t dc = 0;
-	//devComms::Read();
+	//Check for anything coming in on the I2C and process it
+    dev_comms_service();
+    _handle_master_msg_rx();
 
-	if (sys_poll_tmr_expired(&debugTmr))
+	if (sys_poll_tmr_expired(&blink_tmr))
 	{
-		//iprintln(trMAIN, "Running for %lu s", SecondCount());
-        // if (dc > 100)
-        //     dc = 0;
-        // dev_rgb_set_duty_cycle(13, dc++);
-        //dev_rgb_inc_duty_cycle(13, true);
+        //Swop the colours on the RGB LED and set the new colour
+        uint32_t tmp_wrgb = rgb_btn.colour[0].wrgb;
+        dev_rgb_set_wrgb(tmp_wrgb);
+        rgb_btn.colour[0].wrgb = rgb_btn.colour[1].wrgb;
+        rgb_btn.colour[1].wrgb = tmp_wrgb;
 	}
 }
 
@@ -135,6 +150,87 @@ void _sys_handler_time(void)
 {
 	iprintln(trALWAYS, "Running for %lu s", ((long)millis() / 1000));
 }
+
+void _handle_master_msg_rx(void)
+{
+    uint8_t cmd;
+    uint8_t len;
+
+
+    //Have we received anything?
+    len = dev_comms_rx_available();
+    if (len == 0)
+        return;
+
+    iprintln(trCOMMS, "#Received %d bytes from master", len);
+
+    if (dev_comms_rx_error(NULL))
+    {
+        iprintln(trCOMMS, "#Error: %s", dev_comms_rx_error_msg());
+        dev_comms_rx_reset();
+        return;
+    }
+
+    //Have we received anything?
+    while (dev_comms_rx_available())
+    {
+        len = 0;
+        //Message format is [Cmd][Payload][CRC]
+        //The first byte is the command/header
+        dev_comms_rx_read((uint8_t *)&cmd, 1);
+        switch (cmd)
+        {
+            case cmd_set_rgb:
+                //Should have at least 1 colour (3 bytes)
+                len = 4;
+                rgb_btn.colour[0].wrgb = 0;
+                dev_comms_rx_read((uint8_t *)&rgb_btn.colour[0].wrgb, 4);
+                break;
+
+            case cmd_set_blink:
+                //Should have at least 2 colours and a timer (3 bytes, 3 bytes, 4 bytes)
+                len = 12;
+                //Start with the primary colour, so we can swop them right now
+                rgb_btn.colour[1].wrgb = 0;
+                dev_comms_rx_read((uint8_t *)&rgb_btn.colour[1].wrgb, 4);
+                
+                rgb_btn.colour[0].wrgb = 0;
+                dev_comms_rx_read((uint8_t *)&rgb_btn.colour[0].wrgb, 4);
+                
+                rgb_btn.blink_ms = 0;
+                dev_comms_rx_read((uint8_t *)&rgb_btn.blink_ms, 4);
+
+                //Set the colour and start the timer
+                dev_rgb_set_wrgb(rgb_btn.colour[0].wrgb);
+                sys_poll_tmr_start(&blink_tmr, (unsigned long)rgb_btn.blink_ms, true);
+
+                break;
+
+            case cmd_sw_start:
+                len = 0;
+                //Nothing else.... just start the stopwatch
+                sys_stopwatch_ms_start(&rgb_btn.btn_sw);
+                break;
+
+            case cmd_wr_console: 
+                //The next byte "should" be the length of the payload
+                dev_comms_rx_read((uint8_t *)&len, 1);
+                for (int i = 0; i < len; i++)
+                {
+                    uint8_t rxData;
+                    dev_comms_rx_read((uint8_t *)&rxData, 1);
+                    console_add_byte_to_rd_buff((uint8_t)rxData);
+                }
+                len++; //Add the length byte
+                break;
+
+            default:
+                break;
+        }
+        iprintln(trCOMMS, "Handled 1 cmd byte 0x%02X) with %d bytes payload", cmd, len);
+    }
+}
+
 
 void _sys_handler_reset(void)
 {
