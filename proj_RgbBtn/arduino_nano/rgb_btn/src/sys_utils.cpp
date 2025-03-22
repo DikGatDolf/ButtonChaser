@@ -143,18 +143,18 @@ int debounceInput(ST_PIN_DEBOUNCE * input, int level, int count)
 Returns the average of all the values in the passed array
 
  *******************************************************************************/
-unsigned long avgULong(volatile unsigned long * arr, int cnt)
-{
-unsigned long retVal = 0L;
+// unsigned long avgULong(volatile unsigned long * arr, int cnt)
+// {
+// unsigned long retVal = 0L;
 
-	for (int i = 0; i < cnt; i++)
-	{
-		retVal += arr[i];
-	}
-	retVal /= cnt;
+// 	for (int i = 0; i < cnt; i++)
+// 	{
+// 		retVal += arr[i];
+// 	}
+// 	retVal /= cnt;
 
-	return retVal;
-}
+// 	return retVal;
+// }
 
 /*******************************************************************************
 
@@ -175,72 +175,72 @@ int freeRam ()
 Calculate the CRC for a null terminated string.
 
  *******************************************************************************/
-byte crc8_str(const char *str) {
-	char * data = (char *)str;
-	byte crc = 0x00; //Start with a blank CRC.
-	while (*data){
-		byte extract = *data++;
-		for (byte tempI = 8; tempI; tempI--) {
-			byte sum = (crc ^ extract) & 0x01;
-			crc >>= 1;
-			if (sum) {
-				crc ^= CRC_POLYNOMIAL;
-			}
-			extract >>= 1;
-		}
-	}
-	return crc;
-}
+// byte crc8_str(const char *str) {
+// 	char * data = (char *)str;
+// 	byte crc = 0x00; //Start with a blank CRC.
+// 	while (*data){
+// 		byte extract = *data++;
+// 		for (byte tempI = 8; tempI; tempI--) {
+// 			byte sum = (crc ^ extract) & 0x01;
+// 			crc >>= 1;
+// 			if (sum) {
+// 				crc ^= CRC_POLYNOMIAL;
+// 			}
+// 			extract >>= 1;
+// 		}
+// 	}
+// 	return crc;
+// }
 
-/*******************************************************************************
+// /*******************************************************************************
 
-Calculate the CRC for a null terminated string with a starting seed CRC value
+// Calculate the CRC for a null terminated string with a starting seed CRC value
 
- *******************************************************************************/
-byte crc8_str(byte crc_start, const char *str) {
-	char * data = (char *)str;
-	byte crc = crc_start; //Start with the seed CRC.
-	while (*data){
-		byte extract = *data++;
-		for (byte tempI = 8; tempI; tempI--) {
-			byte sum = (crc ^ extract) & 0x01;
-			crc >>= 1;
-			if (sum) {
-				crc ^= CRC_POLYNOMIAL;
-			}
-			extract >>= 1;
-		}
-	}
-	return crc;
-}
+//  *******************************************************************************/
+// byte crc8_str(byte crc_start, const char *str) {
+// 	char * data = (char *)str;
+// 	byte crc = crc_start; //Start with the seed CRC.
+// 	while (*data){
+// 		byte extract = *data++;
+// 		for (byte tempI = 8; tempI; tempI--) {
+// 			byte sum = (crc ^ extract) & 0x01;
+// 			crc >>= 1;
+// 			if (sum) {
+// 				crc ^= CRC_POLYNOMIAL;
+// 			}
+// 			extract >>= 1;
+// 		}
+// 	}
+// 	return crc;
+// }
 
-/*******************************************************************************
+// /*******************************************************************************
 
-Calculate the CRC for an N number of bytes.
+// Calculate the CRC for an N number of bytes.
 
- *******************************************************************************/
-byte crc8_str_n(const byte *data, byte len) {
-	byte crc = 0x00; //Start with a blank CRC.
-	while (len--) {
-		byte extract = *data++;
-		for (byte tempI = 8; tempI; tempI--) {
-			byte sum = (crc ^ extract) & 0x01;
-			crc >>= 1;
-			if (sum) {
-				crc ^= CRC_POLYNOMIAL;
-			}
-			extract >>= 1;
-		}
-	}
-	return crc;
-}
+//  *******************************************************************************/
+// byte crc8_str_n(const byte *data, byte len) {
+// 	byte crc = 0x00; //Start with a blank CRC.
+// 	while (len--) {
+// 		byte extract = *data++;
+// 		for (byte tempI = 8; tempI; tempI--) {
+// 			byte sum = (crc ^ extract) & 0x01;
+// 			crc >>= 1;
+// 			if (sum) {
+// 				crc ^= CRC_POLYNOMIAL;
+// 			}
+// 			extract >>= 1;
+// 		}
+// 	}
+// 	return crc;
+// }
 
 /*******************************************************************************
 
 Calculate the CRC for an N number of bytes with a starting seed CRC value
 
  *******************************************************************************/
-byte crc8_str_n(byte crc_start, const byte *data, byte len) {
+byte crc8_n(byte crc_start, const byte *data, byte len) {
 	byte crc = crc_start; //Start with a seed CRC.
 	while (len--) {
 		byte extract = *data++;

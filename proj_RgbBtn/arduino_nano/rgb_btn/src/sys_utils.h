@@ -88,13 +88,14 @@ functions
 void quickPinToggle(uint8_t pin, bool state);
 int quickPinRead(uint8_t pin);
 int debounceInput(ST_PIN_DEBOUNCE * input, int level, int count);
-unsigned long avgULong(volatile unsigned long * arr, int cnt);
+// unsigned long avgULong(volatile unsigned long * arr, int cnt);
 int freeRam (void);
 
-byte crc8_str(const char *str);
-byte crc8_str(byte crc_start, const char *str);
-byte crc8_str_n(const byte *data, byte len);
-byte crc8_str_n(byte crc_start, const byte *data, byte len);
+// byte crc8_str(const char *str);
+// byte crc8_str(byte crc_start, const char *str);
+// byte crc8_str_n(const byte *data, byte len);
+// byte crc8_str_n(byte crc_start, const byte *data, byte len);
+byte crc8_n(byte crc_start, const byte *data, byte len);
 byte crc8(byte crc_start, byte data);
 
 #endif /* __sys_utils_H__ */

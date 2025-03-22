@@ -30,7 +30,7 @@ Public variables
 /******************************************************************************
 Public function definitions
 ******************************************************************************/
-void dev_comms_init(void);
+void dev_comms_init(uint8_t addr);
 
 uint8_t dev_comms_rx_available(void);
 

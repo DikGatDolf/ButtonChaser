@@ -29,10 +29,9 @@ definitions
 /******************************************************************************
 Macros
 ******************************************************************************/
-#define RGB_BTN_I2C_ADDR_BITS   (4)     /* b0000 xxxx - 0x00 to 0x0F*/
-#define RGB_BTN_MAX             (BIT_POS(RGB_BTN_I2C_ADDR_BITS)) /* 1<<4 = 16 */
-#define RGB_BTN_I2C_ADDR_MASK   (RGB_BTN_MAX-1)  /* 16-1 = 15 =  0x0F */
-#define RGB_BTN_I2C_TYPE_MASK   (0xFF ^ (RGB_BTN_I2C_ADDR_MASK))  /* 0xFF ^ 0x0F =  0xF0 */
+#define RGB_BTN_I2C_ADDR_BITS   (7)     /* 0x00 to 0x7F */
+#define RGB_BTN_MAX             (BIT_POS(RGB_BTN_I2C_ADDR_BITS)) /* 1<<7 = 128 */
+#define RGB_BTN_I2C_ADDR_MASK   (RGB_BTN_MAX-1)  /* 128-1 = 127 =  0x7F */
 #define RGB_BTN_I2C_TYPE_ID     (0x00)  /* b0000 xxxx - 0x00 to 0x0F*/
 
 #define RGB_BTN_I2C_CLK_FREQ    (200000)    /* 200kHz */
@@ -49,6 +48,7 @@ typedef enum rgb_btn_command_e
     cmd_set_blink,          /* Set the LED blink state (2 colours (8+24bits) + blink timer (32bits) = 12 bytes payload) */
     cmd_sw_start,           /* Set the button state (0 byte payload */
     cmd_wr_console,         /* Write to the console (full buffer) */
+    //cmd_wr_i2c_address,     /* Write a new i2c address (1 byte) */
 
     //Keep at the end
     cmd_max,         /* Read from the console (full buffer) */

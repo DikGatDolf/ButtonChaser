@@ -23,6 +23,14 @@ function (remember the prototype) to the bottom of the file. The pointer to
 the start of the parameters (if any) will be passed as the parameter to your
 function. NULL means no parameters followed the command.
 
+If you are considering using the Arduino SoftwareSerial Library:
+
+I tested the difference between SW and HW serial libraries...
+  RAM:   	    SW Serial uses 57 bytes less than HW Serial
+  Flash:	    SW Serial uses 596 bytes more than HW Serial
+  Experience: SW Serial is unusable at 115200 baud rate... even as low as 
+                   38400 baud it struggles
+
  *******************************************************************************/
 
 /*******************************************************************************
@@ -37,6 +45,8 @@ includes
 #include "hal_timers.h"
 #include "dev_rgb.h"
 #include "str_helper.h"
+
+#include <HardwareSerial.h>
 
 #define __NOT_EXTERN__
 #include "dev_console.h"
@@ -73,8 +83,6 @@ const char BACKSPACE_ECHO[] = {0x08, 0x20, 0x08, 0x00};
 //Turns out that calling serialputc() in a loop is not a good idea.... uses 4 bytes more RAM and 6 bytes more flash
 //#define PrintBackSpace()   {int _x = 0; do{serialputc(BACKSPACE_ECHO[_x++], NULL); }while (BACKSPACE_ECHO[_x]);}
     
-
-const char BUILD_TIME_DATA[] = {__TIME__ " " __DATE__}; /* Used in our startup Banner*/
 
 //const char ARGUMENT_DELIMITERS[] = {' ', '\t', 0x00};
 
@@ -131,8 +139,8 @@ typedef struct
 	{
 		char *item[dev_console_MAX_ARGS];
 		int cnt;
-		// char *next_arg;
 		int pop_index;
+        int help_index;
 	} args;
 
 } DeviceConsole_t;
@@ -144,8 +152,9 @@ extern "C" {
 	int serialputc(char c, FILE *fp)
   	{
 		if(c == '\n')
-			Serial.write('\r');
-		return Serial.write(c);
+            Serial.write('\r');
+        return Serial.write(c);
+
 	}
 }
 
@@ -223,23 +232,6 @@ void _console_handler_help(void);
  */
 void _console_handler_trace(void);
 
-/*! Displays the application version
- */
-void _console_handler_version(void);
-
-/*! Displays RAM information or dumps the RAM contents
- */
-void _console_handler_dump_ram(void);
-
-/*! Displays Flash information or dumps the RAM contents
- */
-void _console_handler_dump_flash(void);
-
-/*! Generig handler for the Dump RAM and Dump FLASH Console menus
- */
-void _console_handler_dump_generic(char * memType, unsigned long memStart, unsigned long memEnd, unsigned long * memDumpAddr, unsigned int * memDumpLen);
-
-
 /*! Prints an entire line (or not). A leading '#' is replaced with the PRINTF_TAG, 
  * and the print is concluded with an newline character.
  * The passed traceflags is compared with the system set trace print flag(s) to
@@ -274,27 +266,27 @@ sPrintFlagItem print_trace_flag_name[]=
 {
 		{"Main",        trMAIN,     "main"},
 		{"Console", 	trCONSOLE,  "con"},
-        {"PWM",         trRGB,      "pwm"},
-		/* Not Implemented yet {"", 				PRINT_TR_TBD},*/
+        {"RGB",         trRGB,      "rgb"},
+        {"Comms",       trCOMMS,    "com"},
+        {"NVStore",     trNVSTORE,  "nvs"},
+        /* Not Implemented yet 
+        {"", 				PRINT_TR_TBD},*/
 };
 
 sPrintFlagActionItem print_trace_combos[]= 
 {
-		{"all", 	eTraceON,       trALL,    },
-		{"app", 	eTraceTOGGLE,   trMAIN,    },
-		{"con", 	eTraceTOGGLE,   trCONSOLE,},
-		{"none", 	eTraceOFF,      trALL,    },
-        {"pwm",     eTraceTOGGLE,   trRGB,    },
+		{"all", 	eTraceON,       trALL,                  },
+		{"app", 	eTraceTOGGLE,   trMAIN|trRGB|trCOMMS,   },
+		{"con", 	eTraceTOGGLE,   trCONSOLE,              },
+		{"none", 	eTraceOFF,      trALL,                  },
+        {"led",     eTraceTOGGLE,   trRGB,                  },
 };
 
 static console_menu_item_t _console_menu_items[] =
 {
 										    // 01234567890123456789012345678901234567890123456789012345678901234567890123456789
-        {"ram",     _console_handler_dump_ram,  "Display RAM information"},
-        {"flash",   _console_handler_dump_flash,"Display FLASH information"},
-        {"version", _console_handler_version,   "Displays application version"},
-		{"help",  	_console_handler_help,      "Displays information on the available Console commands"},
-		{"trace",   _console_handler_trace,     "Displays the status, or Enables/Disables print traces"}
+		{"help",  	_console_handler_help,      "This..."},
+		{"trace",   _console_handler_trace,     "Enable/Disable/Display print traces"}
 };
 
 DeviceConsole_t _console;
@@ -327,6 +319,20 @@ void _parse_rx_line(void)
     //the 1st entry in the arg stack should be the command, let's pop it
     arg = console_arg_pop();
 
+    if (_console.args.help_index == 0)
+    {
+        if (console_arg_cnt() == 0)
+        {    
+            _console_handler_help();
+            return;
+        }
+        //else (console_arg_cnt() > 0)
+        //Pop the next command off the arg stack
+        arg = console_arg_pop();
+
+    }
+    // if ((!strcasecmp("?", arg)) || (!strcasecmp("help", arg)))
+
     //Is the first argument a command or a group?
     _group = _find_menu_group(arg);
     if (_group != NULL)
@@ -334,9 +340,10 @@ void _parse_rx_line(void)
         //iprintln(trALWAYS, "\"%s\" identified as a group (%s)", _command, _group->description);
 
         //A group, so we expect the next one to be a command (or help/?), 
-        if (console_arg_cnt() == 0)
+        if ((console_arg_cnt() == 0) || 
+            ((-1 != _console.args.help_index) && (_console.args.help_index < _console.args.pop_index)))
         {
-            //No command, so we will show the help for the group
+            //No command (or it was preceded with "help"), so we will show the help for the group
             _show_help_on_command((char *)_group->name);
             return;
         }
@@ -355,13 +362,19 @@ void _parse_rx_line(void)
         return;
     }
     //Unique case where the user entered <group> help or <group> ?
-    if ((console_arg_cnt() == 0) && ((strcasecmp(arg, "help") == 0) || (strcasecmp(arg, "?") == 0)) && (_group != NULL))
+    // if ((console_arg_cnt() == 0) && ((strcasecmp(arg, "help") == 0) || (strcasecmp(arg, "?") == 0)) && (_group != NULL))
+    if ((console_arg_cnt() == 0) && 
+        ((-1 != _console.args.help_index) && (_console.args.help_index < _console.args.pop_index)) && 
+        (_group != NULL))
     {
         //No arguments, so we will show the help for the command
         _show_help_on_command((char *)_group->name);
         return;
     }
 
+    //Regarding "help" or "?": getting to this point means we've already covered (and handled) the case where the user entered 
+    // * "help" or "?"
+    // * "<group> help" or "<group> ?" or "help <group>" or "? <group>"
     //_print_arg_stack();
 
     // Righto, so we are going to run through the list of menu table groups to see if this command is not contained in one of them...
@@ -400,10 +413,14 @@ void _parse_args(char * arg_str)
 {
     _console.args.cnt = 0;
 	_console.args.pop_index = 0;
+    _console.args.help_index = -1;
 
     //Keep at it while we can fit more arguments in the list, and there is more of the string to parse
-    while ((arg_str) && (_console.args.cnt < dev_console_MAX_ARGS))    
+    while ((arg_str) && (_console.args.cnt < dev_console_MAX_ARGS)) 
     {
+        if (-1 == _console.args.help_index)
+            if ((!strcasecmp("?", arg_str)) || (!strcasecmp("help", arg_str)))
+                _console.args.help_index = _console.args.cnt;
         _console.args.item[_console.args.cnt++] = arg_str;
         _console.args.item[_console.args.cnt] = NULL;
         arg_str = str_next_word(arg_str);
@@ -420,37 +437,6 @@ void _print_arg_stack(void)
         else 
             break;
     }
-}
-
-char * console_arg_pop(void)
-{
-    char * arg = console_arg_peek(0);
-
-    if (arg)
-        _console.args.pop_index++;
-    // {
-    //     iprintln(trCONSOLE, "Popped \"%s\" (%d)", arg, _console.args.pop_index);
-    //     _console.args.pop_index++;
-    // }
-
-    return arg;
-}
-
-char * console_arg_peek(int offset)
-{
-    int real_offset = offset + _console.args.pop_index;
-
-    //Make sure we are checking within the bounds of the argument stack
-    if ((_console.args.cnt == 0) || (real_offset < 0) || (real_offset >= _console.args.cnt))
-        return NULL;
-
-    return _console.args.item[real_offset]; 
-}
-
-int console_arg_cnt(void)
-{
-    //Guard against the pop_index being greater than the count of arguments
-    return max(0, _console.args.cnt - _console.args.pop_index);
 }
 
 int _count_menu_commands(char *_command)
@@ -526,8 +512,8 @@ ConsoleMenuTableGroup_t * _find_menu_group(char *_group)
 void _console_handler_help(void)
 {
     char * arg;
-    bool help_requested = false;
-	int found_grp = 0;
+
+    int found_grp = 0;
 	int found_cmd = 0;
 	bool print_all = false;
 
@@ -550,8 +536,8 @@ void _console_handler_help(void)
                     print_all = true;
                 else //Not known?
                 {
-                    help_requested = true;
                     iprintln(trALWAYS, "\t\"%s\" is not a valid group or menu item", arg);
+                    break; //from do-while-loop
 
                 }
                 //Either way, we are done looping through the arguments.    
@@ -559,7 +545,7 @@ void _console_handler_help(void)
             }
             arg = console_arg_peek(found_grp + found_cmd); //console_arg_pop();
 
-        } while ((NULL != arg) && (!help_requested));
+        } while (NULL != arg);
 
 		if ((!print_all) && ((found_grp+found_cmd) > 0))
         {
@@ -608,7 +594,7 @@ void _console_handler_help(void)
         iprintln(trALWAYS, "");
 	}
 
-	//printf("\n%sNOTE: Enter Arguments after the command, separated by a space.");
+	//iprintln("\n%sNOTE: Enter Arguments after the command, separated by a space.");
 	iprintln(trALWAYS, "Command strings longer than %d chars are invalid.", CONSOLE_RX_BUFF);
 }
 
@@ -631,7 +617,7 @@ void _console_handler_trace(void)
 	<valid term> 			- Toggle those traces
 	<valid term> <ON/OFF>	- Toggle those traces
 	*/
-    bool help_requested = false;
+    bool help_requested = console_arg_help_found();
     uint8_t change_mask = 0;
     int un_selected_cnt = 0;
     int valid_traces_cnt = 0;
@@ -642,18 +628,19 @@ void _console_handler_trace(void)
     //uint8_t *change_mask = &change_mask_interim;
 
 
-	if (console_arg_cnt() > 0)
+	if ((console_arg_cnt() > 0) && (!help_requested))
 	{
         char *arg = console_arg_pop();
         do
         {
             uint8_t *change_mask_ptr = NULL;
-            if ((!strcasecmp("?", arg)) || (!strcasecmp("help", arg)))
+            /*if ((!strcasecmp("?", arg)) || (!strcasecmp("help", arg)))
             {    
                 help_requested = true;
                 break; //from do-while-loop
             }
-            else if ((!strcasecmp("ON", arg)) || (!strcasecmp("Y", arg)) || (!strcasecmp("1", arg)))
+            else */
+            if ((!strcasecmp("ON", arg)) || (!strcasecmp("Y", arg)) || (!strcasecmp("1", arg)))
             {
                 change_mask_ptr = &change_mask_on;    
             }
@@ -742,9 +729,10 @@ void _console_handler_trace(void)
 
     if (help_requested)
     {
-        iprintln(trALWAYS, "Usage: \"trace <tag(s)> <action (optional)> \"");
-        iprintln(trALWAYS, "  <action> can be \"ON\", \"OFF\" or \"Toggle\"");
+        iprintln(trALWAYS, "Usage: \"trace <tag(s)> [<action>]\"");
+#if REDUCE_CODESIZE==0        
         iprintln(trALWAYS, "  <tag(s)> can be 1 or more of the following (Default Action):");
+        iprintln(trALWAYS, "  <action> can be \"ON\", \"OFF\" or \"Toggle\"");
         // iprint(trALWAYS, "\t\t[");
         // for (int i = 0; i < (sizeof(print_trace_combos)/sizeof(sPrintFlagActionItem)); i++)
         //     iprint(trALWAYS, "%s%s", (const char *)print_trace_combos[i].name, (const char *)((i < (sizeof(print_trace_combos)/sizeof(sPrintFlagActionItem)-1))? ", ":"]"));
@@ -775,7 +763,7 @@ void _console_handler_trace(void)
         iprintln(trALWAYS, "   e.g. \"trace tag_1 tag_2 ON tag_3 tag_4 OFF...\" etc");
         iprintln(trALWAYS, "  If an action is not specified, the default action for the relevant");
         iprintln(trALWAYS, "   flag is performed");
-        iprintln(trALWAYS, "");
+#endif /* REDUCE_CODESIZE */
     }
 
 	iprintln(trALWAYS, "The current state of Print Trace Flags are:");
@@ -791,127 +779,6 @@ void _console_handler_trace(void)
 	}
 }
 
-void _console_handler_version(void)
-{
-	iprintln(trALWAYS, "");
-	iprintln(trALWAYS, "=====================================================");
-	iprintln(trALWAYS, "ButtonChaser - Button Controller");
-	iprintln(trALWAYS, "[c] 2025 ZeroBadCafe Development (Pty) Ltd");
-	iprintln(trALWAYS, "Version   %d.%02d.", PROJECT_VERSION / 0x10, PROJECT_VERSION % 0x10);
-	iprintln(trALWAYS, "BuildInfo %s.", BUILD_TIME_DATA);
-	iprintln(trALWAYS, "ESP32-C3 (Clock %lu MHz)", F_CPU / 1000000L);
-	iprintln(trALWAYS, "=====================================================");
-}
-
-void _console_handler_dump_ram(void)
-{
-    static unsigned long RAM_DumpAddr = RAMSTART;
-    static unsigned int RAM_DumpLen = 256;
-
-    _console_handler_dump_generic((char *)"RAM", RAMSTART, RAMEND, &RAM_DumpAddr, &RAM_DumpLen);
-}
-
-void _console_handler_dump_flash(void)
-{
-    static unsigned long FLASH_DumpAddr = 0l;//0x10000L;
-    static unsigned int FLASH_DumpLen = 256;
-
-    _console_handler_dump_generic((char *)"FLASH", 0, FLASHEND, &FLASH_DumpAddr, &FLASH_DumpLen);
-}
-
-void _console_handler_dump_generic(char * memType, unsigned long memStart, unsigned long memEnd, unsigned long * memDumpAddr, unsigned int * memDumpLen)
-{
-    uint32_t tmp_addr = *memDumpAddr;
-    uint32_t tmp_len = (unsigned long)*memDumpLen;
-    bool is_ram_not_flash = (memStart == RAMSTART);
-    bool help_reqested = false;
-
-    if (console_arg_cnt() == 0)
-    {
-        //Show RAM status
-        if (is_ram_not_flash)
-        {
-            extern int __heap_start, *__brkval;//, __malloc_heap_start;
-            iprintln(trALWAYS, "  HEAP Start: 0x%06lX", (int)&__heap_start);
-            iprintln(trALWAYS, "  HEAP End:   0x%06lX", (int)__brkval);
-            iprintln(trALWAYS, "  Free RAM:   %d bytes\n", freeRam());
-        }
-        else
-        {
-            iprintln(trALWAYS, "  FLASH Start: 0x%06X\n", 0);
-            iprintln(trALWAYS, "  FLASH End:   0x%06lX\n", (unsigned long)(FLASHEND));
-        }
-        iprintln(trALWAYS, "  Next read:   %d bytes from 0x%06lX\n", *memDumpLen, *memDumpAddr);
-        return;
-    }
-
-    while (console_arg_cnt() > 0)
-	{
-        char *arg = console_arg_pop();
-        if ((0 == strcasecmp(arg, "help")) || (0 == strcasecmp(arg, "?"))) //is it a ?
-        {
-            help_reqested = true; //Disregard the rest of the arguments
-            break;
-        }
-        else if (hex2u32(&tmp_addr, arg, 0))
-        {
-            //sscanf(strupr(argStr), "%lX", &tmp_addr);
-            //hex2u32(&tmp_addr, arg, 0);
-            iprintln(trALWAYS, "Got Address: 0x%06X from \"%s\"", tmp_addr, arg);
-
-            if ((tmp_addr < memStart) || (tmp_addr >= memEnd))
-            {
-                iprint(trALWAYS, "Invalid %s Start address (", memType);
-                iprintln(trALWAYS, "0x%06X)", tmp_addr);
-                iprintln(trALWAYS, "Please use address between 0x%06lX and 0x%06lX", memStart, memEnd);
-                help_reqested = true; //Disregard the rest of the arguments
-                break;
-            }    
-            *memDumpAddr = tmp_addr;
-        }
-        else if (str2uint32(&tmp_len, arg, 0)) //Length
-        {
-            //str2uint32(&tmp_len, arg, 0); //sscanf(argStr, "%lu", &tmp_len);
-            iprintln(trALWAYS, "Got Length: %lu from \"%s\"", tmp_len, arg);
-            //TODO - RVN, you should perform better handling of invalid length values here
-            *memDumpLen = (unsigned int)tmp_len;
-        }
-        else
-        {
-            help_reqested = true;
-            iprintln(trALWAYS, "Invalid argument \"%s\"", arg);
-        }
-    }
-
-    if (help_reqested)
-    {
-        //Does the read run over the end of the FLASH?
-        if ((tmp_len >= ((memEnd + 1l) - tmp_addr)))
-        {
-            tmp_len = memEnd - tmp_addr + 1;
-            iprintln(trALWAYS, "%s Dump length limited to %ld bytes: 0x%06lX to 0x%06lX", memType, tmp_len, tmp_addr, memEnd);
-        }
-
-        // OK, I honestly did not think the compiler will allow this. Cool.
-        ((is_ram_not_flash)? console_print_ram : console_print_flash)(trALWAYS, (void *)*memDumpAddr, (u32)*memDumpAddr, tmp_len);
-
-        *memDumpAddr += *memDumpLen;
-        //If we reach the end of RAM, reset the address
-        if (*memDumpAddr > memEnd)
-            *memDumpAddr = memStart;
-    }
-    
-    if (help_reqested)
-    {
-        iprintln(trALWAYS, "Valid commands:\n");
-        iprintln(trALWAYS, " <No Args> - Shows %s summary\n", memType);
-        iprintln(trALWAYS, " \"dump <ADDR> <LEN>\" - Dumps N bytes of %s starting at <ADDR>\n", memType);
-        iprintln(trALWAYS, " \"dump\" - Dumps previously set N bytes (default: 256) of %s starting\n", memType);
-        iprintln(trALWAYS, "           at end of last call (default: %s Start)\n", memType);
-        return;
-    }    
-}
-
 /*******************************************************************************
 Global (public) Functions
 *******************************************************************************/
@@ -922,7 +789,7 @@ void console_init(unsigned long baud, uint8_t config)
 	if (_console_init_done)
 		return;
 
-    _console.tracemask = trCONSOLE|trMAIN|trRGB|trCOMMS,
+    _console.tracemask = trALL;//trCONSOLE|trMAIN|trRGB|trCOMMS,
     _console.menu_grp_list.cnt = 0;
     for (unsigned int i = 0; i < dev_console_MAX_MENU_ITEMS_MAX; i++)
     {
@@ -932,15 +799,12 @@ void console_init(unsigned long baud, uint8_t config)
     _console.rx.cnt = 0;
 
     // The Console will run on the Debug port
-    //Serial.begin(115200, SERIAL_8N1);
     Serial.begin(baud, config);
     Serial.flush();
 
     fdev_setup_stream(&_console_stdiostr, serialputc, NULL, _FDEV_SETUP_WRITE);
 
     _console_init_done = true;
-
-    _console_handler_version();
 
 	console_add_menu("con", _console_menu_items, ARRAY_SIZE(_console_menu_items), "Console Interface");
 
@@ -958,13 +822,14 @@ void console_service(void)
 	}
 
 	// read the incoming char:
-	while (Serial.available() > 0)
-	{
-		// read the incoming byte:
-		rxData = Serial.read();
-		//iprintln(trALWAYS, "Received: \'%c\' (0x%02X)  - Inptr @ %d\n", rxData, rxData, _console.rx.cnt);
+    while (Serial.available() > 0)
+    {
+        // read the incoming byte:
+        rxData = Serial.read();
+
+        //iprintln(trALWAYS, "Received: \'%c\' (0x%02X)  - Inptr @ %d\n", rxData, rxData, _console.rx.cnt);
         console_add_byte_to_rd_buff((uint8_t)rxData);
-	}
+    }
 }
 
 void console_add_byte_to_rd_buff(uint8_t data_byte)
@@ -994,15 +859,14 @@ void console_add_byte_to_rd_buff(uint8_t data_byte)
         if (_console.rx.cnt)
         {
             _console.rx.cnt--;
-            PrintBackSpace(); // Serial.print(BACKSPACE_ECHO);
+            PrintBackSpace();
         }
         break;
 
         // ****** Escape ******
     case '\t':
-        // RVN TODO - Auto-complete?
-        /// Naaah.... too much hassle for this scope.
-        printf("\t");
+        //TODO - Auto-complete? Naaah.... fuck that. Too much hassle for this little micro.
+        serialputc('\t', NULL);
         break;
 
         // ****** Escape ******
@@ -1018,7 +882,7 @@ void console_add_byte_to_rd_buff(uint8_t data_byte)
         // ****** All other chars ******
     default:
         // Must we echo the data on the console?
-        Serial.write(data_byte);
+        serialputc(data_byte, NULL);
 
         // Do we still have space in the rx buffer?
         if (_console.rx.cnt < CONSOLE_RX_BUFF) // Wrap index?
@@ -1146,6 +1010,42 @@ int console_add_menu(const char *_group_name, const console_menu_item_t *_tbl, s
 	return _cnt;
 }
 
+char * console_arg_pop(void)
+{
+    char * arg = console_arg_peek(0);
+
+    if (arg)
+        _console.args.pop_index++;
+    // {
+    //     iprintln(trCONSOLE, "Popped \"%s\" (%d)", arg, _console.args.pop_index);
+    //     _console.args.pop_index++;
+    // }
+
+    return arg;
+}
+
+char * console_arg_peek(int offset)
+{
+    int real_offset = offset + _console.args.pop_index;
+
+    //Make sure we are checking within the bounds of the argument stack
+    if ((_console.args.cnt == 0) || (real_offset < 0) || (real_offset >= _console.args.cnt))
+        return NULL;
+
+    return _console.args.item[real_offset]; 
+}
+
+int console_arg_cnt(void)
+{
+    //Guard against the pop_index being greater than the count of arguments
+    return max(0, _console.args.cnt - _console.args.pop_index);
+}
+
+bool console_arg_help_found(void)
+{
+    return (-1 == _console.args.help_index)? false : true;
+}
+
 void console_print(uint8_t traceflags, const char * tag, const char * fmt, ...)
 {
 	if (((trALWAYS | _console.tracemask) & traceflags) == trNONE)
@@ -1155,10 +1055,10 @@ void console_print(uint8_t traceflags, const char * tag, const char * fmt, ...)
     //Remember, the format string is in PROGMEM
     if (pgm_read_byte(fmt) == '#')
     {
-        serialputc('[', NULL); //Serial.write('[');
+        serialputc('[', NULL);
         for (int i = 0; tag[i]; i++)
-            serialputc(tag[i], NULL); //Serial.write(tag[i]);
-        serialputc(']', NULL); //Serial.write(']');
+            serialputc(tag[i], NULL);
+        serialputc(']', NULL);
         fmt++; // Now skip the '#'
     }
 
@@ -1177,10 +1077,10 @@ void console_printline(uint8_t traceflags, const char * tag, const char * fmt, .
     //Remember, the format string is in PROGMEM
     if (pgm_read_byte(fmt) == '#')
     {
-        serialputc('[', NULL); //Serial.write('[');
+        serialputc('[', NULL);
         for (int i = 0; tag[i]; i++)
-            serialputc(tag[i], NULL); //Serial.write(tag[i]);
-        serialputc(']', NULL); //Serial.write(']');
+            serialputc(tag[i], NULL);
+        serialputc(']', NULL);
         fmt++; // Now skip the '#'
     }
 
@@ -1189,8 +1089,7 @@ void console_printline(uint8_t traceflags, const char * tag, const char * fmt, .
     va_end(_console_ap);
 
 	//Ends with a newline.
-    //Serial.write('\r');
-    serialputc('\n', NULL); //Serial.write('\n');
+    serialputc('\n', NULL);
 }
 
 void console_print_ram(int Flags, void * Src, unsigned long Address, int Len)
@@ -1254,6 +1153,10 @@ void console_print_flash(int Flags, void * Src, unsigned long Address, int Len)
 //  iprintf(Flags, "\n");
 }
 
+void console_flush(void)
+{
+    Serial.flush();
+}
 #undef PRINTF_TAG
 
 #endif // CONSOLE_ENABLED

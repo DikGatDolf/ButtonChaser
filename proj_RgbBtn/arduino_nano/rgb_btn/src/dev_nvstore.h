@@ -1,68 +1,63 @@
 /*****************************************************************************
 
-dev_rgb.h
+dev_nvstore.h
 
-Include file for dev_rgb.c
+Include file for dev_nvstore.c
 
 ******************************************************************************/
-#ifndef __dev_rgb_H__
-#define __dev_rgb_H__
+#ifndef __dev_nvstore_H__
+#define __dev_nvstore_H__
 
-
+#ifdef __cplusplus
+extern "C" {
+#endif
 /******************************************************************************
 includes
 ******************************************************************************/
-#include "Arduino.h"
+//#include "defines.h"
+
+/******************************************************************************
+definitions
+******************************************************************************/
+#ifdef __NOT_EXTERN__
+#define EXT
+#else
+#define EXT extern
+#endif /* __NOT_EXTERN__ */
 
 /******************************************************************************
 Macros
 ******************************************************************************/
 
 /******************************************************************************
-definitions
-******************************************************************************/
-/* The order is selected to match a W-R-G-B order in a uint32_t dword so that
- * the colours can be easily indexed using (u32_col_word >> (e_led_colour*8))*/
-typedef enum e_led_colour
-{
-    rgbBlue   = 0,
-    rgbGreen  = 1,
-    rgbRed    = 2,
-
-    rgbMAX    = 3
-}led_colour_type;
-
-/******************************************************************************
 Struct & Unions
 ******************************************************************************/
-typedef struct
-{
-    union {
-        struct {
-            uint8_t blue;
-            uint8_t green;
-            uint8_t red;
-            uint8_t unused_white;
-        }col;
-        uint32_t rgb;
-    };
-}rgb_colour_t;
 
 /******************************************************************************
-variables
+Global (public) variables
 ******************************************************************************/
 
 /******************************************************************************
-functions
+Global (public) function definitions
 ******************************************************************************/
 
-bool        dev_rgb_start(int pin_red, int pin_green, int pin_blue);
-void        dev_rgb_stop();
-bool        dev_rgb_enabled();
-void        dev_rgb_set_colour(uint32_t rgb);
-uint32_t    dev_rgb_get_colour(void);
-uint32_t    dev_rgb_get_pwm(void);
+/*! \brief Initialise the non-volatile storage
+ */
+void dev_nvstore_init(void);
 
-#endif /* __dev_rgb_H__ */
+uint8_t dev_nvstore_data_size(void);
+
+bool dev_nvstore_new_data_available(void);
+
+bool dev_nvstore_read(uint8_t * data, uint8_t len);
+
+bool dev_nvstore_write(uint8_t * data, uint8_t len);
+
+#ifdef __cplusplus
+}
+#endif
+
+#undef EXT
+#endif /* __dev_nvstore_H__ */
 
 /****************************** END OF FILE **********************************/

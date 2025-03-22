@@ -130,7 +130,7 @@ unsigned long sys_stopwatch_ms_lap(Stopwatch_ms_t* sw)
 
     if (sw->running)
     {
-        if (now > sw->tick_start)
+        if (now >= sw->tick_start)
             elapsed = now - sw->tick_start;
         else //Assume we have wrapped (around half a billion years)
             elapsed = (UINT32_MAX - sw->tick_start) + now;

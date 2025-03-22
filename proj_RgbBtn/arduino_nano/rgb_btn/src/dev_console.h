@@ -12,8 +12,8 @@ Include file for dev_console.c
 /******************************************************************************
 includes
 ******************************************************************************/
-#include "defines.h"
-#include <HardwareSerial.h>
+//#include "defines.h"
+//#include <HardwareSerial.h>
 
 /******************************************************************************
 Macros
@@ -30,8 +30,8 @@ extern void console_print(uint8_t traceflags, const char * tag, const char *fmt,
 #define trCONSOLE	((uint8_t)BIT_POS(1))
 #define trRGB		((uint8_t)BIT_POS(2))
 #define trCOMMS	    ((uint8_t)BIT_POS(3))
-//#define trRGB		0x04
-// #define trBUTTON	0x08
+#define trNVSTORE	((uint8_t)BIT_POS(4))
+
 // #define trI2C		0x10
 // #define trYYY		0x40
 
@@ -116,6 +116,11 @@ char * console_arg_peek(int offset);
  */
 int console_arg_cnt(void);
 
+/*! Returns the index of the "help" or "?" argument if it was in the list
+ * @return true if the "help" or "?" argument was found, false otherwise
+ */
+bool console_arg_help_found(void);
+
 /*! Prints a section of RAM
  */
 void console_print_ram(int Flags, void * Src, unsigned long Address, int Len);
@@ -124,7 +129,7 @@ void console_print_ram(int Flags, void * Src, unsigned long Address, int Len);
  */
 void console_print_flash(int Flags, void * Src, unsigned long Address, int Len);
 
-
+void console_flush(void);
 #undef EXT
 #endif /* __task_console_H__ */
 

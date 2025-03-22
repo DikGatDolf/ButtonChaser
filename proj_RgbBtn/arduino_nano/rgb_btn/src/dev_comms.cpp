@@ -15,25 +15,42 @@ This way we can have the master perform synchronisation.
 The master can then also send a command to set a specific device (address 0x50 to 0x5F)
 in "response" mode.
 
+I2C
+	RAM:   uses 1435 - 1247 = 188 bytes from 2048 bytes (9.18%)
+	Flash: used 27334 - 25558 = 1776 bytes from 30720 bytes (5.78%)
+
+SoftwareSerial
+	RAM:   uses 1384 - 1261 = 123 bytes from 2048 bytes (6.01%)
+	Flash: used 27334 - 25566 = 1768 bytes from 30720 bytes (5.76%)
+
+HardwareSerial
+Look, we are already using the HardwareSerial for the console, so we can't use 
+it for the comms as well. Let's start with a simple STX-DLE-ETX protocol.
+
 
 
  ******************************************************************************/
-
-#include <Wire.h>
- 
-#define __NOT_EXTERN__
-#include "dev_comms.h"
-#undef __NOT_EXTERN__
-
 #include "sys_utils.h"
 #include "str_helper.h"
 #include "dev_console.h"
 
+#if (COMMS_USE_I2C == 1)
+  #include <Wire.h>
+#endif
+
+#define __NOT_EXTERN__
+#include "dev_comms.h"
+#undef __NOT_EXTERN__
 
 #ifdef PRINTF_TAG
 #undef PRINTF_TAG
 #endif
-#define PRINTF_TAG ("I2C") /* This must be undefined at the end of the file*/
+
+#if (COMMS_USE_I2C == 1)
+  #define PRINTF_TAG ("I2C") /* This must be undefined at the end of the file*/
+#else
+  #define PRINTF_TAG ("COMMS") /* This must be undefined at the end of the file*/
+#endif
 
 /******************************************************************************
 Macros
@@ -42,6 +59,10 @@ Macros
 
 /* Max number of bytes we can RX in the i2c in a single transaction */
 #define COMMS_MSG_LEN_MAX     (sizeof(rgb_btn_tx_data_t))
+
+#define STX     (0x02)
+#define DLE     (0x10)
+#define ETX     (0x03)
 
 /******************************************************************************
 Struct & Unions
@@ -60,8 +81,8 @@ Struct & Unions
 typedef struct {
     struct {
         uint8_t buff[RGB_BTN_MSG_MAX_LEN];
-        uint8_t head;       //RX'd bytes go in here
-        uint8_t tail;       //Read bytes come out here
+        uint8_t in;       //RX'd bytes go in here
+        uint8_t out;       //Read bytes come out here
         struct {
             uint8_t done     : 1;
             uint8_t overflow : 1;
@@ -90,39 +111,21 @@ typedef struct dev_comms_st
 /******************************************************************************
 Local function definitions
 ******************************************************************************/
-void _i2c_rx_handler(int nr_of_bytes_rx_from_master);
-void _i2c_tx_handler(void);
-
+#if (COMMS_USE_I2C == 1)
+  void _i2c_rx_handler(int nr_of_bytes_rx_from_master);
+  void _i2c_tx_handler(void);
+#else
+#endif
 /******************************************************************************
 Local variables
 ******************************************************************************/
-static const PROGMEM uint8_t comms_pins[RGB_BTN_I2C_ADDR_BITS] = {
-    btnChasePin_Addr0, 
-#if (RGB_BTN_I2C_ADDR_BITS > 1)
-    btnChasePin_Addr1, 
-#endif
-#if (RGB_BTN_I2C_ADDR_BITS > 2)
-    btnChasePin_Addr2, 
-#endif
-#if (RGB_BTN_I2C_ADDR_BITS > 3)
-    btnChasePin_Addr3,
-#endif
-#if (RGB_BTN_I2C_ADDR_BITS > 4)
-    btnChasePin_Addr4,
-#endif
-#if (RGB_BTN_I2C_ADDR_BITS > 5)
-    btnChasePin_Addr5,
-#endif
-#if (RGB_BTN_I2C_ADDR_BITS > 6)
-    btnChasePin_Addr6,
-#endif
-};
 
 dev_comms_t _comms;
 /******************************************************************************
 Local functions
 ******************************************************************************/
 
+#if (COMMS_USE_I2C == 1)
 void _i2c_rx_handler(int nr_of_bytes_rx_from_master)
 {
     //This is executed in interrupt space.... which means:
@@ -140,10 +143,10 @@ void _i2c_rx_handler(int nr_of_bytes_rx_from_master)
         //Returns a single byte rx'd on the bus (from the master)
         int c = Wire.read();
         
-        if (((_comms.msg.rx.head + cnt) < RGB_BTN_MSG_MAX_LEN) && (_comms.msg.rx.flags.overflow == 0))
+        if (((_comms.msg.rx.in + cnt) < RGB_BTN_MSG_MAX_LEN) && (_comms.msg.rx.flags.overflow == 0))
         {
             calc_crc = crc8(calc_crc, c);
-            _comms.msg.rx.buff[_comms.msg.rx.head + cnt] = c;
+            _comms.msg.rx.buff[_comms.msg.rx.in + cnt] = c;
         }
         else //We have received too many bytes
         {
@@ -153,15 +156,15 @@ void _i2c_rx_handler(int nr_of_bytes_rx_from_master)
     }
     
     //Increment, whether it is overflowing or not
-    _comms.msg.rx.head += cnt;
+    _comms.msg.rx.in += cnt;
 
     if (calc_crc != 0)
         _comms.msg.rx.flags.crc_err = 1;
     else if (cnt > 0) // reverse 1, don't count the crc byte
-        _comms.msg.rx.head--;   //We don't want to include the CRC byte in the message
+        _comms.msg.rx.in--;   //We don't want to include the CRC byte in the message
 
     //Only set this flag if we have received something
-    _comms.msg.rx.flags.done = (_comms.msg.rx.head > 0 )? 1 : 0;
+    _comms.msg.rx.flags.done = (_comms.msg.rx.in > 0 )? 1 : 0;
     //Using the done flag prevent the application from reading incomplete messages which are still busy with transmission
 }
 
@@ -176,39 +179,37 @@ void _i2c_tx_handler(void)
 
     return;
 }
+#endif
 
 /******************************************************************************
 Public functions
 ******************************************************************************/
-void dev_comms_init(void)
+void dev_comms_init(uint8_t addr)
 {
     char buff[10];
     //First we need to set the I2C address
     // The top 4 bits will be fixed at 0000 0000 ( 0x00 )
-    _comms.addr = RGB_BTN_I2C_TYPE_ID;
-    // The bottom 4 bits of the I2C address will be determined by the inputs
-    //  on the device
-    for (uint8_t i = 0; i < RGB_BTN_I2C_ADDR_BITS; i++)
-    {
-        uint8_t pin = pgm_read_byte(&comms_pins[i]);
-        pinMode(pin, INPUT);
-        if (quickPinRead(pin) == HIGH)
-            _comms.addr |= (1 << i);
-    }
-    
+    _comms.addr = addr;//RGB_BTN_I2C_TYPE_ID;
+
     dev_comms_rx_reset();
 
-    //RVN - TODO: Consider writing the address into the EEPROM instead of utilising x pins to set the address
-
-    Wire.begin(/*I2C_BROADCAST_ADDR*/ _comms.addr);
-    Wire.onReceive(_i2c_rx_handler);
-    Wire.onRequest(_i2c_tx_handler);
-    Wire.setClock(RGB_BTN_I2C_CLK_FREQ); // let's try fast mode: 400kHz
-
-    // Wire.begin(I2C_SLAVE_ADDR);
-    // Wire.onReceive(receiveEvent);
-    // Wire.onRequest(requestEvent);
-    iprintln(trCOMMS, "#Initialised at %s kHz (address: 0x%02X)", float2str(buff, RGB_BTN_I2C_CLK_FREQ/1000.0f, 1, 10), _comms.addr);
+    //Just set a new address if we are already initialised
+    if (!_comms.initialised)
+    {
+#if COMMS_USE_I2C == 1
+        Wire.begin(/*I2C_BROADCAST_ADDR*/ _comms.addr);
+        Wire.onReceive(_i2c_rx_handler);
+        Wire.onRequest(_i2c_tx_handler);
+        Wire.setClock(RGB_BTN_I2C_CLK_FREQ); // let's try fast mode: 400kHz
+        iprintln(trCOMMS, "#Initialised at %s kHz (address: 0x%02X)", float2str(buff, RGB_BTN_I2C_CLK_FREQ/1000.0f, 1, 10), _comms.addr);
+#else
+        iprintln(trCOMMS, "#Initialised (address: 0x%02X)", _comms.addr);
+#endif
+    }
+    else
+    {
+        iprintln(trCOMMS, "#Address updated: 0x%02X", _comms.addr);
+    }
 
     _comms.initialised = true;
 }
@@ -217,7 +218,7 @@ uint8_t dev_comms_rx_available(void)
 {
     if (_comms.msg.rx.flags.done)
     {
-        return (_comms.msg.rx.head - _comms.msg.rx.tail);
+        return (_comms.msg.rx.in - _comms.msg.rx.out);
     }
     return 0;
 }
@@ -225,7 +226,7 @@ uint8_t dev_comms_rx_available(void)
 bool dev_comms_rx_error(uint8_t * err_data)
 {
     if ((_comms.msg.rx.flags.overflow == 1) && (err_data != NULL))
-        *err_data = _comms.msg.rx.head - RGB_BTN_MSG_MAX_LEN;
+        *err_data = _comms.msg.rx.in - RGB_BTN_MSG_MAX_LEN;
 
     return ((_comms.msg.rx.flags.overflow) || (_comms.msg.rx.flags.crc_err));
 }
@@ -236,9 +237,9 @@ char * dev_comms_rx_error_msg(void)
     buff[0] = 0;
     if ((_comms.msg.rx.flags.overflow) && (_comms.msg.rx.flags.crc_err))
         //                            12345678901234567890123456789012
-        snprintf(buff, sizeof(buff), "Overflow (%d) & CRC", _comms.msg.rx.head - RGB_BTN_MSG_MAX_LEN);
+        snprintf(buff, sizeof(buff), "Overflow (%d) & CRC", _comms.msg.rx.in - RGB_BTN_MSG_MAX_LEN);
     else if (_comms.msg.rx.flags.overflow)
-        snprintf(buff, sizeof(buff), "Overflow (%d)", _comms.msg.rx.head - RGB_BTN_MSG_MAX_LEN);
+        snprintf(buff, sizeof(buff), "Overflow (%d)", _comms.msg.rx.in - RGB_BTN_MSG_MAX_LEN);
     else if (_comms.msg.rx.flags.crc_err)
         snprintf(buff, sizeof(buff), "CRC Error");
 
@@ -253,37 +254,38 @@ size_t dev_comms_rx_read(uint8_t * data, size_t len)
         if (data != NULL)
         {
             //The head could have been moved beyond the buffer limit if there is an overflow
-            read_len = min(RGB_BTN_MSG_MAX_LEN, _comms.msg.rx.head);
+            read_len = min(RGB_BTN_MSG_MAX_LEN, _comms.msg.rx.in);
             //We need to subtract the current position of the tail and see if we can read that many bytes
             read_len = min(len, read_len);
             //RVN - TODO - we probably need to check that the tail is <= than the head at this point.... don't want to read more than we have
             for (uint8_t i = 0; i < read_len; i++)
-                data[i] = _comms.msg.rx.buff[_comms.msg.rx.tail + i];
+                data[i] = _comms.msg.rx.buff[_comms.msg.rx.out + i];
         }
-        _comms.msg.rx.tail += read_len;
+        _comms.msg.rx.out += read_len;
     }
     return read_len;
 }
 
 void dev_comms_rx_reset(void)
 {
-    _comms.msg.rx.head = 0;
-    _comms.msg.rx.tail = 0;
+    _comms.msg.rx.in = 0;
+    _comms.msg.rx.out = 0;
     _comms.msg.rx.flags = {0};
 }
 
 void dev_comms_service(void)
 {
+#if COMMS_USE_I2C == 1
     //Have we received anything?
     if (_comms.msg.rx.flags.done)
     {
-        iprintln(trCOMMS, "#Received %d bytes", _comms.msg.rx.head);
+        iprintln(trCOMMS, "#Received %d bytes", _comms.msg.rx.in);
         if (_comms.msg.rx.flags.overflow)
         {
-            iprintln(trCOMMS, "#%d bytes Overflow ", _comms.msg.rx.head - RGB_BTN_MSG_MAX_LEN);
+            iprintln(trCOMMS, "#%d bytes Overflow ", _comms.msg.rx.in - RGB_BTN_MSG_MAX_LEN);
         }
     }
-
+#endif
 }
 
 #undef PRINTF_TAG

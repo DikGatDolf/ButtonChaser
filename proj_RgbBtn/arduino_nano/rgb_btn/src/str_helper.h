@@ -12,7 +12,7 @@ Include file for str_helper.c
 /******************************************************************************
 includes
 ******************************************************************************/
-#include "defines.h"
+//#include "defines.h"
 
 /******************************************************************************
 definitions
@@ -40,7 +40,9 @@ variables
 functions
 ******************************************************************************/
 bool hex2u32(uint32_t *val, const char * str, int expected_len);
+bool str2int64(int64_t *val, const char * str, int expected_len);
 bool str2int32(int32_t *val, const char * str, int expected_len);
+bool str2uint64(uint64_t *val, const char * str, int expected_len);
 bool str2uint32(uint32_t *val, const char * str, int expected_len);
 uint8_t char2nibble(char hexDigit);
 uint8_t hex2byte(char * hexDigits);

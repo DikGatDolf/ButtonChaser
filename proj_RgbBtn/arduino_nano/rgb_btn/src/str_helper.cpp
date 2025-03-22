@@ -15,11 +15,13 @@ includes
 #include <ctype.h>
 #include <string.h>
 #include <stdint.h>
-#include "dev_console.h"
 
 #define __NOT_EXTERN__
 #include "str_helper.h"
 #undef __NOT_EXTERN__
+
+#include "sys_utils.h"
+#include "dev_console.h"
 
 #ifdef PRINTF_TAG
 #undef PRINTF_TAG
@@ -29,8 +31,8 @@ includes
 /*******************************************************************************
  Macro definitions
 *******************************************************************************/
-#define FMT_TO_STR_BUFF_SIZE    (12)    /* 0123456789A
-                                          "%s%ld.%0_ld"*/
+#define FMT_TO_STR_BUFF_SIZE    (12)    /* 0123456789A  \
+                                        \ "%s%ld.%0_ld"*/
 
 /*******************************************************************************
  Local defines
@@ -81,7 +83,7 @@ bool hex2u32(uint32_t *val, const char * str, int expected_len)
     return true;
 }
 
-bool str2uint32(uint32_t *val, const char * str, int expected_len)
+bool str2uint64(uint64_t *val, const char * str, int expected_len)
 {
     uint64_t retVal = 0;
     bool isNegative = false;
@@ -93,7 +95,7 @@ bool str2uint32(uint32_t *val, const char * str, int expected_len)
     if (!is_natural_number_str(str, expected_len))
         return false;
 
-        //Allow a + or - only in the first position
+    //Allow a + or - only in the first position
     if ((*str == '-') || (*str == '+'))
     {
         isNegative = (*str == '-');
@@ -107,17 +109,30 @@ bool str2uint32(uint32_t *val, const char * str, int expected_len)
         str++;
     }
 
-    if (retVal > UINT32_MAX)
+    if (retVal > UINT64_MAX)
         return false;
 
     if (isNegative)
         retVal = -retVal;
 
+    *val = retVal;
+    return true;
+}
+
+bool str2uint32(uint32_t *val, const char * str, int expected_len)
+{
+    uint64_t retVal = 0;
+    if (false == str2uint64(&retVal, str, expected_len))
+        return false;
+
+    if (retVal > UINT32_MAX)
+        return false;
+
     *val = (uint32_t)retVal;
     return true;
 }
 
-bool str2int32(int32_t *val, const char * str, int expected_len)
+bool str2int64(int64_t *val, const char * str, int expected_len)
 {
     int64_t retVal = 0;
     bool isNegative = false;
@@ -129,7 +144,7 @@ bool str2int32(int32_t *val, const char * str, int expected_len)
     if (!is_natural_number_str(str, expected_len))
         return false;
 
-        //Allow a + or - only in the first position
+    //Allow a + or - only in the first position
     if ((*str == '-') || (*str == '+'))
     {
         isNegative = (*str == '-');
@@ -145,6 +160,20 @@ bool str2int32(int32_t *val, const char * str, int expected_len)
 
     if (isNegative)
         retVal = -retVal;
+
+    if ((retVal > INT64_MAX) || (retVal < INT64_MIN))
+        return false;
+
+    *val = retVal;
+    return true;
+}
+
+bool str2int32(int32_t *val, const char * str, int expected_len)
+{
+    int64_t retVal = 0;
+
+    if (false == str2int64(&retVal, str, expected_len))
+        return false;
 
     if ((retVal > INT32_MAX) || (retVal < INT32_MIN))
         return false;
@@ -276,7 +305,6 @@ bool is_hex_str(const char * str, unsigned int expected_len)
     return true;
 }
 
-
 char * str_trim_l(const char *str) 
 {
     while (isblank((int)*str))
@@ -291,7 +319,6 @@ char * str_trim_l(const char *str)
         
     return NULL;
 }
-
 
 char * str_next_word(const char *str) 
 {
@@ -321,32 +348,32 @@ char * str_next_word(const char *str)
     return NULL;
 }
 
-#define MS_PER_SEC  1000
-#define SEC_PER_MIN 60
-#define MIN_PER_HR  60
-#define HR_PER_DAY  24
+// #define MS_PER_SEC  1000
+// #define SEC_PER_MIN 60
+// #define MIN_PER_HR  60
+// #define HR_PER_DAY  24
 
-#define _u32_ms2hms0_len    15  /* 0xFFFFFFFF  (uint32_t max)
-                                    = 4,294,967,295 
-                                    = 1193h 2m 47s 295ms 
-                                    => "1193:02:47.295" 
-                                    is 15 bytes (with NULL terminator) */
-bool ms2dhms_str(char *buff, uint32_t ms)
-{
-    uint32_t dec = ms%MS_PER_SEC;
-    uint32_t sec = ms/MS_PER_SEC;
-    uint32_t min = sec/SEC_PER_MIN;
-    uint32_t hr  = min/MIN_PER_HR;
+// #define _u32_ms2hms0_len    15  /* 0xFFFFFFFF  (uint32_t max)
+//                                     = 4,294,967,295 
+//                                     = 1193h 2m 47s 295ms 
+//                                     => "1193:02:47.295" 
+//                                     is 15 bytes (with NULL terminator) */
+// bool ms2dhms_str(char *buff, uint32_t ms)
+// {
+//     uint32_t dec = ms%MS_PER_SEC;
+//     uint32_t sec = ms/MS_PER_SEC;
+//     uint32_t min = sec/SEC_PER_MIN;
+//     uint32_t hr  = min/MIN_PER_HR;
     
-    if (buff == NULL)
-    {    
-        return false;
-    }
+//     if (buff == NULL)
+//     {    
+//         return false;
+//     }
 
-    snprintf(buff, _u32_ms2hms0_len, "%ld:%02ld:%02ld.%03ld", hr, min%MIN_PER_HR, sec%SEC_PER_MIN, dec);
+//     snprintf(buff, _u32_ms2hms0_len, "%ld:%02ld:%02ld.%03ld", hr, min%MIN_PER_HR, sec%SEC_PER_MIN, dec);
 
-    return true;
-}
+//     return true;
+// }
 
 char * float2str(char *buff, double fVal, unsigned int decimalpoints, size_t max_len)
 {

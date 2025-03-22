@@ -50,8 +50,12 @@ local defines
 #define PWM_RESOLUTION	            (BIT_POS(PWM_BIT_RESOLUTION))
 #define PWM_MAX_VALUE	            (PWM_RESOLUTION-1)
 
+
+#define LED_ON                      (LOW)
+#define LED_OFF                     (HIGH)
+
 #ifdef CONSOLE_ENABLED
-const static char * _led_col_str[] = {"Blue", "Green", "Red", "White" };
+const static char * _led_col_str[] = {"Blue", "Green", "Red"/*, "White" */};
 #endif /* CONSOLE_ENABLED */
 
 typedef struct
@@ -75,7 +79,6 @@ typedef struct
 	bool active = false;
 	uint16_t prescaler = 0;
 	uint8_t pin_cnt;			// Counter to keep track of the duty cycle
-	uint8_t dc_cnt;			// Counter to keep track of the duty cycle
     double act_freq;        // The actual frequency of the PWM signal
 } dev_rgb_type;
 
@@ -86,21 +89,14 @@ void _set_adjusted_duty_cycle(led_colour_type col);
 void _pwm_switch_on_stagger(void);
 bool _pwm_assign_pin(led_colour_type col, int pin);
 
-#ifdef CONSOLE_ENABLED
-void _dev_rgb_menu_handler(void);
-void _print_colour_state(led_colour_type col);
 /*******************************************************************************
 local variables
  *******************************************************************************/
-static console_menu_item_t _dev_rgb_menu_items[] =
-{
-    { "led", _dev_rgb_menu_handler, "RGB LED Driver Commands"},
-};
-#endif /* CONSOLE_ENABLED */
-
 dev_rgb_type _rgb;
 
 volatile uint8_t dev_rgb_tcnt2;
+volatile uint8_t dev_rgb_dc_cnt;			// Counter to keep track of the duty cycle
+
 
 /* Human perceived brightness is not linear... so we use a lookup table to 
     create the logarithmic curve for increasing brightness. 
@@ -161,8 +157,8 @@ ISR(TIMER2_OVF_vect) {
      limit the period to 95us, or 21,052.6 Hz... using our 8-bit resolution 
      this means the apparent LED PWM frequency will be no more than 82.4Hz. */
 
-    //RVN Debug - To measure interrupt execution time on a scope!!!
-    //RVN Debug quickPinToggle(14, HIGH);
+    //Debug - To measure interrupt execution time on a scope!!!
+    //Debug - quickPinToggle(14, HIGH);
 
     TCNT2 = dev_rgb_tcnt2; //Reset the timer
 
@@ -176,12 +172,12 @@ ISR(TIMER2_OVF_vect) {
             continue;
         
         //We only bother with turning OFF if the duty cycle is not 100%
-        if ((_rgb.colour[i].pwm._off == _rgb.dc_cnt) && (_rgb.colour[i].pwm.adjust < PWM_MAX_VALUE))
-			quickPinToggle(_rgb.colour[i].pin, LOW);
+        if ((_rgb.colour[i].pwm._off == dev_rgb_dc_cnt) && (_rgb.colour[i].pwm.adjust < PWM_MAX_VALUE))
+			quickPinToggle(_rgb.colour[i].pin, LED_OFF);
         
         //We only bother with turning ON if the duty cycle is not 0%
-		else if ((_rgb.colour[i].pwm._on == _rgb.dc_cnt) && (_rgb.colour[i].pwm.adjust > 0))
-			quickPinToggle(_rgb.colour[i].pin, HIGH);
+		else if ((_rgb.colour[i].pwm._on == dev_rgb_dc_cnt) && (_rgb.colour[i].pwm.adjust > 0))
+			quickPinToggle(_rgb.colour[i].pin, LED_ON);
 	}
     
     /*This should wrap around at 255, and not the "automagical" 256=0 point. 
@@ -193,11 +189,11 @@ ISR(TIMER2_OVF_vect) {
     So, if we only wrap around at 256, we will have a small drop at 255 where the 
      LED will turn off and then back ON at the next cycle of 0.... 
      ...we do not want that! 255 should mean ON 100% of the cycle */
-    if ((++_rgb.dc_cnt) >= PWM_MAX_VALUE)
-        _rgb.dc_cnt = 0;
+    if ((++dev_rgb_dc_cnt) >= PWM_MAX_VALUE)
+        dev_rgb_dc_cnt = 0;
 
-    //RVN Debug - To measure interrupt execution time on a scope!!!
-    //RVN Debug quickPinToggle(14, LOW);
+    //Debug - To measure interrupt execution time on a scope!!!
+    //Debug - quickPinToggle(14, LOW);
 }
 
 
@@ -205,194 +201,17 @@ void _set_adjusted_duty_cycle(led_colour_type col)
 {
     if (col >= rgbMAX)
         return;
-    if (_rgb.colour[col].pin == PWM_PIN_UNASSIGNED)
-        return;
     
     _rgb.colour[col].pwm.adjust = pgm_read_byte(&CIE_LIGHTNESS_TO_PWM_LUT_256_IN_8BIT_OUT[_rgb.colour[col].pwm.target]);
     
     //The switch ON time for each LED has already been staggered through the PWM cycle. 
     //We just need to set the switch OFF time from there
     _rgb.colour[col].pwm._off = _rgb.colour[col].pwm._on + _rgb.colour[col].pwm.adjust;
-    // If the OFF time is at 255, move it to 0 since 
+    // If the OFF time is at 255, move it to 0 since we are wrapping around at 255 already
     if (_rgb.colour[col].pwm._off >= PWM_MAX_VALUE)
         _rgb.colour[col].pwm._off = 0;
 }
 
-#ifdef CONSOLE_ENABLED
-void _dev_rgb_menu_handler(void)
-{
-    char *argStr;// = console_arg_pop();
-    bool help_reqested = false;
-    uint8_t col_mask = 0x00;                    //Indicates "not set"
-    int col_pwm[rgbMAX] = {-1, -1, -1, -1};   //Indicates "not set"
-
-
-    if (console_arg_cnt() == 0) // Show the current state of the PWM
-    {
-        iprint(trALWAYS, "PWM is ");
-        if(_rgb.active)
-        {
-            char freq_str[16];
-            iprintln(trALWAYS, "running at %s Hz (%d bit Resolution)", 
-                float2str(freq_str, _rgb.act_freq, 2, 16), PWM_BIT_RESOLUTION);
-        }
-        else
-        {
-            iprintln(trALWAYS, "stopped");
-        }
-        for (int i = 0; i < rgbMAX; i++)
-            _print_colour_state((led_colour_type)i);
-        return;
-    }
-
-    //Go through every available argument
-    while (console_arg_cnt() > 0)
-    {
-        argStr = console_arg_pop();
-        col_mask &= 0x0F; //Clear the high nibble
-        if ((0 == strcasecmp(argStr, "help")) || (0 == strcasecmp(argStr, "?"))) //is it a ? or help
-        {
-            help_reqested = true; //Disregard the rest of the arguments
-            break; //from while
-        }
-        else if ((is_natural_number_str(argStr, 0)) || (0 == strcasecmp(argStr, "+")) || (0 == strcasecmp(argStr, "-")))//is it a duty cycle number 
-        {
-            //Does the argument start with a plus or minus sign?
-            bool increment = false;
-            bool decrement = false;
-            int pwm_dc = 0;
-            if (argStr[0] == '+')
-            {
-                //We are onlny incrementing the duty cycle
-                increment = true;
-                argStr++; //Skip the + sign
-
-            }
-            else if (argStr[0] == '-')
-            {
-                //We are only decrementing the duty cycle
-                decrement = true;
-                argStr++; //Skip the - sign
-            }
-            if (*argStr != 0) //We have a duty cycle value
-                pwm_dc = atoi(argStr); //Should always be > 0 as we skipped the sign character above
-            else if (increment || decrement)
-                pwm_dc = 1; //Default increment value
-            else
-                pwm_dc = -1; // Will cause the next check to fail
-
-            if ((pwm_dc < 0) || (pwm_dc > (int)PWM_MAX_VALUE))
-            {
-                iprintln(trALWAYS, "Please specify a duty cycle value from 0 to %d (got %d)", PWM_MAX_VALUE, pwm_dc);
-                help_reqested = true; //Disregard the rest of the arguments
-                break; //from while
-            }
-            if (col_mask == 0x00) //No colour specified, just a duty cycle
-                col_mask = 0x0F;
-
-            // Setting ALL the colours to the same duty cycle
-            for (int i = 0; i < rgbMAX; i++)
-            {
-                if ((col_mask & BIT_POS(i)) == 0)
-                    continue;
-                if (col_pwm[i] != -1)
-                    iprintln(trALWAYS, "%s's duty cycle is being overwrittend: %d -> %d", _led_col_str[i], col_pwm[i], pwm_dc);
-                
-                if (increment)
-                    col_pwm[i] = min(_rgb.colour[i].pwm.target + pwm_dc, (int)PWM_MAX_VALUE);
-                else if (decrement)
-                    col_pwm[i] = max(_rgb.colour[i].pwm.target - pwm_dc, 0);
-                else
-                    col_pwm[i] = pwm_dc;
-                col_mask &= ~BIT_POS(i); //clear bit in case the user wants to set the same duty cycle to more colours
-            }
-        }
-        else //could be colour?
-        {
-            led_colour_type col = rgbMAX;
-        
-            //Get the colour match first
-            for (int i = 0; i < rgbMAX; i++)
-            {
-                //We only match as much as the user has typed.... not much to be confused beween Red, Green White and Blue
-                if (strncasecmp(_led_col_str[i], argStr, strlen(argStr)) == 0)
-                {
-                    col = (led_colour_type)i;
-                    break; //from the for loop
-                }
-            }
-    
-            if (col == rgbMAX)
-            {
-                // For "All" we can apply the given duty cycle to all assigned colours/pins
-                if (strcasecmp("All", argStr) != 0)
-                {
-                    iprint(trALWAYS, "Please specify a valid LED colour: ");
-                    for (int i = 0; i < rgbMAX; i++)
-                        iprint(trALWAYS, "\"%s\", ", _led_col_str[i]);
-                    iprintln(trALWAYS, " or \"All\" (got \"%s\")", argStr);
-                    help_reqested = true; //Disregard the rest of the arguments
-                    break; //from while
-                }
-                else
-                {
-                    col_mask |= 0x0F; //Set all colours
-                    continue; //to the next argument
-                }
-            }
-            //Are we duplicating a colour?
-            if ((col_mask & BIT_POS(col)) != 0)
-                iprintln(trALWAYS, "%s duplicated in this action (perhaps an errant \"All\"?)", _led_col_str[col]);
-
-            col_mask |= BIT_POS(col);
-        }
-    }
-
-    if (!help_reqested)
-    {
-            
-        for (int i = 0; i < rgbMAX; i++)
-        {
-            if (col_pwm[i] != -1)
-            {
-                // Set the duty cycle of the colour(s)
-                if  (_rgb.colour[i].pin != PWM_PIN_UNASSIGNED)
-                    dev_rgb_set_1col((led_colour_type)i, col_pwm[i]);
-                _print_colour_state((led_colour_type)i);                            
-            }
-        }
-        for (int i = 0; i < rgbMAX; i++)
-        {
-            if (col_mask & BIT_POS(i))
-            {
-                //just display the state of colour(s)
-                _print_colour_state((led_colour_type)i);
-            }
-        }
-    }
-    
-    if (help_reqested)
-    {
-        iprintln(trALWAYS, " Usage: \"pwm [<colour>] [[<+/->]<duty_cycle>]\":");
-        iprintln(trALWAYS, "    <colour>     - Red, Green, Blue, White or All");
-        iprintln(trALWAYS, "          if <colour> is omitted, \"All\" is assumed");
-        iprintln(trALWAYS, "    <+/-><duty_cycle> - Sets a delta %u-bit PWM value (0-%u) for <colour>", PWM_BIT_RESOLUTION, PWM_MAX_VALUE);
-        iprintln(trALWAYS, "          if <+/-> is omitted, an absolute value is assumed");
-        iprintln(trALWAYS, "          if <+/-><duty_cycle> is omitted, the pwm of the colour is displayed");
-        //                //          1         2         3         4         5         6         7         8         9
-        //                //0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890
-    }
-}
-
-void _print_colour_state(led_colour_type col)
-{
-    iprint(trALWAYS, "  %5s - ", _led_col_str[col]);
-    if (_rgb.colour[col].pin != PWM_PIN_UNASSIGNED)
-        iprintln(trALWAYS, "Pin %2d : %3d (%3d) -> ON = %d, OFF = %d", _rgb.colour[col].pin, _rgb.colour[col].pwm.target, _rgb.colour[col].pwm.adjust, _rgb.colour[col].pwm._on, _rgb.colour[col].pwm._off);
-    else
-        iprintln(trALWAYS, "Unassigned");
-}
-#endif /* CONSOLE_ENABLED */
 
 void _pwm_switch_on_stagger(void)
 {
@@ -402,11 +221,8 @@ void _pwm_switch_on_stagger(void)
     int pin_cnt = 0;
     for (int i = 0; i < rgbMAX; i++)
     {
-        if (_rgb.colour[i].pin != PWM_PIN_UNASSIGNED)
-        {
-            _rgb.colour[i].pwm._on = pin_cnt*delta;
-            pin_cnt++;
-        }
+        _rgb.colour[i].pwm._on = pin_cnt*delta;
+        pin_cnt++;
     }
 }
 
@@ -446,8 +262,6 @@ bool _pwm_assign_pin(led_colour_type col, int pin)
     if (_rgb.pin_cnt >= MAX_PWM_PINS)
     {
         iprintln(trRGB, "#%d/%d pins already assigned, unassign one first", _rgb.pin_cnt, MAX_PWM_PINS);
-        for (int i = 0; i < rgbMAX; i++)
-            _print_colour_state((led_colour_type)i);
         return false;
     }
 
@@ -474,52 +288,18 @@ bool _pwm_assign_pin(led_colour_type col, int pin)
     return true;
 }
 
-/*void _pwm_unassign_pin(led_colour_type col)
-{
-    if (col >= rgbMAX)
-    {
-        iprintln(trRGB, "#Invalid LED colour (%d)", col);
-        return;
-    }
-
-    if (_rgb.colour[col].pin == PWM_PIN_UNASSIGNED)
-    {
-        iprintln(trRGB, "#%s is not assigned", _led_col_str[col]);
-        return;
-    }
-
-    if (_rgb.pin_cnt == 0)
-    {
-        iprintln(trRGB, "#No pins assigned");
-        return;
-    }
-
-    // Should we reset the pin to INPUT?
-	//pinMode(_rgb.colour[col].pin, INPUT_PULLUP);
-
-	iprintln(trRGB, "#Pin %d unassigned from %s", _rgb.colour[col].pin, _led_col_str[col]);
-
-    _rgb.colour[col].pin = PWM_PIN_UNASSIGNED;
-    _rgb.pin_cnt--;
-
-
-    if (_rgb.pin_cnt > 0) //Otherwise we are dividing by zero!!!!
-        _pwm_switch_on_stagger();
-}
-*/
-
 /*******************************************************************************
 Public functions
  *******************************************************************************/
 
-bool dev_rgb_start(int pin_red, int pin_green, int pin_blue, int pin_white) 
+bool dev_rgb_start(int pin_red, int pin_green, int pin_blue) 
 {
 
     //ASSERTM(PWM_BIT_RESOLUTION <= PWM_MAX_RESOLUTION, "PWM resolution is limited to 8 bits (0 to 255)");
 
     char freq_str[16];
     int pin_count = 0;
-    int pin_array[rgbMAX] = {pin_blue, pin_green, pin_red, pin_white};
+    int pin_array[rgbMAX] = {pin_blue, pin_green, pin_red};
 	uint16_t prescale_multiplier[] = {1, 8, 32, 64, 128, 256, 1024};
 	double prescale_min_freq[] = {62500.0, 		7812.5, 	1953.125, 	976.5625, 	488.2813, 	244.14, 	61.0352};
 	double prescale_max_freq[] = {16000000.0, 	2000000.0, 	500000.0,	250000.0, 	125000.0, 	62500.0,	15625.0};
@@ -617,7 +397,7 @@ bool dev_rgb_start(int pin_red, int pin_green, int pin_blue, int pin_white)
 
 	dev_rgb_tcnt2 = (uint8_t)(256 - (unsigned int)((float)F_CPU / target_frequency / _rgb.prescaler));
     //iprintln(trRGB | trALWAYS, "#TCNT2 = %d", dev_rgb_tcnt2);
-	_rgb.dc_cnt = 0;
+	dev_rgb_dc_cnt = 0;
 
     //iprintln(trRGB, "#TCNT2 = %d", dev_rgb_tcnt2);
     //Do this before enabling the timer interrupts (avoid accessing dev_rgb_tcnt2 outside the ISR)
@@ -628,26 +408,17 @@ bool dev_rgb_start(int pin_red, int pin_green, int pin_blue, int pin_white)
         if (pin_array[i] != PWM_PIN_UNASSIGNED)
             _pwm_assign_pin((led_colour_type)i, pin_array[i]);
 
-    // for (int i = 0; i < rgbMAX; i++)
-    //     if (pin_array[i] != PWM_PIN_UNASSIGNED)
-    //         _print_colour_state((led_colour_type)i);
-
     TCNT2 = dev_rgb_tcnt2;
 	TIMSK2 |= (1<<TOIE2);	//Start the timer
 
 	_rgb.active = true;
 
-    //RVN Debug
-    pinMode(14, OUTPUT);
-    quickPinToggle(14, LOW);
+    //Debug - pinMode(14, OUTPUT);
+    //Debug - quickPinToggle(14, LOW);
 
     iprintln(trRGB|trALWAYS, "#Running at %s Hz with %d pins (%d bit resolution)", float2str(freq_str, _rgb.act_freq, 2, 16), _rgb.pin_cnt, PWM_BIT_RESOLUTION);
     
-    #ifdef CONSOLE_ENABLED
-        console_add_menu("rgb", _dev_rgb_menu_items, ARRAY_SIZE(_dev_rgb_menu_items), "RGB LED Driver Commands");
-    #endif /* CONSOLE_ENABLED */
-
-return true;
+    return true;
 }
 
 void dev_rgb_stop() {
@@ -660,125 +431,33 @@ bool dev_rgb_enabled()
 	return _rgb.active;
 }
 
-void dev_rgb_set_1col(led_colour_type col, uint8_t duty_cycle_target)
+void dev_rgb_set_colour(uint32_t rgb)
 {
-    if (col >= rgbMAX)
-    {
-        iprintln(trRGB, "#Invalid colour (%d)!", col);
-        return;
-    }
-    
-    if (_rgb.colour[col].pin == PWM_PIN_UNASSIGNED)
-    {
-        iprintln(trRGB, "#%s is not assigned to a pin, no PWM possible!", _led_col_str[col]);
-        return;
-    }
-
-    _rgb.colour[col].pwm.target = duty_cycle_target;
-    _set_adjusted_duty_cycle(col);
-}
-
-void dev_rgb_set_wrgb(uint32_t wrgb)
-{
+    // iprintln(trRGB, "#Setting colour to 0x%06X", rgb);
     for (int i = 0; i < rgbMAX; i++)
     {
-        if (_rgb.colour[i].pin == PWM_PIN_UNASSIGNED)
-        {
-            _rgb.colour[i].pwm.target = (wrgb >> (i*8)) & 0xFF;
-            _set_adjusted_duty_cycle((led_colour_type)i);
-        }
+        _rgb.colour[i].pwm.target = (rgb >> (i*8)) & 0xFF;
+        _set_adjusted_duty_cycle((led_colour_type)i);
     }
 }
 
-uint32_t dev_rgb_get_wrgb(void)
+uint32_t dev_rgb_get_colour(void)
 {
-    uint32_t wrgb = 0;
+    uint32_t rgb = 0;
     for (int i = 0; i < rgbMAX; i++)
-    {
-        if (_rgb.colour[i].pin == PWM_PIN_UNASSIGNED)
-            wrgb |= ((uint32_t)_rgb.colour[i].pwm.target << (i*8)) & 0xFF;
-    }
+        rgb |= (((uint32_t)_rgb.colour[i].pwm.target & 0xFF)<< (i*8)) ;
 
-    return wrgb;
+    return rgb;
 }
 
-/*
-uint8_t dev_rgb_get_duty_cycle(led_colour_type col)
+uint32_t dev_rgb_get_pwm(void)
 {
-    if (col >= rgbMAX)
-    {
-        iprintln(trRGB, "#Invalid LED colour (%d)", col);
-        return 0;
-    }
+    uint32_t rgb = 0;
+    for (int i = 0; i < rgbMAX; i++)
+        rgb |= (((uint32_t)_rgb.colour[i].pwm.adjust & 0xFF)<< (i*8)) ;
 
-    if (_rgb.colour[col].pin == PWM_PIN_UNASSIGNED)
-    {
-        iprintln(trRGB, "#%s is not assigned", _led_col_str[col]);
-        return 0;
-    }
-
-    return _rgb.colour[col].pwm.target;
+    return rgb;
 }
 
-uint8_t dev_rgb_get_adj_duty_cycle(led_colour_type col)
-{
-    if (col >= rgbMAX)
-    {
-        iprintln(trRGB, "#Invalid LED colour (%d)", col);
-        return 0;
-    }
-
-    if (_rgb.colour[col].pin == PWM_PIN_UNASSIGNED)
-    {
-        iprintln(trRGB, "#%s is not assigned", _led_col_str[col]);
-        return 0;
-    }
-
-    return _rgb.colour[col].pwm.adjust;
-}
-
-void dev_rgb_inc_duty_cycle(led_colour_type col, uint8_t inc_val, bool wrap)
-{
-    if (col >= rgbMAX)
-    {
-        iprintln(trRGB, "#Invalid LED colour (%d)", col);
-        return;
-    }
-
-    if (_rgb.colour[col].pin == PWM_PIN_UNASSIGNED)
-    {
-        iprintln(trRGB, "#%s is not assigned", _led_col_str[col]);
-        return;
-    }
-
-    if ((inc_val >= (PWM_RESOLUTION-_rgb.colour[col].pwm.target)) && (!wrap))
-        _rgb.colour[col].pwm.target = PWM_MAX_VALUE;
-    else //wrap around if bigger, otherwise, no care
-        _rgb.colour[col].pwm.target += inc_val;
-    _set_adjusted_duty_cycle(col);
-}
-
-void dev_rgb_dec_duty_cycle(led_colour_type col, uint8_t dec_val, bool wrap)
-{
-    if (col >= rgbMAX)
-    {
-        iprintln(trRGB, "#Invalid LED colour (%d)", col);
-        return;
-    }
-
-    if (_rgb.colour[col].pin == PWM_PIN_UNASSIGNED)
-    {
-        iprintln(trRGB, "#%s is not assigned", _led_col_str[col]);
-        return;
-    }
-
-    if ((dec_val >= _rgb.colour[col].pwm.target) && (!wrap))
-        _rgb.colour[col].pwm.target = 0;
-    else //wrap around if bigger, otherwise, no care
-        _rgb.colour[col].pwm.target -= dec_val;
-    
-    _set_adjusted_duty_cycle(col);
-}
-*/
 #undef PRINTF_TAG
 /*************************** END OF FILE *************************************/
