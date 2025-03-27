@@ -12,12 +12,12 @@ The timer will act as a one-shot timer in normal operation.
 To make the timer behave as a recurring timer, reload the interval and start
 the timer once it has expired (using TimerStart()).
 
-The General Timer (Timer_ms_t type) - 1 kHz granularity
+The General Timer (timer_ms_t type) - 1 kHz granularity
 The general Timers enables the program to create a downcounter with a
 preloaded value. This timer will then decrement every 1 ms until it has
 expired.
 Usage:
-The module making use of the timers must host a Timer_ms_t structure in RAM and
+The module making use of the timers must host a timer_ms_t structure in RAM and
 add it to the linked list (TimerAdd) to ensure that it is maintained.
 Removing it from the linked list (TimerRemove) will  make it dormant.
 The Timer must be polled (TimerPoll) to see when it has expired
@@ -59,7 +59,7 @@ Global Functions
  *******************************************************************************/
 void quickPinToggle(uint8_t pin, bool state)
 {
-//byte port;
+//uint8_t port;
 
 	//PrintF("Toggle pin %d to %s\n", pin, (state)? "HI" : "LO");
 
@@ -170,82 +170,32 @@ int freeRam ()
   return (int) &v - (__brkval == 0 ? (int) &__heap_start : (int) __brkval);
 }
 
-/*******************************************************************************
+#define FIBONACCI_MAX   (46U)    /* Beyond this, the result overruns a 32-bit unsigned integer */
+uint32_t fibonacci(uint8_t n)
+{
+    uint32_t terms[2] = {0, 1};
 
-Calculate the CRC for a null terminated string.
+    if (n == 0)
+        return 0;
+    if (n > FIBONACCI_MAX)
+        return UINT32_MAX;
+    
+    for (uint8_t i = 1; i <= n; i++)
+    {
+        unsigned int result = terms[0] + terms[1];
+        terms[0] = terms[1];
+        terms[1] = result;
+    }
 
- *******************************************************************************/
-// byte crc8_str(const char *str) {
-// 	char * data = (char *)str;
-// 	byte crc = 0x00; //Start with a blank CRC.
-// 	while (*data){
-// 		byte extract = *data++;
-// 		for (byte tempI = 8; tempI; tempI--) {
-// 			byte sum = (crc ^ extract) & 0x01;
-// 			crc >>= 1;
-// 			if (sum) {
-// 				crc ^= CRC_POLYNOMIAL;
-// 			}
-// 			extract >>= 1;
-// 		}
-// 	}
-// 	return crc;
-// }
+    return terms[1];
+}
 
-// /*******************************************************************************
-
-// Calculate the CRC for a null terminated string with a starting seed CRC value
-
-//  *******************************************************************************/
-// byte crc8_str(byte crc_start, const char *str) {
-// 	char * data = (char *)str;
-// 	byte crc = crc_start; //Start with the seed CRC.
-// 	while (*data){
-// 		byte extract = *data++;
-// 		for (byte tempI = 8; tempI; tempI--) {
-// 			byte sum = (crc ^ extract) & 0x01;
-// 			crc >>= 1;
-// 			if (sum) {
-// 				crc ^= CRC_POLYNOMIAL;
-// 			}
-// 			extract >>= 1;
-// 		}
-// 	}
-// 	return crc;
-// }
-
-// /*******************************************************************************
-
-// Calculate the CRC for an N number of bytes.
-
-//  *******************************************************************************/
-// byte crc8_str_n(const byte *data, byte len) {
-// 	byte crc = 0x00; //Start with a blank CRC.
-// 	while (len--) {
-// 		byte extract = *data++;
-// 		for (byte tempI = 8; tempI; tempI--) {
-// 			byte sum = (crc ^ extract) & 0x01;
-// 			crc >>= 1;
-// 			if (sum) {
-// 				crc ^= CRC_POLYNOMIAL;
-// 			}
-// 			extract >>= 1;
-// 		}
-// 	}
-// 	return crc;
-// }
-
-/*******************************************************************************
-
-Calculate the CRC for an N number of bytes with a starting seed CRC value
-
- *******************************************************************************/
-byte crc8_n(byte crc_start, const byte *data, byte len) {
-	byte crc = crc_start; //Start with a seed CRC.
+uint8_t crc8_n(uint8_t crc_start, const uint8_t *data, uint8_t len) {
+	uint8_t crc = crc_start; //Start with a seed CRC.
 	while (len--) {
-		byte extract = *data++;
-		for (byte tempI = 8; tempI; tempI--) {
-			byte sum = (crc ^ extract) & 0x01;
+		uint8_t extract = *data++;
+		for (uint8_t tempI = 8; tempI; tempI--) {
+			uint8_t sum = (crc ^ extract) & 0x01;
 			crc >>= 1;
 			if (sum) {
 				crc ^= CRC_POLYNOMIAL;
@@ -256,18 +206,10 @@ byte crc8_n(byte crc_start, const byte *data, byte len) {
 	return crc;
 }
 
-/*******************************************************************************
-
-Calculate the CRC for a single bytes
-Why only a single byte CRC. Because a single byte will serve its purpose (of
-ensuring the integrity of the message) very well while still allowing us not
-to have to worry about byte-endianness
-
- *******************************************************************************/
-byte crc8(byte crc_start, byte data) {
-	byte crc = crc_start; //Start with a blank CRC.
-	for (byte tempI = 8; tempI; tempI--) {
-		byte sum = (crc ^ data) & 0x01;
+uint8_t crc8(uint8_t crc_start, uint8_t data) {
+	uint8_t crc = crc_start; //Start with a blank CRC.
+	for (uint8_t tempI = 8; tempI; tempI--) {
+		uint8_t sum = (crc ^ data) & 0x01;
 		crc >>= 1;
 		if (sum) {
 			crc ^= CRC_POLYNOMIAL;

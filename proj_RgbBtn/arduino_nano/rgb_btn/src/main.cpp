@@ -38,13 +38,12 @@ This (slave) device  is responsible for:
 #include "dev_rgb.h"
 #include "dev_comms.h"
 #include "dev_nvstore.h"
-
+#include "dev_button.h"
 
 #ifdef CONSOLE_ENABLED
 #include "dev_console.h"
-#else
-#include "devComms.h"
 #endif
+
 
 #ifdef PRINTF_TAG
 #undef PRINTF_TAG
@@ -67,12 +66,13 @@ typedef struct
 {
     rgb_colour_t colour[2];
     uint32_t blink_ms;
-    Stopwatch_ms_t btn_sw;
-    unsigned long sw_time;
-    bool new_data;
+    stopwatch_ms_t stopwatch;
+    unsigned long press_time;
+    unsigned long press_cnt;
+    int last_state;
 }rgb_btn_t;
 
-Timer_ms_t blink_tmr;
+timer_ms_t blink_tmr;
 
 /*******************************************************************************
  Function prototypes
@@ -108,6 +108,7 @@ void _sys_handler_dump_generic(char * memType, unsigned long memStart, unsigned 
 #endif /* CONSOLE_ENABLED */
 #endif /* MAIN_DEBUG */
 
+void _button_change_irq(void);
 
 /*******************************************************************************
  local variables
@@ -137,21 +138,25 @@ rgb_btn_t rgb_btn;
  *******************************************************************************/
 
 void setup() {
-    uint8_t my_addr = RGB_BTN_I2C_TYPE_ID;
     // put your setup code here, to run once:
 	//Initialize serial communication on the standard port with the USB-2-RS232 converter
-	console_init(115200, SERIAL_8N1);
+	//console_init(115200);
+
+    rgb_btn.press_cnt = 0lu;
+    rgb_btn.press_time = 0lu;
+    rgb_btn.last_state = LOW;
+
+    dev_comms_init(RGB_BTN_ADDR_MASTER+1);
+
     _sys_handler_version();
     console_add_menu("main", _main_menu_items, ARRAY_SIZE(_main_menu_items), "Main Menu");
 
     dev_nvstore_init();
-    if (dev_nvstore_new_data_available())
-        dev_nvstore_read(&my_addr, sizeof(uint8_t));
 
     dev_rgb_start(btnChasePin_RED, btnChasePin_GREEN, btnChasePin_BLUE);
     //dev_rgb_set_colour(0x00800000);
 
-    dev_comms_init(my_addr);
+    dev_button_init(_button_change_irq);
 
     //sys_poll_tmr_start(&blink_tmr, 10000L, true);	//Does something every 10s
     sys_poll_tmr_stop(&blink_tmr);
@@ -160,21 +165,34 @@ void setup() {
 
 void loop() {
     
+    uint8_t my_addr;
+
     // put your main code here, to run repeatedly:
+
+    int btn_state = quickPinRead(btnChasePin_BTN);
+    if (rgb_btn.last_state != btn_state)
+    {
+        if (HIGH == btn_state)
+            rgb_btn.colour[0].rgb = (uint32_t)colBlue;
+        else
+            rgb_btn.colour[0].rgb = (uint32_t)colOrange;
+        
+        dev_rgb_set_colour(rgb_btn.colour[0].rgb);
+        rgb_btn.last_state = btn_state;
+        iprintln(trCOMMS, "Button is %s (%lu)", (HIGH == btn_state)? "HIGH" : "LOW", rgb_btn.press_cnt);
+    }
+
 
     //Check if our I2C addres has changed
     if (dev_nvstore_new_data_available())
-    {
-        uint8_t my_addr;
         dev_nvstore_read(&my_addr, sizeof(uint8_t));
-        dev_comms_init(my_addr);
-    }
 
-    //Check for anything coming in on the Serial Port and process it
-    console_service();
+    // //Check for anything coming in on the Serial Port and process it
+    //console_service();
 
 	//Check for anything coming in on the I2C and process it
     dev_comms_service();
+
     _handle_master_msg_rx();
    
     //Do we require blinking on our LED?
@@ -188,87 +206,96 @@ void loop() {
 	}
 }
 
+void _button_change_irq(void)
+{
+    rgb_btn.press_cnt++;
+    // int btn_state = quickPinRead(btnChasePin_BTN);
+    // if (HIGH == btn_state)
+    // {
+    //     rgb_btn.colour[0].rgb = (uint32_t)colBlue;
+    // }
+    // else
+    // {
+    //     rgb_btn.colour[0].rgb = (uint32_t)colOrange;
+    // }
+    // dev_rgb_set_colour(rgb_btn.colour[0].rgb);
+
+}
+
 void _handle_master_msg_rx(void)
 {
+//    uint8_t dst_addr;
     uint8_t cmd;
-    uint8_t len;
+    uint8_t len = 0;
+    bool responding = false;
 
-
-    //Have we received anything?
-    len = dev_comms_rx_available();
-    if (len == 0)
-        return;
-
-    iprintln(trCOMMS, "#Received %d bytes from master", len);
-
-    if (dev_comms_rx_error(NULL))
-    {
-        iprintln(trCOMMS, "#Error: %s", dev_comms_rx_error_msg());
-        dev_comms_rx_reset();
-        return;
-    }
+    //Let's assume we will be responding
+    dev_comms_response_start();
 
     //Have we received anything?
-    while (dev_comms_rx_available())
+    while (dev_comms_cmd_available(&cmd))
     {
-        len = 0;
-        //Message format is [Cmd][Payload][CRC]
-        //The first byte is the command/header
-        dev_comms_rx_read((uint8_t *)&cmd, 1);
-        switch (cmd)
+        //len = 0;
+        switch (cmd & ~RGB_BTN_FLAG_CMD_COMPLETE)
         {
-            case cmd_set_rgb:
-                //Should have at least 1 colour (3 bytes)
+            case cmd_set_rgb_0:
                 sys_poll_tmr_stop(&blink_tmr);
-                len = 4;
-                rgb_btn.colour[0].rgb = 0;
-                dev_comms_rx_read((uint8_t *)&rgb_btn.colour[0].rgb, 4);
+                len = dev_comms_cmd_read((uint8_t *)&rgb_btn.colour[0].rgb);
                 dev_rgb_set_colour(rgb_btn.colour[0].rgb);
+                break;
+
+            case cmd_set_rgb_1:
+                len = dev_comms_cmd_read((uint8_t *)&rgb_btn.colour[1].rgb);
                 break;
 
             case cmd_set_blink:
                 sys_poll_tmr_stop(&blink_tmr);
-                //Should have at least 2 colours and a timer (3 bytes, 3 bytes, 4 bytes)
-                len = 12;
-                //Start with the primary colour, so we can swop them right now
-                rgb_btn.colour[1].rgb = 0;
-                dev_comms_rx_read((uint8_t *)&rgb_btn.colour[1].rgb, 4);
-                
-                rgb_btn.colour[0].rgb = 0;
-                dev_comms_rx_read((uint8_t *)&rgb_btn.colour[0].rgb, 4);
-                
-                rgb_btn.blink_ms = 0;
-                dev_comms_rx_read((uint8_t *)&rgb_btn.blink_ms, 4);
-
-                //Set the colour and start the timer
-                dev_rgb_set_colour(rgb_btn.colour[0].rgb);
+                len = dev_comms_cmd_read((uint8_t *)&rgb_btn.blink_ms);
                 sys_poll_tmr_start(&blink_tmr, (unsigned long)rgb_btn.blink_ms, true);
-
                 break;
 
+            case cmd_get_btn:
+                len = dev_comms_cmd_read(NULL);   // No data to read
+                responding = true;
+                dev_comms_response_add_data(cmd_get_btn, (uint8_t*)&rgb_btn.press_time, sizeof(unsigned long));
+                break;
+            
             case cmd_sw_start:
-                len = 0;
+                len = dev_comms_cmd_read(NULL);   // No data to read
                 //Nothing else.... just start the stopwatch
-                sys_stopwatch_ms_start(&rgb_btn.btn_sw);
+                sys_stopwatch_ms_start(&rgb_btn.stopwatch);
                 break;
 
-            case cmd_wr_console: 
-                //The next byte "should" be the length of the payload
-                dev_comms_rx_read((uint8_t *)&len, 1);
-                for (int i = 0; i < len; i++)
+            // case cmd_get_sw_lap:
+            //     len = dev_comms_cmd_read(NULL);   // No data to read
+            //     responding = true;
+            //     unsigned long _time = sys_stopwatch_ms_lap(&rgb_btn.stopwatch);
+            //     dev_comms_response_add_data(cmd_get_btn, (uint8_t*)&_time, sizeof(unsigned long));
+            //     break;
+
+            case cmd_wr_console:
+                uint8_t _data[RGB_BTN_MSG_MAX_LEN - sizeof(rgb_btn_msg_hdr_t) - sizeof(uint8_t)];
+                memset(_data, 0, sizeof(_data));
+                len = dev_comms_cmd_read(_data);
+                if (cmd & RGB_BTN_FLAG_CMD_COMPLETE)
                 {
-                    uint8_t rxData;
-                    dev_comms_rx_read((uint8_t *)&rxData, 1);
-                    console_add_byte_to_rd_buff((uint8_t)rxData);
+                    //RVN - TODO This is the last section of this console message , this means we need to redirect the console output
                 }
-                len++; //Add the length byte
+                for (int8_t i = 0; (i < ((int8_t)sizeof(_data))) & (_data[i] > 0); i++)
+                    console_read_byte(_data[i]);
+
+                //RVN - TODO You still need to figure out how you are going to do this, buddy!
+                // Somehow need to trigger the console read with console_read_byte('\n') which will trigger _parse_rx_line()
                 break;
 
             default:
                 break;
         }
-        iprintln(trCOMMS, "Handled 1 cmd byte (0x%02X) with %d bytes payload", cmd, len);
+
+        iprintln(trCOMMS, "Handled Cmd (0x%02X) with %d bytes payload", cmd, len);
     }
+    if (responding)
+        dev_comms_response_send();
 }
 
 #ifdef MAIN_DEBUG
@@ -514,7 +541,7 @@ void _sys_handler_dump_generic(char * memType, unsigned long memStart, unsigned 
         }
 
         // OK, I honestly did not think the compiler will allow this. Cool.
-        ((is_ram_not_flash)? console_print_ram : console_print_flash)(trALWAYS, (void *)*memDumpAddr, (u32)*memDumpAddr, tmp_len);
+        ((is_ram_not_flash)? console_print_ram : console_print_flash)(trALWAYS, (void *)*memDumpAddr, (uint32_t)*memDumpAddr, tmp_len);
 
         *memDumpAddr += *memDumpLen;
         //If we reach the end of RAM, reset the address

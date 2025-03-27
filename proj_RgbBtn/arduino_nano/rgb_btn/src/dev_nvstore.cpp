@@ -111,7 +111,7 @@ typedef struct
     } current;
     nvstore_block_t rd_block;
     bool            new_data;
-    Stopwatch_ms_t sw;
+    stopwatch_ms_t sw;
 } dev_nvstore_t;
 
 /*******************************************************************************
@@ -503,6 +503,7 @@ void dev_nvstore_init(void)
     if (_nvstore.new_data)
     {
         iprintln(trNVSTORE, "#(%lu ms) Last valid block: %d, Data Ver: %d (Wear: %s%%)", lap, _nvstore.current.last_rd, _nvstore.rd_block.hdr.version, float2str(buff, ((float)_nvstore.current.wr_cnt * 100.0f) / (float)NVSTORE_WR_CNT_MAX, 2, 16));
+        _nvstore.new_data = true;
     }
     else
     {

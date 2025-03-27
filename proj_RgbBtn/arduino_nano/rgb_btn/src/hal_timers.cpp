@@ -12,12 +12,12 @@ The timer will act as a one-shot timer in normal operation.
 To make the timer behave as a recurring timer, reload the interval and start
 the timer once it has expired (using TimerStart()).
 
-The General Timer (Timer_ms_t type) - 1 kHz granularity
+The General Timer (timer_ms_t type) - 1 kHz granularity
 The general Timers enables the program to create a downcounter with a
 preloaded value. This timer will then decrement every 1 ms until it has
 expired.
 Usage:
-The module making use of the timers must host a Timer_ms_t structure in RAM and
+The module making use of the timers must host a timer_ms_t structure in RAM and
 add it to the linked list (TimerAdd) to ensure that it is maintained.
 Removing it from the linked list (TimerRemove) will  make it dormant.
 The Timer must be polled (TimerPoll) to see when it has expired
@@ -43,7 +43,7 @@ local variables
 local functions
  *******************************************************************************/
 
-void sys_poll_tmr_start(Timer_ms_t *t, unsigned long interval, bool auto_reload)
+void sys_poll_tmr_start(timer_ms_t *t, unsigned long interval, bool auto_reload)
 {
     t->enabled = false;
     t->ms_expire = millis() + interval;
@@ -53,7 +53,7 @@ void sys_poll_tmr_start(Timer_ms_t *t, unsigned long interval, bool auto_reload)
     t->enabled = true;
 }
 
-bool sys_poll_tmr_reset(Timer_ms_t *t)
+bool sys_poll_tmr_reset(timer_ms_t *t)
 {
     if (t->ms_period > 0)
     {
@@ -65,14 +65,14 @@ bool sys_poll_tmr_reset(Timer_ms_t *t)
     return t->enabled;
 }
 
-void sys_poll_tmr_stop(Timer_ms_t *t)
+void sys_poll_tmr_stop(timer_ms_t *t)
 {
     t->enabled = false;
     //t->reload_mode = false;
 }
 
 
-bool sys_poll_tmr_expired(Timer_ms_t *t)
+bool sys_poll_tmr_expired(timer_ms_t *t)
 {
     uint64_t now_ms = millis();
     uint64_t overflow = 0;
@@ -99,12 +99,12 @@ bool sys_poll_tmr_expired(Timer_ms_t *t)
     return (t->expired);
 }
 
-bool sys_poll_tmr_enabled(Timer_ms_t *t)
+bool sys_poll_tmr_enabled(timer_ms_t *t)
 {
     return t->enabled;
 }
 
-bool sys_poll_tmr_is_running(Timer_ms_t *t)
+bool sys_poll_tmr_is_running(timer_ms_t *t)
 {
     if (t->enabled) //Is the timer enabled?
         return (millis() < t->ms_expire)? true : false;
@@ -117,13 +117,15 @@ uint64_t sys_poll_tmr_seconds(void)
   return (millis()/1000);
 }
 
-void sys_stopwatch_ms_start(Stopwatch_ms_t* sw)
+void sys_stopwatch_ms_start(stopwatch_ms_t* sw, unsigned long max_time)
 {
     sw->tick_start = millis();
+    sw->max_time = max_time;
     sw->running = true;
+    sw->max_time_reached = false;
 }
 
-unsigned long sys_stopwatch_ms_lap(Stopwatch_ms_t* sw)
+unsigned long sys_stopwatch_ms_lap(stopwatch_ms_t* sw)
 {
     unsigned long elapsed = 0;
     unsigned long now = millis();
@@ -132,21 +134,31 @@ unsigned long sys_stopwatch_ms_lap(Stopwatch_ms_t* sw)
     {
         if (now >= sw->tick_start)
             elapsed = now - sw->tick_start;
-        else //Assume we have wrapped (around half a billion years)
+        else //Assume we have wrapped (~49 days ofr uint32_t)
             elapsed = (UINT32_MAX - sw->tick_start) + now;
+
+        //Do we have a max time set?
+        if (sw->max_time > 0)
+        {
+            if (elapsed >= sw->max_time)
+                sw->max_time_reached = true;
+
+            if (sw->max_time_reached)
+                return sw->max_time;
+        }
     }
     
     return elapsed;
 }
 
-unsigned long sys_stopwatch_ms_reset(Stopwatch_ms_t* sw)
+unsigned long sys_stopwatch_ms_reset(stopwatch_ms_t* sw)
 {
     unsigned long elapsed = sys_stopwatch_ms_lap(sw);
     sys_stopwatch_ms_start(sw);
     return elapsed;
 }
 
-unsigned long sys_stopwatch_ms_stop(Stopwatch_ms_t* sw)
+unsigned long sys_stopwatch_ms_stop(stopwatch_ms_t* sw)
 {
     unsigned long elapsed = sys_stopwatch_ms_lap(sw);
     sw->running = false;

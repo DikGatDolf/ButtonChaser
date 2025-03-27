@@ -11,8 +11,7 @@ extern "C" {
 #include <stdio.h>
 #include <avr/pgmspace.h>
 #include <avr/io.h>
-//#include <io.h>
-//#include <SoftwareSerial.h>
+
 
 /*******************************************************************************
 defines

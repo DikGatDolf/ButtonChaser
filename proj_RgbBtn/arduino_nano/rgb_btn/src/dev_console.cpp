@@ -46,7 +46,7 @@ includes
 #include "dev_rgb.h"
 #include "str_helper.h"
 
-#include <HardwareSerial.h>
+//#include <HardwareSerial.h>
 
 #define __NOT_EXTERN__
 #include "dev_console.h"
@@ -143,26 +143,17 @@ typedef struct
         int help_index;
 	} args;
 
+    // int (*available)(void);
+    // int (*read)(void);
+    void (*flush)(void);
+    size_t (*write)(uint8_t);
 } DeviceConsole_t;
 
 /*******************************************************************************
 local function prototypes
  *******************************************************************************/
-extern "C" {
-	int serialputc(char c, FILE *fp)
-  	{
-		if(c == '\n')
-            Serial.write('\r');
-        return Serial.write(c);
 
-	}
-}
-
-/*! Deinitialises the Console
- */
-void _console_task_deinit(void);
-
-/*! The main function for the Console task
+ /*! The main function for the Console task
  */
 void _console_main_func(void * pvParameters);
 
@@ -297,6 +288,18 @@ va_list _console_ap;
 /*******************************************************************************
 Local (private) Functions
 *******************************************************************************/
+extern "C" {
+	int serialputc(char c, FILE *fp)
+  	{
+        if (_console.write)
+        {
+            if(c == '\n')
+                _console.write('\r');//Serial.write('\r');
+            return _console.write((int)c);//return Serial.write((int)c);
+        }
+        return 0;
+	}
+}
 
 void _parse_rx_line(void)
 {
@@ -783,13 +786,25 @@ void _console_handler_trace(void)
 Global (public) Functions
 *******************************************************************************/
 
-void console_init(unsigned long baud, uint8_t config)
+//void console_init(int (*cb_read)(void), int (*cb_available)(void), size_t (*cb_write)(uint8_t), void (*cb_flush)(void))
+void console_init(size_t (*cb_write)(uint8_t), void (*cb_flush)(void))
 {
-	//Let's not re-initialise this task by accident
+    // void (*flush)(void);
+    // size_t (*write)(uint8_t);
+    // int (*available)(void);
+    // int (*read)(void);
+
+    _console.tracemask = trALL;
+    
+    // _console.available = NULL;
+    // _console.read = NULL;
+    _console.flush = cb_flush;
+    _console.write = cb_write;
+
+    //Let's not re-initialise this task by accident
 	if (_console_init_done)
 		return;
 
-    _console.tracemask = trALL;//trCONSOLE|trMAIN|trRGB|trCOMMS,
     _console.menu_grp_list.cnt = 0;
     for (unsigned int i = 0; i < dev_console_MAX_MENU_ITEMS_MAX; i++)
     {
@@ -799,8 +814,9 @@ void console_init(unsigned long baud, uint8_t config)
     _console.rx.cnt = 0;
 
     // The Console will run on the Debug port
-    Serial.begin(baud, config);
-    Serial.flush();
+    // Serial.begin(baud);
+    if (_console.flush)
+        _console.flush();//Serial.flush();
 
     fdev_setup_stream(&_console_stdiostr, serialputc, NULL, _FDEV_SETUP_WRITE);
 
@@ -811,28 +827,29 @@ void console_init(unsigned long baud, uint8_t config)
 	iprintln(trCONSOLE|trALWAYS, "#Init OK (Traces: 0x%02X)", _console.tracemask);
 }
 
-void console_service(void)
-{
-	int rxData;
+// void console_service(void)
+// {
+//     if (!_console_init_done)
+// 	{
+// 		iprintln(trCONSOLE | trALWAYS, "#Not Initialized yet");
+// 		return;
+// 	}
 
-    if (!_console_init_done)
-	{
-		iprintln(trCONSOLE | trALWAYS, "#Not Initialized yet");
-		return;
-	}
+//     if ((_console.available) && (_console.read))
+//     {
+//         // read the incoming char:
+//         while (_console.available() /*Serial.available()*/ > 0)
+//         {
+//             int c = _console.read();//Serial.read();
+//             // read the incoming byte:
+//             //iprintln(trALWAYS, "Received: \'%c\' (0x%02X)  - Inptr @ %d\n", rxData, rxData, _console.rx.cnt);
+//             console_read_byte((uint8_t)c);
+//         }
 
-	// read the incoming char:
-    while (Serial.available() > 0)
-    {
-        // read the incoming byte:
-        rxData = Serial.read();
+//     }
+// }
 
-        //iprintln(trALWAYS, "Received: \'%c\' (0x%02X)  - Inptr @ %d\n", rxData, rxData, _console.rx.cnt);
-        console_add_byte_to_rd_buff((uint8_t)rxData);
-    }
-}
-
-void console_add_byte_to_rd_buff(uint8_t data_byte)
+void console_read_byte(uint8_t data_byte)
 {
     // Lines are terminated on Carriage returns and/or newlines.
     switch (data_byte)
@@ -845,7 +862,6 @@ void console_add_byte_to_rd_buff(uint8_t data_byte)
     // ****** Newline ******
     case '\n':
         serialputc('\n', NULL);
-        // Serial.write('\n');
         //  Now parse the line if it is Valid
         if (_console.rx.cnt > 0)
             _parse_rx_line();
@@ -995,7 +1011,7 @@ int console_add_menu(const char *_group_name, const console_menu_item_t *_tbl, s
 	_console.menu_grp_list.cnt++;
 	//iprintln(trCONSOLE, "#Added \"%s\" @ position %d/%d", _console.menu_grp_list.group[index].name, index+1, _console.menu_grp_list.cnt);
 
-    //RVN - I guess we can check if possible duplicate commands exist under different groups
+    //We can check if possible duplicate commands exist under different groups
     for (unsigned int i = 0; i < _cnt; i++)
     {
         //int tbl_index = 0;
@@ -1094,13 +1110,13 @@ void console_printline(uint8_t traceflags, const char * tag, const char * fmt, .
 
 void console_print_ram(int Flags, void * Src, unsigned long Address, int Len)
 {
-u8 *s;
-u8 x;
-u16 cnt;
+uint8_t *s;
+uint8_t x;
+uint16_t cnt;
 //RAMSTART     (0x100)
 //RAMEND       0x8FF     /* Last On-Chip SRAM Location */
 
-	s = (u8 *)Src;
+	s = (uint8_t *)Src;
 
 	while(Len)
 	{
@@ -1137,8 +1153,8 @@ u16 cnt;
 
 void console_print_flash(int Flags, void * Src, unsigned long Address, int Len)
 {
-    u8 buf[16];
-    u8 *s = (u8 *)Src;
+    uint8_t buf[16];
+    uint8_t *s = (uint8_t *)Src;
 
 	while(Len)
 	{
@@ -1155,7 +1171,9 @@ void console_print_flash(int Flags, void * Src, unsigned long Address, int Len)
 
 void console_flush(void)
 {
-    Serial.flush();
+    if (_console.flush)
+        _console.flush();
+    //Serial.flush();
 }
 #undef PRINTF_TAG
 

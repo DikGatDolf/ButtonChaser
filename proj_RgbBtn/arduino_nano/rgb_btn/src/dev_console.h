@@ -13,7 +13,7 @@ Include file for dev_console.c
 includes
 ******************************************************************************/
 //#include "defines.h"
-//#include <HardwareSerial.h>
+#include "sys_utils.h"
 
 /******************************************************************************
 Macros
@@ -31,6 +31,7 @@ extern void console_print(uint8_t traceflags, const char * tag, const char *fmt,
 #define trRGB		((uint8_t)BIT_POS(2))
 #define trCOMMS	    ((uint8_t)BIT_POS(3))
 #define trNVSTORE	((uint8_t)BIT_POS(4))
+#define trBUTTON    ((uint8_t)BIT_POS(5))
 
 // #define trI2C		0x10
 // #define trYYY		0x40
@@ -75,16 +76,20 @@ Global (public) Function prototypes
 
 /*! Initialises the Console
  * @param[in] baud The baud rate to use for the console
- * @param[in] config The configuration of the serial port
  */
-void console_init(unsigned long baud, uint8_t config);
+//void console_init(unsigned long baud);
+//void console_init(int (*cb_read)(void), int (*cb_available)(void), size_t (*cb_write)(uint8_t), void (*cb_flush)(void));
+void console_init(size_t (*cb_write)(uint8_t), void (*cb_flush)(void));
 
  /*! Reads the data on the serial port and parses the line when a carriage return 
  * is encountered.
  */
-void console_service(void);
+//void console_service(void);
 
-void console_add_byte_to_rd_buff(uint8_t data_byte);
+/*! Adds a byte to the read buffer (as if it was recieved from the serial port)
+ * @param[in] data_byte The byte to add to the buffer
+ */
+void console_read_byte(uint8_t data_byte);
 
 /*! Adds a menu item to the console
  * @param[in] _group_name The name of the group of commands to which this item is added
