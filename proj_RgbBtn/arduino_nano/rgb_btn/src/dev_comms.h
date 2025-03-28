@@ -38,6 +38,10 @@ uint8_t dev_comms_cmd_read(uint8_t * dst);
 
 void dev_comms_service(void);
 
+bool dev_comms_verify_addr(uint8_t addr);
+
+void dev_comms_reset_addr(uint8_t addr);
+
 /*! transmits a message on the bus
  * @param[in] cmd The command to send
  * @param[in] data The data to send

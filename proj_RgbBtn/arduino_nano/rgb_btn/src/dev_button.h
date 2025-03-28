@@ -12,11 +12,21 @@ Include file for dev_button.c
 includes
 ******************************************************************************/
 #include "Arduino.h"
+#include "sys_utils.h"
 
 /******************************************************************************
 definitions
 ******************************************************************************/
-
+enum button_state_e
+{
+    btn_up          = BIT_POS(0),
+    btn_down        = BIT_POS(1),
+    btn_pressed     = BIT_POS(2),   //Implies btn_down
+    btn_released    = BIT_POS(3),   //Implies btn_up
+    // btnLongPress    = BIT_POS(4),
+    // btnShortPress   = BIT_POS(5),
+    //btnDoublePress  = BIT_POS(6),
+};
 /******************************************************************************
 Macros
 ******************************************************************************/
@@ -32,7 +42,13 @@ variables
 /******************************************************************************
 functions
 ******************************************************************************/
-void dev_button_init(void (*cb_func_ptr)(void));
+void dev_button_init(void);
+
+void dev_button_measure_start(void);
+
+unsigned long dev_button_measure_lap(void);
+
+uint8_t dev_button_get_state(void);
 
 #endif /* __dev_button_H__ */
 

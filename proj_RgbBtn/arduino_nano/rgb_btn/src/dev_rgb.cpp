@@ -274,7 +274,7 @@ bool _pwm_assign_pin(led_colour_type col, int pin)
     }
 
 	//First make sure it is set as an output pin
-	pinMode(pin, OUTPUT);
+	quickPinMode(pin, OUTPUT);
     quickPinToggle(pin, LOW); //Make sure it is off
 
 	//Now assign the pin in the list

@@ -76,13 +76,14 @@ typedef enum rgb_btn_command_e
 {
     cmd_set_rgb_0           = 0, /* Set the primary LED colour (24 bits payload, no response) */
     cmd_set_rgb_1           = 1, /* Set the secondary LED colour (24 bits payload, no response) */
-    cmd_set_blink           = 2, /* Set the blinking interval (uint32_t payload, no response) */
-    cmd_get_btn             = 3, /* Requests the state of the button (no payload, expects response) */
+    cmd_set_rgb_2           = 2, /* Set the secondary LED colour (24 bits payload, no response) */
+    cmd_set_blink           = 3, /* Set the blinking interval (uint32_t payload, no response) */
+    cmd_get_btn             = 4, /* Requests the state of the button (no payload, expects response) */
 //    cmd_get_sw_lap          = 4, /* Requests the "lap" value of the current running stopwatch, without stopping it (no payload, expects response) */
-    cmd_sw_start            = 4, /* MSB flag Starts the stopwatch (no payload, no response) */
+    cmd_sw_start            = 5, /* MSB flag Starts the stopwatch (no payload, no response) */
 
     /* This command cannot be "packed" along with other commands as the entire payload will be used*/
-    cmd_wr_console          = 5, /* Write to the slave device console (partial/full buffer) - expects a response 
+    cmd_wr_console          = 6, /* Write to the slave device console (partial/full buffer) - expects a response 
                                         1st byte in data is the length of the data to send to the slave console */                                    
 }rgb_btn_command_t;
 

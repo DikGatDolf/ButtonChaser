@@ -30,6 +30,7 @@ The Timer must be polled (TimerPoll) to see when it has expired
 
 #include "Arduino.h"
 #include "sys_utils.h"
+#include <util/atomic.h>
 
 /*******************************************************************************
 local defines
@@ -81,6 +82,10 @@ bool sys_poll_tmr_expired(timer_ms_t *t)
     if (!(t->enabled))
         return false;
 
+    //Have we already seen the expiry boundary crossed (not in auto reload mode)?
+    if ((t->expired) && !(t->reload_mode))
+        return true;
+
     //Have we moved beyond the expiry time?
     if (now_ms >= t->ms_expire)
     {
@@ -128,7 +133,11 @@ void sys_stopwatch_ms_start(stopwatch_ms_t* sw, unsigned long max_time)
 unsigned long sys_stopwatch_ms_lap(stopwatch_ms_t* sw)
 {
     unsigned long elapsed = 0;
-    unsigned long now = millis();
+    unsigned long now = 0;
+    // ATOMIC_BLOCK(ATOMIC_RESTORESTATE) 
+    // {
+        now = millis();
+    // }
 
     if (sw->running)
     {

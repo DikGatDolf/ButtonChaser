@@ -28,17 +28,17 @@ Struct & Unions
 // structs
 typedef struct
 {
-  unsigned long ms_expire;   // 1ms ~ 49 days.
-  unsigned long ms_period;   // 1ms ~ 49 days.
-  bool enabled;
-  bool expired;
-  bool reload_mode; 
+    volatile unsigned long ms_expire;   // 1ms ~ 49 days.
+    volatile bool enabled;
+    volatile bool expired;
+    unsigned long ms_period;   // 1ms ~ 49 days.
+    bool reload_mode; 
 } timer_ms_t;
 
 typedef struct stopwatch_ms_s
 {
-	unsigned long tick_start;   // 1ms ~ 49 days.
-	bool running;
+	volatile unsigned long tick_start;   // 1ms ~ 49 days.
+	volatile bool running;
     unsigned long max_time;
     bool max_time_reached;
 } stopwatch_ms_t;

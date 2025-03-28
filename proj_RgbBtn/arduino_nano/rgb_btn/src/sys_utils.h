@@ -60,10 +60,10 @@ Macros
 
 #define ARRAY_SIZE(_array) (sizeof(_array) / sizeof((_array)[0]))
 
-#define SWOP_U64(x, y) do { uint64_t(x) _z = x; x = y; y = _z; } while(0)
-#define SWOP_U32(x, y) do { uint32_t(x) _z = x; x = y; y = _z; } while(0)
-#define SWOP_U16(x, y) do { uint16_t(x) _z = x; x = y; y = _z; } while(0)
-#define SWOP_U8(x, y) do { uint8_t(x) _z = x; x = y; y = _z; } while(0)
+#define SWOP_U64(x, y) do { uint64_t _z = x; x = y; y = _z; } while(0)
+#define SWOP_U32(x, y) do { uint32_t _z = x; x = y; y = _z; } while(0)
+#define SWOP_U16(x, y) do { uint16_t _z = x; x = y; y = _z; } while(0)
+#define SWOP_U8(x, y) do { uint8_t _z = x; x = y; y = _z; } while(0)
 
 /******************************************************************************
 Struct & Unions
@@ -102,6 +102,8 @@ functions
 */
 void quickPinToggle(uint8_t pin, bool state);
 int quickPinRead(uint8_t pin);
+void quickPinMode(uint8_t pin, uint8_t mode);
+
 int debounceInput(ST_PIN_DEBOUNCE * input, int level, int count);
 // unsigned long avgULong(volatile unsigned long * arr, int cnt);
 int freeRam (void);

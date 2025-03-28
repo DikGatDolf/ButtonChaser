@@ -53,26 +53,11 @@ This (slave) device  is responsible for:
 /*******************************************************************************
  local defines
  *******************************************************************************/
-#define SYS_STATE_INIT			0	/* */
-#define SYS_STATE_FIND_ZERO		1	/* */
-#define SYS_STATE_STOPPED		2	/* */
-#define SYS_STATE_MOVING		3	/* */
-#define SYS_STATE_ERROR			9	/* */
+#define BTN_DEBOUNCE_TIME_MS    (50)	/* Debounce time in ms */
 
 /*******************************************************************************
 Structures and unions
  *******************************************************************************/
-typedef struct
-{
-    rgb_colour_t colour[2];
-    uint32_t blink_ms;
-    stopwatch_ms_t stopwatch;
-    unsigned long press_time;
-    unsigned long press_cnt;
-    int last_state;
-}rgb_btn_t;
-
-timer_ms_t blink_tmr;
 
 /*******************************************************************************
  Function prototypes
@@ -132,19 +117,26 @@ static console_menu_item_t _main_menu_items[] =
 //int SystemState;		/* Movement State Machine variable */
 
 const char BuildTimeData[] = { __TIME__ " " __DATE__ }; /* Used in our startup Banner*/
-rgb_btn_t rgb_btn;
+
+/* We retain 3 colours:
+ 0) Primary colour - used for solid colour display (not blinking) or one of the blinking colours
+ 1) Secondary colour - used for the other blinking colour
+ 2) Tertiary colour
+*/
+
+rgb_colour_t colour[3];
+
+uint32_t blink_period_ms;
+
+timer_ms_t blink_tmr;
+
 /*******************************************************************************
  Functions
  *******************************************************************************/
 
 void setup() {
-    // put your setup code here, to run once:
-	//Initialize serial communication on the standard port with the USB-2-RS232 converter
-	//console_init(115200);
 
-    rgb_btn.press_cnt = 0lu;
-    rgb_btn.press_time = 0lu;
-    rgb_btn.last_state = LOW;
+    // put your setup code here, to run once:
 
     dev_comms_init(RGB_BTN_ADDR_MASTER+1);
 
@@ -152,74 +144,51 @@ void setup() {
     console_add_menu("main", _main_menu_items, ARRAY_SIZE(_main_menu_items), "Main Menu");
 
     dev_nvstore_init();
-
+   
     dev_rgb_start(btnChasePin_RED, btnChasePin_GREEN, btnChasePin_BLUE);
-    //dev_rgb_set_colour(0x00800000);
 
-    dev_button_init(_button_change_irq);
+    dev_button_init();
 
-    //sys_poll_tmr_start(&blink_tmr, 10000L, true);	//Does something every 10s
     sys_poll_tmr_stop(&blink_tmr);
 
 }
 
 void loop() {
     
-    uint8_t my_addr;
-
     // put your main code here, to run repeatedly:
 
-    int btn_state = quickPinRead(btnChasePin_BTN);
-    if (rgb_btn.last_state != btn_state)
+    //Has the button seen any action?
+    uint8_t btn_state = dev_button_get_state();
+    if (btn_state & (btn_pressed | btn_released))
     {
-        if (HIGH == btn_state)
-            rgb_btn.colour[0].rgb = (uint32_t)colBlue;
-        else
-            rgb_btn.colour[0].rgb = (uint32_t)colOrange;
-        
-        dev_rgb_set_colour(rgb_btn.colour[0].rgb);
-        rgb_btn.last_state = btn_state;
-        iprintln(trCOMMS, "Button is %s (%lu)", (HIGH == btn_state)? "HIGH" : "LOW", rgb_btn.press_cnt);
+        colour[0].rgb = (uint32_t)((btn_state & btn_released)? colBlue : colRed);
+        dev_rgb_set_colour(colour[0].rgb);
     }
 
-
-    //Check if our I2C addres has changed
-    if (dev_nvstore_new_data_available())
-        dev_nvstore_read(&my_addr, sizeof(uint8_t));
-
-    // //Check for anything coming in on the Serial Port and process it
-    //console_service();
-
-	//Check for anything coming in on the I2C and process it
-    dev_comms_service();
-
-    _handle_master_msg_rx();
-   
     //Do we require blinking on our LED?
 	if (sys_poll_tmr_expired(&blink_tmr))
 	{
         //Swop the colours on the RGB LED and set the new colour
-        uint32_t tmp_rgb = rgb_btn.colour[0].rgb;
-        dev_rgb_set_colour(tmp_rgb);
-        rgb_btn.colour[0].rgb = rgb_btn.colour[1].rgb;
-        rgb_btn.colour[1].rgb = tmp_rgb;
+        SWOP_U8(colour[0].rgb, colour[1].rgb);
+        dev_rgb_set_colour(colour[0].rgb);
 	}
-}
 
-void _button_change_irq(void)
-{
-    rgb_btn.press_cnt++;
-    // int btn_state = quickPinRead(btnChasePin_BTN);
-    // if (HIGH == btn_state)
-    // {
-    //     rgb_btn.colour[0].rgb = (uint32_t)colBlue;
-    // }
-    // else
-    // {
-    //     rgb_btn.colour[0].rgb = (uint32_t)colOrange;
-    // }
-    // dev_rgb_set_colour(rgb_btn.colour[0].rgb);
+    //Check if our communication address has changed
+    if (dev_nvstore_new_data_available())
+    {
+        uint8_t my_addr = RGB_BTN_ADDR_MASTER; //Illegal address
+        dev_nvstore_read(&my_addr, sizeof(uint8_t));
+        dev_comms_reset_addr(my_addr);
+    }
 
+	//Check for anything coming in on the serial comms channnel...
+    dev_comms_service();
+
+    //... and process it
+    _handle_master_msg_rx();
+   
+    // //Check for anything coming in on the Serial Port and process it
+    //console_service();
 }
 
 void _handle_master_msg_rx(void)
@@ -228,6 +197,7 @@ void _handle_master_msg_rx(void)
     uint8_t cmd;
     uint8_t len = 0;
     bool responding = false;
+    unsigned long press_time = 0;
 
     //Let's assume we will be responding
     dev_comms_response_start();
@@ -240,36 +210,43 @@ void _handle_master_msg_rx(void)
         {
             case cmd_set_rgb_0:
                 sys_poll_tmr_stop(&blink_tmr);
-                len = dev_comms_cmd_read((uint8_t *)&rgb_btn.colour[0].rgb);
-                dev_rgb_set_colour(rgb_btn.colour[0].rgb);
+                len = dev_comms_cmd_read((uint8_t *)&colour[0].rgb);
+                dev_rgb_set_colour(colour[0].rgb);
                 break;
 
             case cmd_set_rgb_1:
-                len = dev_comms_cmd_read((uint8_t *)&rgb_btn.colour[1].rgb);
+                len = dev_comms_cmd_read((uint8_t *)&colour[1].rgb);
+                break;
+
+            case cmd_set_rgb_2:
+                len = dev_comms_cmd_read((uint8_t *)&colour[2].rgb);
                 break;
 
             case cmd_set_blink:
                 sys_poll_tmr_stop(&blink_tmr);
-                len = dev_comms_cmd_read((uint8_t *)&rgb_btn.blink_ms);
-                sys_poll_tmr_start(&blink_tmr, (unsigned long)rgb_btn.blink_ms, true);
+                len = dev_comms_cmd_read((uint8_t *)&blink_period_ms);
+                sys_poll_tmr_start(&blink_tmr, (unsigned long)blink_period_ms, true);
                 break;
 
             case cmd_get_btn:
                 len = dev_comms_cmd_read(NULL);   // No data to read
                 responding = true;
-                dev_comms_response_add_data(cmd_get_btn, (uint8_t*)&rgb_btn.press_time, sizeof(unsigned long));
+                press_time = dev_button_measure_lap();
+                //RVN - Maybe we should a
+                //dev_comms_response_add_data(cmd_get_btn, (uint8_t*)&press_time, sizeof(unsigned long));
+                dev_comms_response_add_data(cmd_get_btn, (uint8_t*)&press_time, sizeof(unsigned long));
                 break;
             
             case cmd_sw_start:
                 len = dev_comms_cmd_read(NULL);   // No data to read
                 //Nothing else.... just start the stopwatch
-                sys_stopwatch_ms_start(&rgb_btn.stopwatch);
+                dev_button_measure_start();
                 break;
 
             // case cmd_get_sw_lap:
             //     len = dev_comms_cmd_read(NULL);   // No data to read
             //     responding = true;
-            //     unsigned long _time = sys_stopwatch_ms_lap(&rgb_btn.stopwatch);
+            //     unsigned long _time = sys_stopwatch_ms_lap(&rgb_btn.button_press_sw);
             //     dev_comms_response_add_data(cmd_get_btn, (uint8_t*)&_time, sizeof(unsigned long));
             //     break;
 

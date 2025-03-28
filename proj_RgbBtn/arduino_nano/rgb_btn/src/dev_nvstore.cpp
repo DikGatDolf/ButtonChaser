@@ -522,6 +522,9 @@ uint8_t dev_nvstore_data_size(void)
 
 bool dev_nvstore_read(uint8_t * data, uint8_t len)
 {
+    //Clear the "new data" flag
+    _nvstore.new_data = false;
+
     if (_nvstore.current.last_rd >= NVSTORE_BLOCK_CNT)
     {
         iprintln(trNVSTORE, "#No valid block exists in NV Store");
@@ -529,9 +532,6 @@ bool dev_nvstore_read(uint8_t * data, uint8_t len)
     }
 
     memcpy(data, _nvstore.rd_block.data, min(NVSTORE_BLOCK_DATA_SIZE, len));
-
-    //Clear the "new data" flag
-    _nvstore.new_data = false;
 
     return true;
 }

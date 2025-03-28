@@ -486,6 +486,7 @@ unsigned int dev_comms_response_add_data(rgb_btn_command_t cmd, uint8_t * data, 
 
     return data_len; // The number of bytes added
 }
+
 void dev_comms_response_send()
 {
     //We need 1 byte for a CRC
@@ -529,20 +530,6 @@ int8_t dev_comms_msg_send_status(void)
     return ret;
 }
 
-// bool dev_comms_cmd_response_expected(void)
-// {
-//     //Nothing to respond to....(did another STX arrive?)
-//     if (_comms.rx.state != rx_done)
-//         return false;
-
-//     //We do not respond to broadcast messages
-//     if (_comms.rx.msg.hdr.dst == RGB_BTN_ADDR_BROADCAST)
-//         return false;
-
-//     if (_comms.rx.msg.hdr.flags & BIT_POS(WAIT_FOR_RESPONSE))
-//         return true;
-// }
-
 uint8_t dev_comms_cmd_available(uint8_t *cmd)
 {
     //A message is only available while the rx_done state is active
@@ -585,6 +572,24 @@ uint8_t dev_comms_cmd_read(uint8_t * dst)
     _comms.rx.cmd += len;
 
     return len;
+}
+
+bool dev_comms_verify_addr(uint8_t addr)
+{
+    //Cannot set the address to that of the master
+    return (addr != RGB_BTN_ADDR_MASTER);
+}
+
+void dev_comms_reset_addr(uint8_t addr)
+{
+    if (dev_comms_verify_addr(addr))
+    {
+        _comms.addr = addr;        
+    }
+    else
+    {
+        iprintln(trCOMMS, "#Invalid Address: 0x%02X (Keeping 0x%02X)", addr, _comms.addr);
+    }
 }
 
 void dev_comms_service(void)
