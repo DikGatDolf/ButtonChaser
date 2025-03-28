@@ -103,12 +103,17 @@ variables
 functions
 ******************************************************************************/
 
-bool        dev_rgb_start(int pin_red, int pin_green, int pin_blue);
+uint8_t dev_rgb_start(int pin_red, int pin_green, int pin_blue);
+//bool        dev_rgb_start(int pin_red, int pin_green, int pin_blue);
+
+void        dev_rgb_set_colour(uint32_t rgb);
+
+#if (DEV_RGB_DEBUG == 1)
 void        dev_rgb_stop();
 bool        dev_rgb_enabled();
-void        dev_rgb_set_colour(uint32_t rgb);
 uint32_t    dev_rgb_get_colour(void);
 uint32_t    dev_rgb_get_pwm(void);
+#endif
 
 #endif /* __dev_rgb_H__ */
 

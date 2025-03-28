@@ -61,8 +61,9 @@ Macros
 #define DLE     (0x10)
 #define ETX     (0x03)
 
-#define RGB_BTN_ADDR_MASTER     (0x00)
-#define RGB_BTN_ADDR_BROADCAST  (0xFF)
+#define COMMS_ADDR_MASTER         (0x00)
+#define COMMS_ADDR_SLAVE_DEFAULT  (0x01)
+#define COMMS_ADDR_BROADCAST      (0xFF)
 
 #define ACK     (0x06)
 #define NAK     (0x15)
@@ -72,20 +73,22 @@ Macros
 Struct & Unions
 ******************************************************************************/
 
-typedef enum rgb_btn_command_e
-{
-    cmd_set_rgb_0           = 0, /* Set the primary LED colour (24 bits payload, no response) */
-    cmd_set_rgb_1           = 1, /* Set the secondary LED colour (24 bits payload, no response) */
-    cmd_set_rgb_2           = 2, /* Set the secondary LED colour (24 bits payload, no response) */
-    cmd_set_blink           = 3, /* Set the blinking interval (uint32_t payload, no response) */
-    cmd_get_btn             = 4, /* Requests the state of the button (no payload, expects response) */
-//    cmd_get_sw_lap          = 4, /* Requests the "lap" value of the current running stopwatch, without stopping it (no payload, expects response) */
-    cmd_sw_start            = 5, /* MSB flag Starts the stopwatch (no payload, no response) */
+typedef enum command_e
+{/* command id                  #      Description                        MOSI Payload  Response (MISO) Payload */
+    cmd_ping                = 0x00, /* Pings a slave address               0                4 bytes             */
+    cmd_set_address         = 0x01, /* Sets a new slave address            2 bytes          none                */
+
+    cmd_set_rgb_0           = 0x11, /* Set the primary LED colour          24 bits          none                */
+    cmd_set_rgb_1           = 0x12, /* Set the secondary LED colour        24 bits          none                */
+    cmd_set_rgb_2           = 0x13, /* Set the 3rd LED colour              24 bits          none                */
+    cmd_set_blink           = 0x14, /* Set the blinking interval           uint32_t         none                */
+    cmd_get_btn             = 0x15, /* Requests the state of the button    none             4 bytes             */
+    cmd_sw_start            = 0x16, /* Starts the button stopwatch         none             none                */
 
     /* This command cannot be "packed" along with other commands as the entire payload will be used*/
-    cmd_wr_console          = 6, /* Write to the slave device console (partial/full buffer) - expects a response 
+    cmd_wr_console          = 0x27, /* Write to the slave device console (partial/full buffer) - expects a response 
                                         1st byte in data is the length of the data to send to the slave console */                                    
-}rgb_btn_command_t;
+}command_t;
 
 #define RGB_BTN_FLAG_CMD_COMPLETE   (0x80)
 
@@ -100,20 +103,16 @@ typedef struct {
     uint8_t id;     // Unique ID/Sequence number of this message (to help sync)
     uint8_t src;    // The source address of the message
     uint8_t dst;    // The destination address of the message
-}rgb_btn_msg_hdr_t;
-
-// #if (sizeof(rgb_btn_msg_hdr_t) > RGB_BTN_MSG_MAX_LEN - sizeof(uint8_t))
-// #error "rgb_btn_msg_hdr_t is too big for the message buffer"
-// #endif
+}comms_msg_hdr_t;
 
 typedef struct {
-    rgb_btn_msg_hdr_t hdr;
-    uint8_t data[RGB_BTN_MSG_MAX_LEN - sizeof(rgb_btn_msg_hdr_t) - sizeof(uint8_t)];
+    comms_msg_hdr_t hdr;
+    uint8_t data[RGB_BTN_MSG_MAX_LEN - sizeof(comms_msg_hdr_t) - sizeof(uint8_t)];
     uint8_t crc;    // Not necisarely the last byte of the message, byte we should allow for it
-}rgb_btn_msg_t;
+}comms_msg_t;
 #pragma pack(pop)
 
-STATIC_ASSERT(((sizeof(rgb_btn_msg_hdr_t)+sizeof(uint8_t)) < RGB_BTN_MSG_MAX_LEN), "rgb_btn_msg_hdr_t is too big");
+STATIC_ASSERT(((sizeof(comms_msg_hdr_t)+sizeof(uint8_t)) < RGB_BTN_MSG_MAX_LEN), "rgb_btn_msg_hdr_t is too big");
 
 #ifdef __cplusplus
 }

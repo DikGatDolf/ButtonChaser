@@ -28,6 +28,7 @@ Struct & Unions
 // structs
 typedef struct
 {
+    unsigned long started;   // 1ms ~ 49 days.
     volatile unsigned long ms_expire;   // 1ms ~ 49 days.
     volatile bool enabled;
     volatile bool expired;
@@ -123,10 +124,6 @@ unsigned long sys_stopwatch_ms_reset(stopwatch_ms_t* sw);
  * @returns the elapsed time in ms
 */
 unsigned long sys_stopwatch_ms_stop(stopwatch_ms_t* sw);
-
-/*! * @returns the number of seconds since the system started
-*/
-unsigned long SecondCount(void);
 
 #endif /* __HAL_TIMERS_H__ */
 

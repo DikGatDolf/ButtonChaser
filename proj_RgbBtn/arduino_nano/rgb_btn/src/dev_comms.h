@@ -51,13 +51,13 @@ void dev_comms_reset_addr(uint8_t addr);
  *                      framing and escaping)
  * @return the number of bytes of the message sent
  */
-//int dev_comms_msg_send(rgb_btn_command_t cmd, uint8_t * data, int len, uint8_t * msg_handle, uint8_t * tx_cnt);
+//int dev_comms_msg_send(command_t cmd, uint8_t * data, int len, uint8_t * msg_handle, uint8_t * tx_cnt);
 
 /*! Prepares the response message header to be sent back to the Master
  */
 void dev_comms_response_start(void);
 
-unsigned int dev_comms_response_add_data(rgb_btn_command_t cmd_flag, uint8_t * data, uint8_t len);
+unsigned int dev_comms_response_add_data(command_t cmd_flag, uint8_t * data, uint8_t len);
 
 void dev_comms_response_send();
 

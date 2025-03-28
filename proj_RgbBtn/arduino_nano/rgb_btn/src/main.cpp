@@ -73,7 +73,9 @@ void(*resetFunc)(void) = 0; //declare reset function at address 0
     void _sys_handler_time(void);
 #endif
 void _sys_handler_reset(void);
+#if (DEV_RGB_DEBUG == 1)
 void _sys_handler_led(void);
+#endif
 //bool menuVersion(void);
 /*! Displays the application version
  */
@@ -104,7 +106,9 @@ void _button_change_irq(void);
 static console_menu_item_t _main_menu_items[] =
 {
 	{"reset",   _sys_handler_reset, "Perform a reset"},
+#if (DEV_RGB_DEBUG == 1)
     {"rgb",     _sys_handler_led,   "Get/Set the RGB LED colour" },
+#endif
 #if REDUCE_CODESIZE==0
     {"time",     _sys_handler_time,   "Displays the uptime of the program" }
 #endif /* REDUCE_CODESIZE */
@@ -121,12 +125,12 @@ const char BuildTimeData[] = { __TIME__ " " __DATE__ }; /* Used in our startup B
 /* We retain 3 colours:
  0) Primary colour - used for solid colour display (not blinking) or one of the blinking colours
  1) Secondary colour - used for the other blinking colour
- 2) Tertiary colour
+ 2) Tertiary colour - used as a fallback (primary) colour once the button is pressed
 */
 
 rgb_colour_t colour[3];
 
-uint32_t blink_period_ms;
+//uint32_t blink_period_ms;   //Maybe not even required.... we can just use the timer itself
 
 timer_ms_t blink_tmr;
 
@@ -138,7 +142,7 @@ void setup() {
 
     // put your setup code here, to run once:
 
-    dev_comms_init(RGB_BTN_ADDR_MASTER+1);
+    dev_comms_init(COMMS_ADDR_SLAVE_DEFAULT);
 
     _sys_handler_version();
     console_add_menu("main", _main_menu_items, ARRAY_SIZE(_main_menu_items), "Main Menu");
@@ -148,8 +152,14 @@ void setup() {
     dev_rgb_start(btnChasePin_RED, btnChasePin_GREEN, btnChasePin_BLUE);
 
     dev_button_init();
-
-    sys_poll_tmr_stop(&blink_tmr);
+    colour[0].rgb = (uint32_t)colOrange;
+    colour[1].rgb = (uint32_t)colGreen;
+    colour[2].rgb = (uint32_t)colTeal;
+    /* Testing Only
+    sys_poll_tmr_start(&blink_tmr, 200lu, true);
+    dev_button_measure_start();
+    */
+   sys_poll_tmr_stop(&blink_tmr);
 
 }
 
@@ -159,24 +169,37 @@ void loop() {
 
     //Has the button seen any action?
     uint8_t btn_state = dev_button_get_state();
-    if (btn_state & (btn_pressed | btn_released))
+    if (btn_state & btn_pressed)
     {
-        colour[0].rgb = (uint32_t)((btn_state & btn_released)? colBlue : colRed);
+        //iprintln(trBUTTON, "#Button Pressed %lu ms", dev_button_get_reaction_time_ms());
+        sys_poll_tmr_stop(&blink_tmr);
+        dev_rgb_set_colour(colour[2].rgb);
+    }
+
+    if (btn_state & btn_released)
+    {
         dev_rgb_set_colour(colour[0].rgb);
+/* Testing Only
+        // iprintln(trBUTTON, "#Released - 0x%02X", btn_state);
+        colour[0].rgb = (uint32_t)colOrange;
+        colour[1].rgb = (uint32_t)colWhite;
+        sys_poll_tmr_start(&blink_tmr, 200lu, true);
+        dev_button_measure_start();
+ */
     }
 
     //Do we require blinking on our LED?
 	if (sys_poll_tmr_expired(&blink_tmr))
 	{
         //Swop the colours on the RGB LED and set the new colour
-        SWOP_U8(colour[0].rgb, colour[1].rgb);
+        SWOP_U32(colour[0].rgb, colour[1].rgb);
         dev_rgb_set_colour(colour[0].rgb);
 	}
 
     //Check if our communication address has changed
     if (dev_nvstore_new_data_available())
     {
-        uint8_t my_addr = RGB_BTN_ADDR_MASTER; //Illegal address
+        uint8_t my_addr = COMMS_ADDR_MASTER; //Illegal address
         dev_nvstore_read(&my_addr, sizeof(uint8_t));
         dev_comms_reset_addr(my_addr);
     }
@@ -197,7 +220,7 @@ void _handle_master_msg_rx(void)
     uint8_t cmd;
     uint8_t len = 0;
     bool responding = false;
-    unsigned long press_time = 0;
+    uint32_t _time_ms = 0;
 
     //Let's assume we will be responding
     dev_comms_response_start();
@@ -224,17 +247,18 @@ void _handle_master_msg_rx(void)
 
             case cmd_set_blink:
                 sys_poll_tmr_stop(&blink_tmr);
-                len = dev_comms_cmd_read((uint8_t *)&blink_period_ms);
-                sys_poll_tmr_start(&blink_tmr, (unsigned long)blink_period_ms, true);
+                len = dev_comms_cmd_read((uint8_t *)&_time_ms);
+                if (_time_ms > 0) //Only restart the timer if the period is > 0
+                    sys_poll_tmr_start(&blink_tmr, (unsigned long)_time_ms, true);
                 break;
 
             case cmd_get_btn:
                 len = dev_comms_cmd_read(NULL);   // No data to read
                 responding = true;
-                press_time = dev_button_measure_lap();
+                _time_ms = dev_button_get_reaction_time_ms();
                 //RVN - Maybe we should a
                 //dev_comms_response_add_data(cmd_get_btn, (uint8_t*)&press_time, sizeof(unsigned long));
-                dev_comms_response_add_data(cmd_get_btn, (uint8_t*)&press_time, sizeof(unsigned long));
+                dev_comms_response_add_data(cmd_get_btn, (uint8_t*)&_time_ms, sizeof(uint32_t));
                 break;
             
             case cmd_sw_start:
@@ -243,15 +267,8 @@ void _handle_master_msg_rx(void)
                 dev_button_measure_start();
                 break;
 
-            // case cmd_get_sw_lap:
-            //     len = dev_comms_cmd_read(NULL);   // No data to read
-            //     responding = true;
-            //     unsigned long _time = sys_stopwatch_ms_lap(&rgb_btn.button_press_sw);
-            //     dev_comms_response_add_data(cmd_get_btn, (uint8_t*)&_time, sizeof(unsigned long));
-            //     break;
-
             case cmd_wr_console:
-                uint8_t _data[RGB_BTN_MSG_MAX_LEN - sizeof(rgb_btn_msg_hdr_t) - sizeof(uint8_t)];
+                uint8_t _data[RGB_BTN_MSG_MAX_LEN - sizeof(comms_msg_hdr_t) - sizeof(uint8_t)];
                 memset(_data, 0, sizeof(_data));
                 len = dev_comms_cmd_read(_data);
                 if (cmd & RGB_BTN_FLAG_CMD_COMPLETE)
@@ -265,7 +282,10 @@ void _handle_master_msg_rx(void)
                 // Somehow need to trigger the console read with console_read_byte('\n') which will trigger _parse_rx_line()
                 break;
 
+            case cmd_ping:
+            case cmd_set_address:
             default:
+                //Unkown/unhandled command.... return error (NAK?) to master
                 break;
         }
 
@@ -316,6 +336,7 @@ void _sys_handler_reset(void)
     reset_lock = false;
 }
 
+#if (DEV_RGB_DEBUG == 1)
 const static char * _led_col_str[] = {"Blue", "Green", "Red"/*, "White" */};
 
 void _sys_handler_led(void)
@@ -414,6 +435,7 @@ void _sys_handler_led(void)
 #endif /* REDUCE_CODESIZE */
     }
 }
+#endif /* DEV_RGB_DEBUG */
 
 void _sys_handler_version(void)
 {

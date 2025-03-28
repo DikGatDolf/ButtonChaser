@@ -96,16 +96,20 @@ void dev_button_measure_start(void)
 {
     press_time = 0lu;
     sys_stopwatch_ms_start(&button_press_sw);
+    button_state |= btn_active;
 }
 
-unsigned long dev_button_measure_lap(void)
+unsigned long dev_button_get_reaction_time_ms(void)
 {
-    return sys_stopwatch_ms_lap(&button_press_sw);
+    return press_time;// sys_stopwatch_ms_lap(&button_press_sw);
 }
 
 uint8_t dev_button_get_state(void)
 {
-    //If the release or pressed flags are set when entering, clear them... those are one-shot flags
+    //For now we only want to check a change in up.down state
+    uint8_t _old_state = (button_state & (btn_up | btn_down));
+
+    //Clear the pressed and released flags, as these are one-shot flags
     if ((button_state & (btn_released | btn_pressed)) != 0)
         button_state &= ~(btn_released | btn_pressed);
 
@@ -122,10 +126,10 @@ uint8_t dev_button_get_state(void)
 
     //State has been stable for the debounce time
     _tmp_btn_state = (_pin_state_0 == LOW)? btn_down : btn_up;
-    if (button_state == _tmp_btn_state)
+    if (_old_state == _tmp_btn_state)
         return button_state;
 
-    // Means the button state has changed
+    // Means the button state has changed... and was debounced properly. We have a new state!!
     button_state = _tmp_btn_state;
 #if (DEV_BTN_DEBUG == 1)
     press_time = sys_stopwatch_ms_stop(&debug_sw);
@@ -145,6 +149,8 @@ uint8_t dev_button_get_state(void)
 #if (DEV_BTN_DEBUG == 1)
     iprintln(trBUTTON, "#%s (%lu ms)", (button_state & btn_pressed)? "Pressed" : "Released", press_time);
 #endif
+
+    button_state |= (button_press_sw.running)? btn_active : 0;
     return button_state;
 }
 

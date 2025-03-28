@@ -55,7 +55,9 @@ local defines
 #define LED_OFF                     (HIGH)
 
 #ifdef CONSOLE_ENABLED
-const static char * _led_col_str[] = {"Blue", "Green", "Red"/*, "White" */};
+  #if (DEV_RGB_DEBUG == 1)
+    const static char * _led_col_str[] = {"Blue", "Green", "Red"/*, "White" */};
+  #endif /* DEV_RGB_DEBUG */
 #endif /* CONSOLE_ENABLED */
 
 typedef struct
@@ -230,19 +232,25 @@ bool _pwm_assign_pin(led_colour_type col, int pin)
 {
     if (col >= rgbMAX)
     {
+#if (DEV_RGB_DEBUG == 1)
         iprintln(trRGB | trALWAYS, "#Invalid LED colour (%d)", col);
+#endif
         return false;
     }
 
     if (pin >= NUM_DIGITAL_PINS)
     {
+#if (DEV_RGB_DEBUG == 1)
         iprintln(trRGB, "#Invalid pin number (%d)", pin);
+#endif        
         return false;
     }
 
     if (_rgb.colour[col].pin == pin)
     {
+#if (DEV_RGB_DEBUG == 1)
         iprintln(trRGB, "#%s already assigned Pin %d", _led_col_str[col], pin);
+#endif
         return true;
     }
 
@@ -251,9 +259,11 @@ bool _pwm_assign_pin(led_colour_type col, int pin)
     {
         if (_rgb.colour[i].pin == pin)
         {
+#if (DEV_RGB_DEBUG == 1)
             iprint(trRGB, "#Pin %d", pin);
             iprint(trRGB, " is being re-assigned: ");
             iprintln(trRGB, "%s -> %s", _led_col_str[i], _led_col_str[col]);
+#endif
             _rgb.colour[i].pin = PWM_PIN_UNASSIGNED;
             _rgb.pin_cnt--;
         }
@@ -261,17 +271,21 @@ bool _pwm_assign_pin(led_colour_type col, int pin)
 
     if (_rgb.pin_cnt >= MAX_PWM_PINS)
     {
+#if (DEV_RGB_DEBUG == 1)
         iprintln(trRGB, "#%d/%d pins already assigned, unassign one first", _rgb.pin_cnt, MAX_PWM_PINS);
+#endif
         return false;
     }
 
     //Should also make sure that a pin is not being "duplicated on another colour"
+#if (DEV_RGB_DEBUG == 1)
     if ((_rgb.colour[col].pin != pin) && (_rgb.colour[col].pin != PWM_PIN_UNASSIGNED))
     {
         iprint(trRGB, "#%s", _led_col_str[col]);
         iprint(trRGB, " is being re-assigned: ");
         iprintln(trRGB, "%u -> %d", _rgb.colour[col].pin, pin);
     }
+#endif
 
 	//First make sure it is set as an output pin
 	quickPinMode(pin, OUTPUT);
@@ -292,12 +306,14 @@ bool _pwm_assign_pin(led_colour_type col, int pin)
 Public functions
  *******************************************************************************/
 
-bool dev_rgb_start(int pin_red, int pin_green, int pin_blue) 
+uint8_t dev_rgb_start(int pin_red, int pin_green, int pin_blue) 
 {
 
     //ASSERTM(PWM_BIT_RESOLUTION <= PWM_MAX_RESOLUTION, "PWM resolution is limited to 8 bits (0 to 255)");
 
+#if (DEV_RGB_DEBUG == 1)
     char freq_str[16];
+#endif
     int pin_count = 0;
     int pin_array[rgbMAX] = {pin_blue, pin_green, pin_red};
 	uint16_t prescale_multiplier[] = {1, 8, 32, 64, 128, 256, 1024};
@@ -313,9 +329,10 @@ bool dev_rgb_start(int pin_red, int pin_green, int pin_blue)
             if (_rgb.colour[pin_index].pin != PWM_PIN_UNASSIGNED)
                 pin_count++;
 
+#if (DEV_RGB_DEBUG == 1)
         if (pin_count != 0)
             iprintln(trRGB | trALWAYS, "#Already running with %d colour(s) @ %s Hz", pin_count, float2str(freq_str, _rgb.act_freq, 2, 16));
-        
+#endif        
     }
     else
     {
@@ -346,10 +363,11 @@ bool dev_rgb_start(int pin_red, int pin_green, int pin_blue)
 
 	if (prescaler_index >= 7) 
 	{
-        char freq_str[16];
+#if (DEV_RGB_DEBUG == 1)
 		//We could not find a prescaler that will give us the desired period
-		iprintln(trRGB | trALWAYS, "#Could not achieve %s Hz", float2str(freq_str, target_frequency, 2, 16));
-		return false;
+        iprintln(trRGB | trALWAYS, "#Could not achieve %s Hz", float2str(freq_str, target_frequency, 2, 16));
+#endif
+		return -1;
 	}
 
     // iprintln(trRGB | trALWAYS, "#Prescaler = %d", _rgb.prescaler);
@@ -416,11 +434,23 @@ bool dev_rgb_start(int pin_red, int pin_green, int pin_blue)
     //Debug - pinMode(14, OUTPUT);
     //Debug - quickPinToggle(14, LOW);
 
+#if (DEV_RGB_DEBUG == 1)
     iprintln(trRGB|trALWAYS, "#Running at %s Hz with %d pins (%d bit resolution)", float2str(freq_str, _rgb.act_freq, 2, 16), _rgb.pin_cnt, PWM_BIT_RESOLUTION);
+#endif
     
-    return true;
+    return 0;
 }
 
+void dev_rgb_set_colour(uint32_t rgb)
+{
+    for (int i = 0; i < rgbMAX; i++)
+    {
+        _rgb.colour[i].pwm.target = (rgb >> (i*8)) & 0xFF;
+        _set_adjusted_duty_cycle((led_colour_type)i);
+    }
+}
+
+#if (DEV_RGB_DEBUG == 1)
 void dev_rgb_stop() {
 	TIMSK2 &= ~(1<<TOIE2);
 	_rgb.active = false;
@@ -429,16 +459,6 @@ void dev_rgb_stop() {
 bool dev_rgb_enabled()
 {
 	return _rgb.active;
-}
-
-void dev_rgb_set_colour(uint32_t rgb)
-{
-    // iprintln(trRGB, "#Setting colour to 0x%06X", rgb);
-    for (int i = 0; i < rgbMAX; i++)
-    {
-        _rgb.colour[i].pwm.target = (rgb >> (i*8)) & 0xFF;
-        _set_adjusted_duty_cycle((led_colour_type)i);
-    }
 }
 
 uint32_t dev_rgb_get_colour(void)
@@ -458,6 +478,7 @@ uint32_t dev_rgb_get_pwm(void)
 
     return rgb;
 }
+#endif
 
 #undef PRINTF_TAG
 /*************************** END OF FILE *************************************/

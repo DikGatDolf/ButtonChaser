@@ -61,6 +61,16 @@ const char BUILD_TIME_AND_DATE[] = {__TIME__ " " __DATE__}; /* Used in our start
 	#define MAIN_DEBUG
 #endif
 
+/* Suppresses a bunch of debug prints and console functionality for the RGB LED driver:
+    Usage: RAM: 60 bytes, Flash: 2084 bytes
+*/
+#define DEV_RGB_DEBUG       (0)
+/* Suppresses a bunch of debug prints and console functionality for the Button driver:
+    Usage: RAM: 30 bytes, Flash: 310 bytes
+*/
+#define DEV_BTN_DEBUG       (0)
+
+
 #ifdef __cplusplus
 }
 #endif

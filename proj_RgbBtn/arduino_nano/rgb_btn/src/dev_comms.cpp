@@ -114,7 +114,7 @@ typedef struct dev_comms_st
 {
     comms_state_t state = comms_no_init;
     struct {
-        rgb_btn_msg_t msg;
+        comms_msg_t msg;
         struct {
             uint8_t sync     : 1;
             uint8_t overflow : 1;
@@ -127,7 +127,7 @@ typedef struct dev_comms_st
         uint8_t *cmd;
     }rx;
     struct {
-        rgb_btn_msg_t msg;
+        comms_msg_t msg;
         uint8_t buff[(RGB_BTN_MSG_MAX_LEN*2)+2];    //Absolute worst case scenario
         comms_msg_tx_state_t state = idle;
         uint8_t seq;
@@ -187,26 +187,6 @@ char * _comms_rx_error_msg(int err_data)
     return buff;
 }
 
-// char * _comms_tx_error_msg(void)
-// {
-//     static char buff[32];
-//     buff[0] = 0;
-//     if (_comms.tx.flags.collision)
-//     {    
-//         snprintf(buff, sizeof(buff), "Collision");
-//     }
-//     else if (_comms.tx.flags.no_echo)
-//     {
-//         snprintf(buff, sizeof(buff), "No Echo (%dms)", (2*BUS_SILENCE_MIN_MS/5));
-//     }
-//     else
-//     {    
-//         snprintf(buff, sizeof(buff), "None");
-//     }
-
-//     return buff;
-// }
-
 comms_msg_rx_state_t _comms_check_rx_msg(int *_data)
 {
     uint8_t crc = crc8_n(0, (uint8_t *)&_comms.rx.msg, _comms.rx.length);
@@ -236,9 +216,9 @@ comms_msg_rx_state_t _comms_check_rx_msg(int *_data)
             //_comms.tx.flags.collision = 1;
             iprintln(trCOMMS, "#TX Error: %s (%d bytes)", "Collision", _comms.rx.length);
             iprintln(trCOMMS, "#TX %d bytes:", _comms.tx.length);
-            console_print_ram(trCOMMS, &_comms.tx.msg, (unsigned long)&_comms.tx.msg, sizeof(rgb_btn_msg_t));
+            console_print_ram(trCOMMS, &_comms.tx.msg, (unsigned long)&_comms.tx.msg, sizeof(comms_msg_t));
             iprintln(trCOMMS, "#RX %d bytes:", _comms.rx.length);
-            console_print_ram(trCOMMS, &_comms.rx.msg, (unsigned long)&_comms.rx.msg, sizeof(rgb_btn_msg_t));
+            console_print_ram(trCOMMS, &_comms.rx.msg, (unsigned long)&_comms.rx.msg, sizeof(comms_msg_t));
             _comms.tx.state = tx_error;
             //Could we have received a valid message while we were sending?
         }
@@ -251,7 +231,7 @@ comms_msg_rx_state_t _comms_check_rx_msg(int *_data)
         }
     }
     //This message is for us (or everyone)
-    else if ((_comms.rx.msg.hdr.dst == _comms.addr) || (_comms.rx.msg.hdr.dst == RGB_BTN_ADDR_BROADCAST))
+    else if ((_comms.rx.msg.hdr.dst == _comms.addr) || (_comms.rx.msg.hdr.dst == COMMS_ADDR_BROADCAST))
     {
         //WE might want to check if this message is:
         // 1. For us
@@ -260,13 +240,13 @@ comms_msg_rx_state_t _comms_check_rx_msg(int *_data)
 
         iprintln(trCOMMS, "#Received: %d bytes", _comms.rx.length);
         iprintln(trCOMMS, "#Data: ");
-        console_print_ram(trCOMMS, &_comms.rx.msg, (unsigned long)&_comms.rx.msg, sizeof(rgb_btn_msg_t));
+        console_print_ram(trCOMMS, &_comms.rx.msg, (unsigned long)&_comms.rx.msg, sizeof(comms_msg_t));
 
         //Set the cmd pointer to the start of the payload data (which should be the very first cmd)
         _comms.rx.cmd = &_comms.rx.msg.data[0];
 
         //Set the length to the size of the payload
-        _comms.rx.length -= sizeof(rgb_btn_msg_hdr_t); //header
+        _comms.rx.length -= sizeof(comms_msg_hdr_t); //header
         _comms.rx.length -= sizeof(uint8_t); //CRC
 
         return rx_done;//Raise the flag for everyone to see
@@ -314,7 +294,7 @@ void _dev_comms_rx_handler(void)
         {
             //iprintln(trCOMMS, "#Got STX");
             //Start again... no matter what!
-            memset(&_comms.rx.msg, 0, sizeof(rgb_btn_msg_t));
+            memset(&_comms.rx.msg, 0, sizeof(comms_msg_t));
             _comms.rx.length = 0;
             _comms.rx.state = rx_busy;
         }    
@@ -358,8 +338,8 @@ void _dev_comms_rx_handler(void)
         {
             iprintln(trCOMMS, "#RX Error: %s (%d bytes)", _comms_rx_error_msg(err_data), _comms.rx.length);
             iprintln(trCOMMS, "#Data: ");
-            console_print_ram(trCOMMS, &_comms.rx.msg, (unsigned long)&_comms.rx.msg, sizeof(rgb_btn_msg_t));
-            memset(&_comms.rx.msg, 0, sizeof(rgb_btn_msg_t));
+            console_print_ram(trCOMMS, &_comms.rx.msg, (unsigned long)&_comms.rx.msg, sizeof(comms_msg_t));
+            memset(&_comms.rx.msg, 0, sizeof(comms_msg_t));
             _comms.rx.state = listening;
         }
     }
@@ -378,7 +358,7 @@ void _dev_comms_tx_handler(void)
             {
                 uint8_t * msg = (uint8_t *)&_comms.tx.msg;
                 hal_serial_write(STX);
-                for (uint8_t i = 0; i < sizeof(rgb_btn_msg_t); i++)
+                for (uint8_t i = 0; i < sizeof(comms_msg_t); i++)
                 {
                     uint8_t tx_data = msg[i];
                     if ((tx_data == STX) || (tx_data == DLE) || (tx_data == ETX))
@@ -401,9 +381,9 @@ void _dev_comms_tx_handler(void)
                 //_comms.tx.flags.no_echo = 1;
                 iprintln(trCOMMS, "#TX Error: %s", "No Echo", 0);
                 iprintln(trCOMMS, "#TX data:");
-                console_print_ram(trCOMMS, &_comms.tx.msg, (unsigned long)&_comms.tx.msg, sizeof(rgb_btn_msg_t));
+                console_print_ram(trCOMMS, &_comms.tx.msg, (unsigned long)&_comms.tx.msg, sizeof(comms_msg_t));
                 // iprintln(trCOMMS, "#RX %d bytes:", _comms.rx.length);
-                // console_print_ram(trCOMMS, &_comms.rx.msg, (unsigned long)&_comms.rx.msg, sizeof(rgb_btn_msg_t));
+                // console_print_ram(trCOMMS, &_comms.rx.msg, (unsigned long)&_comms.rx.msg, sizeof(comms_msg_t));
                 _comms.tx.state = tx_error;
             }
             break;
@@ -428,7 +408,7 @@ void dev_comms_init(uint8_t addr)
     // The top 4 bits will be fixed at 0000 0000 ( 0x00 )
     _comms.addr = addr;//RGB_BTN_I2C_TYPE_ID;
 
-    memset(&_comms.rx.msg, 0, sizeof(rgb_btn_msg_t));
+    memset(&_comms.rx.msg, 0, sizeof(comms_msg_t));
     _comms.rx.state = listening;
     _comms.tx.state = idle;
 
@@ -446,31 +426,24 @@ void dev_comms_init(uint8_t addr)
     //Just set a new address if we are already initialised
     if (_comms.state == comms_no_init) 
     {
-        iprintln(trCOMMS, "#Initialised (address: 0x%02X)", _comms.addr);
+        iprintln(trCOMMS, "#Initialised (0x%02X), msg payload: %d/%d bytes", _comms.addr, sizeof(_comms.rx.msg.data), sizeof(comms_msg_t));
     }
-    else if (addr != _comms.addr)
-    {
-        if (addr != RGB_BTN_ADDR_MASTER) //Cannot set the address to that of the master
-            iprintln(trCOMMS, "#Address updated: 0x%02X", _comms.addr);
-        else
-            iprintln(trCOMMS, "#Invalid Address: 0x%02X (Keeping 0x%02X)", addr, _comms.addr);
 
-    }
-    _comms.state = (addr == RGB_BTN_ADDR_MASTER)? comms_png : comms_idle;
+    _comms.state = (addr == COMMS_ADDR_SLAVE_DEFAULT)? comms_png : comms_idle;
 
 }
 
 void dev_comms_response_start(void)
 {
-    _comms.tx.length = sizeof(rgb_btn_msg_hdr_t);
+    _comms.tx.length = sizeof(comms_msg_hdr_t);
 
     _comms.tx.msg.hdr.version = RGB_BTN_MSG_VERSION;
 
     _comms.tx.msg.hdr.src = _comms.addr;            //Our Address
-    _comms.tx.msg.hdr.dst = RGB_BTN_ADDR_MASTER;    //We only ever talk to the master!!!!!
+    _comms.tx.msg.hdr.dst = COMMS_ADDR_MASTER;    //We only ever talk to the master!!!!!
 }
 
-unsigned int dev_comms_response_add_data(rgb_btn_command_t cmd, uint8_t * data, uint8_t data_len)
+unsigned int dev_comms_response_add_data(command_t cmd, uint8_t * data, uint8_t data_len)
 {
     //Make sure we don't overflow the buffer and leave space for 1 byte of CRC
     if (data_len > (RGB_BTN_MSG_MAX_LEN - sizeof(uint8_t) - _comms.tx.length))
@@ -577,14 +550,15 @@ uint8_t dev_comms_cmd_read(uint8_t * dst)
 bool dev_comms_verify_addr(uint8_t addr)
 {
     //Cannot set the address to that of the master
-    return (addr != RGB_BTN_ADDR_MASTER);
+    return (addr != COMMS_ADDR_MASTER);
 }
 
 void dev_comms_reset_addr(uint8_t addr)
 {
     if (dev_comms_verify_addr(addr))
     {
-        _comms.addr = addr;        
+        _comms.addr = addr;
+        _comms.state = (addr == COMMS_ADDR_SLAVE_DEFAULT)? comms_png : comms_idle;        
     }
     else
     {

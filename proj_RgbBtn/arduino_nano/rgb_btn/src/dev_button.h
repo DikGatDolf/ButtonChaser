@@ -26,6 +26,7 @@ enum button_state_e
     // btnLongPress    = BIT_POS(4),
     // btnShortPress   = BIT_POS(5),
     //btnDoublePress  = BIT_POS(6),
+    btn_active      = BIT_POS(7),
 };
 /******************************************************************************
 Macros
@@ -46,7 +47,7 @@ void dev_button_init(void);
 
 void dev_button_measure_start(void);
 
-unsigned long dev_button_measure_lap(void);
+unsigned long dev_button_get_reaction_time_ms(void);
 
 uint8_t dev_button_get_state(void);
 

@@ -46,8 +46,9 @@ local functions
 
 void sys_poll_tmr_start(timer_ms_t *t, unsigned long interval, bool auto_reload)
 {
+    t->started = millis();
     t->enabled = false;
-    t->ms_expire = millis() + interval;
+    t->ms_expire = t->started + interval;
     t->ms_period = interval;
     t->expired = false;
     t->reload_mode = auto_reload;
@@ -58,8 +59,9 @@ bool sys_poll_tmr_reset(timer_ms_t *t)
 {
     if (t->ms_period > 0)
     {
+        t->started = millis();
         t->enabled = false;
-        t->ms_expire = millis() + t->ms_period;
+        t->ms_expire = t->started + t->ms_period;
         t->expired = false;
         t->enabled = true;
     }
@@ -83,8 +85,14 @@ bool sys_poll_tmr_expired(timer_ms_t *t)
         return false;
 
     //Have we already seen the expiry boundary crossed (not in auto reload mode)?
-    if ((t->expired) && !(t->reload_mode))
-        return true;
+    if (t->expired)
+        return true; // Return here, then we don't need to worry about overflowing the variable boundaries
+
+    //RVN - TODO - You need to think about this before implementing it
+    // if (t->started > now_ms)
+    //     overflow = (UINT32_MAX - t->started) + now_ms;
+    // else
+    //     overflow = now_ms - t->started;
 
     //Have we moved beyond the expiry time?
     if (now_ms >= t->ms_expire)
@@ -93,8 +101,10 @@ bool sys_poll_tmr_expired(timer_ms_t *t)
         overflow = (now_ms - t->ms_expire);
         //If we are in reload mode, set the next expiry time without raising the expired flag
         if (t->reload_mode)
-            t->ms_expire = now_ms - (overflow % (t->ms_period))   /* Now, minus The part of the Timer Period that has elapsed already */
-                            + t->ms_period;                     /* Timer Period */
+        {
+            t->started = now_ms - (overflow % (t->ms_period));
+            t->ms_expire = t->started + t->ms_period;                     /* Timer Period */
+        }
         else
             t->expired = true;
 
@@ -174,9 +184,5 @@ unsigned long sys_stopwatch_ms_stop(stopwatch_ms_t* sw)
     return elapsed;
 }
 
-unsigned long SecondCount(void)
-{
-  return (millis()/1000l);
-}
 
 /*************************** END OF FILE *************************************/
