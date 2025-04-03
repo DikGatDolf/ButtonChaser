@@ -355,7 +355,7 @@ void _dev_nvstore_menu_handler_wr(void)
             argStr[strlen(argStr)-1] = 0;
             src = argStr + 1;
 
-            bytes_to_parse = strlen(argStr);
+            bytes_to_parse = strlen(src);
 
             //We check for enough space....
             if  (space_left < bytes_to_parse)
@@ -365,7 +365,7 @@ void _dev_nvstore_menu_handler_wr(void)
                 continue; // with the next argument
             }
 
-            strncpy((char *)&_tmp_data[NVSTORE_BLOCK_DATA_SIZE-space_left], argStr, space_left);
+            strncpy((char *)&_tmp_data[NVSTORE_BLOCK_DATA_SIZE-space_left], src, space_left);
             space_left -= bytes_to_parse;
 
             continue; // with the next argument

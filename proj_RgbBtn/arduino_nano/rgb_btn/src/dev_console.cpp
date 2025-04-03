@@ -79,7 +79,9 @@ as it was received on the console */
 
 const char BACKSPACE_ECHO[] = {0x08, 0x20, 0x08, 0x00};
 
-#define PrintBackSpace()   {do{serialputc(0x08, NULL); serialputc(0x20, NULL); serialputc(0x08, NULL);}while (0);}
+#if CONSOLE_ECHO_ENABLED == 1
+  #define PrintBackSpace()   {do{serialputc(0x08, NULL); serialputc(0x20, NULL); serialputc(0x08, NULL);}while (0);}
+#endif
 //Turns out that calling serialputc() in a loop is not a good idea.... uses 4 bytes more RAM and 6 bytes more flash
 //#define PrintBackSpace()   {int _x = 0; do{serialputc(BACKSPACE_ECHO[_x++], NULL); }while (BACKSPACE_ECHO[_x]);}
     
@@ -147,6 +149,7 @@ typedef struct
     // int (*read)(void);
     void (*flush)(void);
     size_t (*write)(uint8_t);
+    void (*rs485_disable)(void);
 } DeviceConsole_t;
 
 /*******************************************************************************
@@ -293,6 +296,16 @@ extern "C" {
   	{
         if (_console.write)
         {
+            //We need to disable RS485 RX while we are doing this transmission, 
+            // otherwise we will get the same data back and risk a collision on the bus with other nodes
+            if (_console.rs485_disable)
+                _console.rs485_disable(); 
+            //Will be turned back on again once the transmission is done
+
+            //RVN - I guess there is a risk that the Transmit Complete interrupt 
+            // turns the RS485 Transceiver back on before we call write(...) below, 
+            // but that should really low risk.
+            
             if(c == '\n')
                 _console.write('\r');//Serial.write('\r');
             return _console.write((int)c);//return Serial.write((int)c);
@@ -786,8 +799,7 @@ void _console_handler_trace(void)
 Global (public) Functions
 *******************************************************************************/
 
-//void console_init(int (*cb_read)(void), int (*cb_available)(void), size_t (*cb_write)(uint8_t), void (*cb_flush)(void))
-void console_init(size_t (*cb_write)(uint8_t), void (*cb_flush)(void))
+void console_init(size_t (*cb_write)(uint8_t), void (*cb_flush)(void), void (*cb_rs485_disable)(void))
 {
     // void (*flush)(void);
     // size_t (*write)(uint8_t);
@@ -800,6 +812,7 @@ void console_init(size_t (*cb_write)(uint8_t), void (*cb_flush)(void))
     // _console.read = NULL;
     _console.flush = cb_flush;
     _console.write = cb_write;
+    _console.rs485_disable = cb_rs485_disable;
 
     //Let's not re-initialise this task by accident
 	if (_console_init_done)
@@ -861,7 +874,9 @@ void console_read_byte(uint8_t data_byte)
 
     // ****** Newline ******
     case '\n':
+#if CONSOLE_ECHO_ENABLED == 1
         serialputc('\n', NULL);
+#endif
         //  Now parse the line if it is Valid
         if (_console.rx.cnt > 0)
             _parse_rx_line();
@@ -875,14 +890,18 @@ void console_read_byte(uint8_t data_byte)
         if (_console.rx.cnt)
         {
             _console.rx.cnt--;
+#if CONSOLE_ECHO_ENABLED == 1
             PrintBackSpace();
+#endif
         }
         break;
 
         // ****** Escape ******
     case '\t':
         //TODO - Auto-complete? Naaah.... fuck that. Too much hassle for this little micro.
+#if CONSOLE_ECHO_ENABLED == 1
         serialputc('\t', NULL);
+#endif
         break;
 
         // ****** Escape ******
@@ -890,7 +909,9 @@ void console_read_byte(uint8_t data_byte)
         // Clear the line...
         while (_console.rx.cnt)
         {
+#if CONSOLE_ECHO_ENABLED == 1
             PrintBackSpace();
+#endif
             _console.rx.cnt--;
         }
         break;
@@ -898,7 +919,9 @@ void console_read_byte(uint8_t data_byte)
         // ****** All other chars ******
     default:
         // Must we echo the data on the console?
+#if CONSOLE_ECHO_ENABLED == 1
         serialputc(data_byte, NULL);
+#endif
 
         // Do we still have space in the rx buffer?
         if (_console.rx.cnt < CONSOLE_RX_BUFF) // Wrap index?
@@ -1062,11 +1085,8 @@ bool console_arg_help_found(void)
     return (-1 == _console.args.help_index)? false : true;
 }
 
-void console_print(uint8_t traceflags, const char * tag, const char * fmt, ...)
+bool console_print_tag(const char * fmt, const char * tag)
 {
-	if (((trALWAYS | _console.tracemask) & traceflags) == trNONE)
-		return;
-
 	//A line starts with the tag if the format string starts with "#"
     //Remember, the format string is in PROGMEM
     if (pgm_read_byte(fmt) == '#')
@@ -1075,8 +1095,19 @@ void console_print(uint8_t traceflags, const char * tag, const char * fmt, ...)
         for (int i = 0; tag[i]; i++)
             serialputc(tag[i], NULL);
         serialputc(']', NULL);
-        fmt++; // Now skip the '#'
+        return true;
     }
+    return false;
+}
+
+void console_print(uint8_t traceflags, const char * tag, const char * fmt, ...)
+{
+	if (((trALWAYS | _console.tracemask) & traceflags) == trNONE)
+		return;
+
+	//A line starts with the tag if the format string starts with "#"
+    if (console_print_tag(fmt, tag))
+        fmt++;
 
     // fdev_setup_stream(&stdiostr, serialputc, NULL, _FDEV_SETUP_WRITE);
     va_start(_console_ap, fmt);
@@ -1090,15 +1121,8 @@ void console_printline(uint8_t traceflags, const char * tag, const char * fmt, .
 		return;
 
 	//A line starts with the tag if the format string starts with "#"
-    //Remember, the format string is in PROGMEM
-    if (pgm_read_byte(fmt) == '#')
-    {
-        serialputc('[', NULL);
-        for (int i = 0; tag[i]; i++)
-            serialputc(tag[i], NULL);
-        serialputc(']', NULL);
-        fmt++; // Now skip the '#'
-    }
+    if (console_print_tag(fmt, tag))
+        fmt++;
 
     va_start(_console_ap, fmt);
     vfprintf_P(&_console_stdiostr, fmt, _console_ap);

@@ -160,7 +160,7 @@ ISR(TIMER2_OVF_vect) {
      this means the apparent LED PWM frequency will be no more than 82.4Hz. */
 
     //Debug - To measure interrupt execution time on a scope!!!
-    //Debug - quickPinToggle(14, HIGH);
+    //Debug - sys_output_write(14, HIGH);
 
     TCNT2 = dev_rgb_tcnt2; //Reset the timer
 
@@ -175,11 +175,11 @@ ISR(TIMER2_OVF_vect) {
         
         //We only bother with turning OFF if the duty cycle is not 100%
         if ((_rgb.colour[i].pwm._off == dev_rgb_dc_cnt) && (_rgb.colour[i].pwm.adjust < PWM_MAX_VALUE))
-			quickPinToggle(_rgb.colour[i].pin, LED_OFF);
+			sys_output_write(_rgb.colour[i].pin, LED_OFF);
         
         //We only bother with turning ON if the duty cycle is not 0%
 		else if ((_rgb.colour[i].pwm._on == dev_rgb_dc_cnt) && (_rgb.colour[i].pwm.adjust > 0))
-			quickPinToggle(_rgb.colour[i].pin, LED_ON);
+			sys_output_write(_rgb.colour[i].pin, LED_ON);
 	}
     
     /*This should wrap around at 255, and not the "automagical" 256=0 point. 
@@ -195,7 +195,7 @@ ISR(TIMER2_OVF_vect) {
         dev_rgb_dc_cnt = 0;
 
     //Debug - To measure interrupt execution time on a scope!!!
-    //Debug - quickPinToggle(14, LOW);
+    //Debug - sys_output_write(14, LOW);
 }
 
 
@@ -288,8 +288,8 @@ bool _pwm_assign_pin(led_colour_type col, int pin)
 #endif
 
 	//First make sure it is set as an output pin
-	quickPinMode(pin, OUTPUT);
-    quickPinToggle(pin, LOW); //Make sure it is off
+	sys_set_io_mode(pin, OUTPUT);
+    sys_output_write(pin, LOW); //Make sure it is off
 
 	//Now assign the pin in the list
     _rgb.colour[col].pin = pin;
@@ -432,7 +432,7 @@ uint8_t dev_rgb_start(int pin_red, int pin_green, int pin_blue)
 	_rgb.active = true;
 
     //Debug - pinMode(14, OUTPUT);
-    //Debug - quickPinToggle(14, LOW);
+    //Debug - sys_output_write(14, LOW);
 
 #if (DEV_RGB_DEBUG == 1)
     iprintln(trRGB|trALWAYS, "#Running at %s Hz with %d pins (%d bit resolution)", float2str(freq_str, _rgb.act_freq, 2, 16), _rgb.pin_cnt, PWM_BIT_RESOLUTION);

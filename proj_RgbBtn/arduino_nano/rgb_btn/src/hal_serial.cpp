@@ -51,6 +51,9 @@ From HardwareSerial.cpp:
 //#include "HardwareSerial.h"
 //#include "HardwareSerial_private.h"
 
+#include "defines.h"
+#include "sys_utils.h"
+
 #define __NOT_EXTERN__
 #include "hal_serial.h"
 #undef __NOT_EXTERN__
@@ -125,13 +128,18 @@ Local function definitions
 //void _hal_serial_rx_complete_irq(void);
 
 void _hal_serial_tx_udr_empty_irq(void);
+void _rs485_enable(void);
 
 /******************************************************************************
 Local variables
 ******************************************************************************/
 
 // Has any byte been written to the UART since begin()
-bool _written;
+//bool _written;
+//This flag ensures that we don't accidentally enable the RS485 transceiver in 
+// the TX complete ISR when we are about to start transmitting 
+bool _rs485_disable_wr_enable_block = false; 
+volatile bool _tx_busy = false; 
 stopwatch_ms_t bus_tmr;
 
 volatile rx_buffer_index_t _rx_buffer_head;
@@ -205,6 +213,15 @@ ISR(USART_UDRE_vect) // USART, Data Register Empty
     _hal_serial_tx_udr_empty_irq();
 }
 
+ISR( USART_TX_vect) // USART Tx Complete
+{
+    if ((_tx_buffer_head == _tx_buffer_tail) && (!_rs485_disable_wr_enable_block))
+    {
+        // Buffer empty, so enable the RS485 transceiver
+        _rs485_enable();
+    }
+}
+
 /******************************************************************************
 Local functions
 ******************************************************************************/
@@ -234,6 +251,7 @@ void _hal_serial_tx_udr_empty_irq(void)
     if (_tx_buffer_head == _tx_buffer_tail) 
     {
         // Buffer empty, so disable interrupts
+        //RVN - We might need to move this to the TX complete ISR if this step prevents the TX complete interrupt from being called
         cbi(UCSR0B /**_ucsrb*/, UDRIE0);
     }
 
@@ -320,9 +338,16 @@ int _hal_serial_availableForWrite(void)
     return tail - head - 1;
 }
 
+void _rs485_enable(void)
+{
+    sys_output_write(output_RS485_DE, HIGH);
+    sys_output_write(output_RS485_RE, LOW);
+    _tx_busy = false;
+}
+
 // Public Methods //////////////////////////////////////////////////////////////
 
-void hal_serial_init(void/*unsigned long baud, byte config*/)
+void hal_serial_init(void)
 {
         // Try u2x mode first
     uint16_t baud_setting = (F_CPU / 4 / HAL_SERIAL_BAUDRATE - 1) / 2;
@@ -343,7 +368,7 @@ void hal_serial_init(void/*unsigned long baud, byte config*/)
     UBRR0H /**_ubrrh*/ = baud_setting >> 8;
     UBRR0L /**_ubrrl*/ = baud_setting;
 
-    _written = false;
+    //_written = false;
 
     //set the data bits, parity, and stop bits
 #if defined(__AVR_ATmega8__)
@@ -351,10 +376,19 @@ void hal_serial_init(void/*unsigned long baud, byte config*/)
 #endif
     UCSR0C /**_ucsrc*/ = SERIAL_8N1;// 0x06;// config;
     
-    sbi(UCSR0B /**_ucsrb*/, RXEN0);
-    sbi(UCSR0B /**_ucsrb*/, TXEN0);
-    sbi(UCSR0B /**_ucsrb*/, RXCIE0);
-    cbi(UCSR0B /**_ucsrb*/, UDRIE0);
+    sbi(UCSR0B /**_ucsrb*/, RXEN0);     // Enable RX
+    sbi(UCSR0B /**_ucsrb*/, TXEN0);     // Enable TX
+    sbi(UCSR0B /**_ucsrb*/, TXCIE0);    // Enable TX complete interrupt
+    sbi(UCSR0B /**_ucsrb*/, RXCIE0);    // Enable RX interrupt
+    cbi(UCSR0B /**_ucsrb*/, UDRIE0);    // Disable Data Register Empty interrupt
+
+
+    //We have to implement the RS485 Driver and Receiver Enable pin for the  transceiver
+    sys_set_io_mode(output_RS485_DE, OUTPUT);
+    sys_set_io_mode(output_RS485_RE, OUTPUT);
+
+    //Let's start up with the RS485 transceiver in tx/rx mode
+    _rs485_enable();
 
     sys_stopwatch_ms_start(&bus_tmr, HAL_BUS_SILENCE_MAX_MS);
 }
@@ -420,25 +454,38 @@ void hal_serial_flush()
     // If we have never written a byte, no need to flush. This special
     // case is needed since there is no way to force the TXC (transmit
     // complete) bit to 1 during initialization
-    if (!_written)
+    //if ((!_written) || (!_tx_busy))
+
+    if (!_tx_busy)
         return;
 
-    while (bit_is_set(UCSR0B /**_ucsrb*/, UDRIE0) || bit_is_clear(UCSR0A /**_ucsra*/, TXC0)) 
-    {
-        if (bit_is_clear(SREG, SREG_I) && bit_is_set(UCSR0B /**_ucsrb*/, UDRIE0))
-        // Interrupts are globally disabled, but the DR empty
-        // interrupt should be enabled, so poll the DR empty flag to
-        // prevent deadlock
-        if (bit_is_set(UCSR0A /**_ucsra*/, UDRE0))
-            _hal_serial_tx_udr_empty_irq();
-    }
+    // while (bit_is_set(UCSR0B /**_ucsrb*/, UDRIE0) || bit_is_clear(UCSR0A /**_ucsra*/, TXC0)) 
+    // {
+    //     if (bit_is_clear(SREG, SREG_I) && bit_is_set(UCSR0B /**_ucsrb*/, UDRIE0))
+    //     // Interrupts are globally disabled, but the DR empty
+    //     // interrupt should be enabled, so poll the DR empty flag to
+    //     // prevent deadlock
+    //     if (bit_is_set(UCSR0A /**_ucsra*/, UDRE0))
+    //         _hal_serial_tx_udr_empty_irq();
+    // }
+
     // If we get here, nothing is queued anymore (DRIE is disabled) and
     // the hardware finished transmission (TXC is set).
+
+    while (_tx_busy)
+    {
+        //nop -  Wait for the TX complete interrupt to be called and the buffer is empty
+        // sys_output_write(output_RS485_DE, HIGH);
+        // sys_output_write(output_RS485_DE, LOW);
+    }
+    // sys_output_write(output_RS485_DE, HIGH);
 }
 
 size_t hal_serial_write(uint8_t c)
 {
-    _written = true;
+    // _written = true;
+    _tx_busy = true; //Will be cleared in the TX complete ISR if the buffer is empty
+
     // If the buffer and the data register is empty, just write the byte
     // to the data register and be done. This shortcut helps
     // significantly improve the effective datarate at high (>
@@ -462,6 +509,7 @@ size_t hal_serial_write(uint8_t c)
             UCSR0A /**_ucsra*/ = ((UCSR0A /**_ucsra*/) & ((1 << U2X0) | (1 << TXC0)));
 #endif
         }
+        _rs485_disable_wr_enable_block = false;
         return 1;
     }
     tx_buffer_index_t i = (_tx_buffer_head + 1) % HAL_SERIAL_TX_BUFFER_SIZE;
@@ -496,9 +544,17 @@ size_t hal_serial_write(uint8_t c)
         sbi(UCSR0B /**_ucsrb*/, UDRIE0);
     }
     
+    _rs485_disable_wr_enable_block = false;
     return 1;
 }
 
+void hal_serial_rs485_disable(void)
+{
+    //By disabling the RS485 driver, we ensure that our RS485 transmission does not cause any bus contention for other nodes
+    sys_output_write(output_RS485_DE, LOW);
+    sys_output_write(output_RS485_RE, HIGH);
+    _rs485_disable_wr_enable_block = true;
+}
 #undef PRINTF_TAG
 
 /*************************** END OF FILE *************************************/

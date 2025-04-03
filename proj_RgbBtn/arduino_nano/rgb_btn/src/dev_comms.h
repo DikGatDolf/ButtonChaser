@@ -30,17 +30,21 @@ Public variables
 /******************************************************************************
 Public function definitions
 ******************************************************************************/
-void dev_comms_init(uint8_t addr);
+void dev_comms_init(void);
 
-uint8_t dev_comms_cmd_available(uint8_t *cmd);
+uint8_t dev_comms_read_payload(uint8_t * dst, uint8_t len);
 
-uint8_t dev_comms_cmd_read(uint8_t * dst);
+int8_t dev_comms_rx_msg_available(void);
 
-void dev_comms_service(void);
+uint8_t dev_comms_addr_get(void);
+uint8_t dev_comms_addr_new(void);
+void dev_comms_addr_blacklist(uint8_t new_addr);
 
-bool dev_comms_verify_addr(uint8_t addr);
+uint8_t dev_comms_rx_msg_src_addr();
+uint8_t dev_comms_rx_msg_dst_addr();
+uint8_t dev_comms_rx_msg_data_len();
 
-void dev_comms_reset_addr(uint8_t addr);
+bool dev_comms_addr_set(uint8_t addr);
 
 /*! transmits a message on the bus
  * @param[in] cmd The command to send
@@ -51,16 +55,15 @@ void dev_comms_reset_addr(uint8_t addr);
  *                      framing and escaping)
  * @return the number of bytes of the message sent
  */
-//int dev_comms_msg_send(command_t cmd, uint8_t * data, int len, uint8_t * msg_handle, uint8_t * tx_cnt);
+//int dev_comms_msg_send(master_command_t cmd, uint8_t * data, int len, uint8_t * msg_handle, uint8_t * tx_cnt);
 
 /*! Prepares the response message header to be sent back to the Master
  */
-void dev_comms_response_start(void);
 
-unsigned int dev_comms_response_add_data(command_t cmd_flag, uint8_t * data, uint8_t len);
-
-void dev_comms_response_send();
-
+void dev_comms_tx_service(void);
+int8_t dev_comms_tx_ready(void);
+unsigned int dev_comms_response_add_data(master_command_t cmd_flag, uint8_t * data, uint8_t len, bool clear_previous_data = false);
+int8_t dev_comms_response_send(bool queue_msg);
 
 #endif /* __dev_comms_H__ */
 

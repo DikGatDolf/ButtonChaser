@@ -26,30 +26,24 @@ const char BUILD_TIME_AND_DATE[] = {__TIME__ " " __DATE__}; /* Used in our start
 #define btnChasePin_RX0     (0)
 #define btnChasePin_TX0     (1)
 
-#define btnChasePin_BTN     (2)     /* Source for INT0 */
+#define output_RS485_DE     (3)
+#define output_RS485_RE     (4)
 
-#define btnChasePin_RED     (13)
-#define btnChasePin_GREEN   (14)
-#define btnChasePin_BLUE    (15)
+#define input_Button        (2)     /* Source for INT0 */
 
-#define btnChasePin_SDA     (18)
-#define btnChasePin_SCL     (19)
+#define output_Led_Red      (13)
+#define output_Led_Green    (14)
+#define output_Led_Blue     (15)
+
+#define input_ADC           (20)
+
+// #define btnChasePin_SDA     (18)
+// #define btnChasePin_SCL     (19)
 
 /* The "CONSOLE_ENABLED" define includes all the Console's menu interfacing and
  * such like. This also takes up a lot of the available codespace. */
-#define COMMS_USE_I2C       0
-
-/* The "CONSOLE_ENABLED" define includes all the Console's menu interfacing and
- * such like. This also takes up a lot of the available codespace. */
-#define CONSOLE_ENABLED     1
-
-/* The "USE_WAV_GEN" define includes the waveform generator code. The waveform
- * generator provides configurable waveforms on the DAC output: Sine, square,
- * triangle, sawtooth (falling), or sawtooth (rising).
- * NOTE: This is only available with the Console Menu enabled */
-#ifdef CONSOLE_ENABLED
-	//#define USE_WAV_GEN
-#endif
+#define CONSOLE_ENABLED         1
+#define CONSOLE_ECHO_ENABLED    0
 
 #define REDUCE_CODESIZE     1
 

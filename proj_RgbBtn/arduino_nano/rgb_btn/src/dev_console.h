@@ -75,16 +75,11 @@ Global (public) Function prototypes
 ******************************************************************************/
 
 /*! Initialises the Console
- * @param[in] baud The baud rate to use for the console
+ * @param[in] cb_write The function to call to write a byte to the serial port
+ * @param[in] cb_flush The function to call to flush the serial port
+ * @param[in] cb_rs485_disable The function to call to disable the RS485 driver
  */
-//void console_init(unsigned long baud);
-//void console_init(int (*cb_read)(void), int (*cb_available)(void), size_t (*cb_write)(uint8_t), void (*cb_flush)(void));
-void console_init(size_t (*cb_write)(uint8_t), void (*cb_flush)(void));
-
- /*! Reads the data on the serial port and parses the line when a carriage return 
- * is encountered.
- */
-//void console_service(void);
+void console_init(size_t (*cb_write)(uint8_t), void (*cb_flush)(void), void (*cb_rs485_disable)(void));
 
 /*! Adds a byte to the read buffer (as if it was recieved from the serial port)
  * @param[in] data_byte The byte to add to the buffer

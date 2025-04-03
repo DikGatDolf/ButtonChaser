@@ -57,7 +57,7 @@ local variables
 Global Functions
 
  *******************************************************************************/
-void quickPinToggle(uint8_t pin, bool state)
+void sys_output_write(uint8_t pin, bool state)
 {
 //uint8_t port;
 
@@ -90,7 +90,7 @@ void quickPinToggle(uint8_t pin, bool state)
 	}
 }
 
-int quickPinRead(uint8_t pin)
+int sys_input_read(uint8_t pin)
 {
 	uint8_t bit = digitalPinToBitMask(pin);
 	uint8_t port = digitalPinToPort(pin);
@@ -101,7 +101,7 @@ int quickPinRead(uint8_t pin)
 	return LOW;
 }
 
-void quickPinMode(uint8_t pin, uint8_t mode)
+void sys_set_io_mode(uint8_t pin, uint8_t mode)
 {
 	uint8_t bit = digitalPinToBitMask(pin);
 	uint8_t port = digitalPinToPort(pin);
@@ -133,61 +133,45 @@ void quickPinMode(uint8_t pin, uint8_t mode)
 	}
 }
 
+// uint8_t analog_reference = DEFAULT;
 
-/*******************************************************************************
+// void analogReference(uint8_t mode)
+// {
+// 	// can't actually set the register here because the default setting
+// 	// will connect AVCC and the AREF pin, which would cause a short if
+// 	// there's something connected to AREF.
+// 	analog_reference = mode;
+// }
 
-Returns one of the follwoing EDGE states:
-#define INPUT_EDGE_NONE		0
-#define INPUT_EDGE_FALLING	1
-#define INPUT_EDGE_RISING	2
-
- *******************************************************************************/
-int debounceInput(ST_PIN_DEBOUNCE * input, int level, int count)
+int sys_analog_read(uint8_t pin)
 {
-	//Is this level the same as what was saved previously?
-	if (input->CurrentState == level)
-	{
-		//Yup... nothing to debounce.
-		input->DebounceCount = 0;
-		return INPUT_EDGE_NONE;
-	}
+	if (pin >= 14) pin -= 14; // allow for channel or pin numbers
 
-	//This means we have seen a change in level from our current "debounced" level
-	input->DebounceCount++;
+	// set the analog reference (high two bits of ADMUX) and select the
+	// channel (low 4 bits).  this also sets ADLAR (left-adjust result)
+	// to 0 (the default).
+	ADMUX = (DEFAULT << 6) | (pin & 0x07);
 
-	//Has it been debounce "count" times?
-	if (input->DebounceCount < count)
-	{
-		//We are still debouncing... no change to report.
-		return INPUT_EDGE_NONE;
-	}
+	// without a delay, we seem to read from the wrong channel
+	//delay(1);
 
-	//Now we have a stable state... assign it to our current state.
-	input->CurrentState = level;
+	// start the conversion
+	sbi(ADCSRA, ADSC);
 
-	//A HIGH level implies a rising edge....
-	// ...A LOW level implies a falling edge.
-	return (level == HIGH)?
-			INPUT_EDGE_RISING : INPUT_EDGE_FALLING;
+	// ADSC is cleared when the conversion finishes
+	while (bit_is_set(ADCSRA, ADSC));
+
+	// ADC macro takes care of reading ADC register.
+	// avr-gcc implements the proper reading order: ADCL is read first.
+	return ADC;
 }
 
-/*******************************************************************************
-
-Returns the average of all the values in the passed array
-
- *******************************************************************************/
-// unsigned long avgULong(volatile unsigned long * arr, int cnt)
-// {
-// unsigned long retVal = 0L;
-
-// 	for (int i = 0; i < cnt; i++)
-// 	{
-// 		retVal += arr[i];
-// 	}
-// 	retVal /= cnt;
-
-// 	return retVal;
-// }
+long sys_random(long rand_min, long rand_max)
+{
+    int adc_read = sys_analog_read(input_ADC); /* Random seed for the address */
+    randomSeed(adc_read);
+    return random(rand_min, rand_max); //Random number between min and max
+}
 
 /*******************************************************************************
 

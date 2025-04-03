@@ -65,6 +65,13 @@ Macros
 #define SWOP_U16(x, y) do { uint16_t _z = x; x = y; y = _z; } while(0)
 #define SWOP_U8(x, y) do { uint8_t _z = x; x = y; y = _z; } while(0)
 
+#ifndef cbi
+  #define cbi(sfr, bit) (_SFR_BYTE(sfr) &= ~_BV(bit))
+#endif
+
+#ifndef sbi
+  #define sbi(sfr, bit) (_SFR_BYTE(sfr) |= _BV(bit))
+#endif
 /******************************************************************************
 Struct & Unions
 ******************************************************************************/
@@ -100,12 +107,12 @@ functions
  * @param[in] pin The pin to toggle
  * @param[in] state The state to set the pin to
 */
-void quickPinToggle(uint8_t pin, bool state);
-int quickPinRead(uint8_t pin);
-void quickPinMode(uint8_t pin, uint8_t mode);
+void sys_output_write(uint8_t pin, bool state);
+int sys_input_read(uint8_t pin);
+void sys_set_io_mode(uint8_t pin, uint8_t mode);
+int sys_analog_read(uint8_t pin);
+long sys_random(long rand_min, long rand_max);
 
-int debounceInput(ST_PIN_DEBOUNCE * input, int level, int count);
-// unsigned long avgULong(volatile unsigned long * arr, int cnt);
 int freeRam (void);
 
 /*! Calculates the nth term of the Fibonacci sequence using the formula 

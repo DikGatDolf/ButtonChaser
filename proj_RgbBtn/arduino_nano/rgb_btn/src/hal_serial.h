@@ -38,10 +38,20 @@ variables
 /******************************************************************************
 functions
 ******************************************************************************/
+
+/*! Initializes the serial port
+ * @note This function must be called before any other serial functions
+ */
 void hal_serial_init(void);
 
+/*! Returns the number of bytes available in the RX buffer
+ * @return The number of bytes available in the RX buffer
+ */
 int hal_serial_available(void);
 
+/*! Returns the next byte in the RX buffer
+ * @return The next byte in the RX buffer
+ */
 int hal_serial_read(void);
 
 /*! Returns the amount of time since activity on the bus was detected.
@@ -64,6 +74,14 @@ size_t hal_serial_write(uint8_t c);
  * @return true if the serial port is busy with a transmission
  */
 bool hal_serial_tx_busy(void);
+
+
+/*! Temporarely disables the RS485 transceiver until the next transmission 
+ *  is complete. The RS485 transceiver is automatically re-enabled once the 
+ *  next TX complete ISR is exeucted and the TX buffer is empty.
+ */
+void hal_serial_rs485_disable(void);
+
 
 #endif /* __hal_serial_H__ */
 
