@@ -6,17 +6,18 @@ Purpose:    This file contains the a modified version of the serial routines
 Author:     Rudolph van Niekerk
 Processor:  Arduino Nano (ATmega328)
 Compiler:	Arduino AVR Compiler
-86.805555
 
-I2C
-	RAM:   uses 1435 - 1247 = 188 bytes from 2048 bytes (9.18%)
-	Flash: used 27334 - 25558 = 1776 bytes from 30720 bytes (5.78%)
+It has been modified in the following was:
+ 1) The receive buffer has been removed... instead a callback is assigned at 
+    initialisation which provides the upper layer an ability to parse/buffer 
+    the incoming byte.
+ 2) Line controls have been added to enable/disable an RS485 transceiver. By 
+    default it will be enabled, but once disabled it will remain disabled 
+    until the next TX complete interrupt is executed. This means that caller 
+    MUST wait for the transmission to complete before a new transmission can 
+    be queued in RS485 mode.
 
-SoftwareSerial
-	RAM:   uses 1384 - 1261 = 123 bytes from 2048 bytes (6.01%)
-	Flash: used 27334 - 25566 = 1768 bytes from 30720 bytes (5.76%)
-
-From HardwareSerial.cpp:
+From Arduinos' HardwareSerial.cpp:
   HardwareSerial.cpp - Hardware serial library for Wiring
   Copyright (c) 2006 Nicholas Zambetti.  All right reserved.
 
@@ -47,9 +48,6 @@ From HardwareSerial.cpp:
 #include <inttypes.h>
 #include <util/atomic.h>
 #include "Arduino.h"
-
-//#include "HardwareSerial.h"
-//#include "HardwareSerial_private.h"
 
 #include "defines.h"
 #include "sys_utils.h"
@@ -85,14 +83,6 @@ Macros
   #endif
 #endif
 
-#if !defined(HAL_SERIAL_RX_BUFFER_SIZE)
-  #if ((RAMEND - RAMSTART) < 1023)
-    #define HAL_SERIAL_RX_BUFFER_SIZE 16
-  #else
-    #define HAL_SERIAL_RX_BUFFER_SIZE 64
-  #endif
-#endif
-
 #define HAL_SERIAL_BAUDRATE     (115200L)
 
 #define HAL_BUS_SILENCE_MAX_MS   (UINT16_MAX)
@@ -101,22 +91,17 @@ Macros
 Warnings
 ******************************************************************************/
 #if (HAL_BUS_SILENCE_MAX_MS > UINT16_MAX)
-  #error "HAL_BUS_SILENCE_MAX_MS > UINT16_MAX not supported"
+  #error "HAL_BUS_SILENCE_MAX_MS > UINT16_MAX - not supported"
 #endif
 
 #if (HAL_SERIAL_TX_BUFFER_SIZE>256)
-  #error "HAL_SERIAL_TX_BUFFER_SIZE > 256 not supported"
+  #error "HAL_SERIAL_TX_BUFFER_SIZE > 256 - not supported"
   //typedef uint16_t tx_buffer_index_t;
 #else
   #define TX_BUFFER_ATOMIC
   typedef uint8_t tx_buffer_index_t;
 #endif
-#if  (HAL_SERIAL_RX_BUFFER_SIZE>256)
-  #error "HAL_SERIAL_RX_BUFFER_SIZE > 256 not supported"
-  //typedef uint16_t rx_buffer_index_t;
-#else
-  typedef uint8_t rx_buffer_index_t;
-#endif
+
 
 /******************************************************************************
 Structs and Unions
@@ -134,23 +119,20 @@ void _rs485_enable(void);
 Local variables
 ******************************************************************************/
 
-// Has any byte been written to the UART since begin()
-//bool _written;
 //This flag ensures that we don't accidentally enable the RS485 transceiver in 
 // the TX complete ISR when we are about to start transmitting 
-bool _rs485_disable_wr_enable_block = false; 
+bool _rs485_disabled = false; 
 volatile bool _tx_busy = false; 
+
+void (*_rx_irq)(uint8_t) = NULL;
 stopwatch_ms_t bus_tmr;
 
-volatile rx_buffer_index_t _rx_buffer_head;
-volatile rx_buffer_index_t _rx_buffer_tail;
 volatile tx_buffer_index_t _tx_buffer_head;
 volatile tx_buffer_index_t _tx_buffer_tail;
 
 // Don't put any members after these buffers, since only the first
 // 32 bytes of this struct can be accessed quickly using the ldd
 // instruction.
-unsigned char _rx_buffer[HAL_SERIAL_RX_BUFFER_SIZE];
 unsigned char _tx_buffer[HAL_SERIAL_TX_BUFFER_SIZE];
 
 /******************************************************************************
@@ -159,29 +141,25 @@ Local functions
 
 ISR(USART_RX_vect) // USART Rx Complete
 {
+    unsigned char c;
     //_hal_serial_rx_complete_irq();
     if (bit_is_clear(UCSR0A /**_ucsra*/, UPE0)) 
     {
         // No Parity error, read byte and store it in the buffer if there is
         // room
-        unsigned char c = UDR0 /**_udr*/;
-        rx_buffer_index_t i = (unsigned int)(_rx_buffer_head + 1) % HAL_SERIAL_RX_BUFFER_SIZE;
-
-        // if we should be storing the received character into the location
-        // just before the tail (meaning that the head would advance to the
-        // current location of the tail), we're about to overflow the buffer
-        // and so we don't write the character or advance the head.
-        if (i != _rx_buffer_tail) {
-        _rx_buffer[_rx_buffer_head] = c;
-        _rx_buffer_head = i;
-        }
-    } else {
+        c = UDR0 /**_udr*/;
+        //If we have a rx callback registered we really do not need to buffer any received data?
+        if (_rx_irq)
+            _rx_irq(c);
+    } 
+    else 
+    {
         // Parity error, read byte but discard it
         UDR0 /**_udr*/;
     };
 
     //This calls millis() underneath.... which calls cli()... 
-    sys_stopwatch_ms_start(&bus_tmr, HAL_BUS_SILENCE_MAX_MS); //60 seconds
+    sys_stopwatch_ms_start(&bus_tmr, HAL_BUS_SILENCE_MAX_MS); //~65 seconds
 
     /* Receiver Error Flags
         The USART receiver has three error flags: Frame error (FEn), data overrun (DORn) and parity error (UPEn). All can be
@@ -215,7 +193,7 @@ ISR(USART_UDRE_vect) // USART, Data Register Empty
 
 ISR( USART_TX_vect) // USART Tx Complete
 {
-    if ((_tx_buffer_head == _tx_buffer_tail) && (!_rs485_disable_wr_enable_block))
+    if ((_tx_buffer_head == _tx_buffer_tail) && (!_rs485_disabled))
     {
         // Buffer empty, so enable the RS485 transceiver
         _rs485_enable();
@@ -251,7 +229,6 @@ void _hal_serial_tx_udr_empty_irq(void)
     if (_tx_buffer_head == _tx_buffer_tail) 
     {
         // Buffer empty, so disable interrupts
-        //RVN - We might need to move this to the TX complete ISR if this step prevents the TX complete interrupt from being called
         cbi(UCSR0B /**_ucsrb*/, UDRIE0);
     }
 
@@ -275,69 +252,6 @@ void _hal_serial_tx_udr_empty_irq(void)
         */
 }
 
-// void _hal_serial_rx_complete_irq(void)
-// {
-//     if (bit_is_clear(UCSR0A /**_ucsra*/, UPE0)) 
-//     {
-//         // No Parity error, read byte and store it in the buffer if there is
-//         // room
-//         unsigned char c = UDR0 /**_udr*/;
-//         rx_buffer_index_t i = (unsigned int)(_rx_buffer_head + 1) % HAL_SERIAL_RX_BUFFER_SIZE;
-
-//         // if we should be storing the received character into the location
-//         // just before the tail (meaning that the head would advance to the
-//         // current location of the tail), we're about to overflow the buffer
-//         // and so we don't write the character or advance the head.
-//         if (i != _rx_buffer_tail) {
-//         _rx_buffer[_rx_buffer_head] = c;
-//         _rx_buffer_head = i;
-//         }
-//     } else {
-//         // Parity error, read byte but discard it
-//         UDR0 /**_udr*/;
-//     };
-//     /* Receiver Error Flags
-//         The USART receiver has three error flags: Frame error (FEn), data overrun (DORn) and parity error (UPEn). All can be
-//         accessed by reading UCSRnA. Common for the error flags is that they are located in the receive buffer together with the
-//         frame for which they indicate the error status. Due to the buffering of the error flags, the UCSRnA must be read before the
-//         receive buffer (UDRn), since reading the UDRn I/O location changes the buffer read location. Another equality for the error
-//         flags is that they can not be altered by software doing a write to the flag location. However, all flags must be set to zero when
-//         the UCSRnA is written for upward compatibility of future USART implementations. None of the error flags can generate
-//         interrupts.
-//         The frame error (FEn) flag indicates the state of the first stop bit of the next readable frame stored in the receive buffer. The
-//         FEn flag is zero when the stop bit was correctly read (as one), and the FEn flag will be one when the stop bit was incorrect
-//         (zero). This flag can be used for detecting out-of-sync conditions, detecting break conditions and protocol handling. The FEn
-//         flag is not affected by the setting of the USBSn bit in UCSRnC since the receiver ignores all, except for the first, stop bits. For
-//         compatibility with future devices, always set this bit to zero when writing to UCSRnA.
-//         The data overrun (DORn) flag indicates data loss due to a receiver buffer full condition. A data overrun occurs when the
-//         receive buffer is full (two characters), it is a new character waiting in the receive shift register, and a new start bit is detected.
-//         If the DORn flag is set there was one or more serial frame lost between the frame last read from UDRn, and the next frame
-//         read from UDRn. For compatibility with future devices, always write this bit to zero when writing to UCSRnA. The DORn flag
-//         is cleared when the frame received was successfully moved from the shift register to the receive buffer.
-//         The parity error (UPEn) flag indicates that the next frame in the receive buffer had a parity error when received. If parity
-//         check is not enabled the UPEn bit will always be read zero. For compatibility with future devices, always set this bit to zero
-//         when writing to UCSRnA. For more details see Section 19.4.1 “Parity Bit Calculation” on page 148 and Section 19.7.5 “Parity
-//         Checker” on page 154.
-//     */    
-// }
-
-
-int _hal_serial_availableForWrite(void)
-{
-    tx_buffer_index_t head;
-    tx_buffer_index_t tail;
-
-    TX_BUFFER_ATOMIC 
-    {
-        head = _tx_buffer_head;
-        tail = _tx_buffer_tail;
-    }
-    if (head >= tail) 
-        return HAL_SERIAL_TX_BUFFER_SIZE - 1 - head + tail;
-    
-    return tail - head - 1;
-}
-
 void _rs485_enable(void)
 {
     sys_output_write(output_RS485_DE, HIGH);
@@ -347,7 +261,7 @@ void _rs485_enable(void)
 
 // Public Methods //////////////////////////////////////////////////////////////
 
-void hal_serial_init(void)
+void hal_serial_init(void (*cb_rx_irq)(uint8_t))
 {
         // Try u2x mode first
     uint16_t baud_setting = (F_CPU / 4 / HAL_SERIAL_BAUDRATE - 1) / 2;
@@ -367,8 +281,6 @@ void hal_serial_init(void)
     // assign the baud_setting, a.k.a. ubrr (USART Baud Rate Register)
     UBRR0H /**_ubrrh*/ = baud_setting >> 8;
     UBRR0L /**_ubrrl*/ = baud_setting;
-
-    //_written = false;
 
     //set the data bits, parity, and stop bits
 #if defined(__AVR_ATmega8__)
@@ -390,53 +302,10 @@ void hal_serial_init(void)
     //Let's start up with the RS485 transceiver in tx/rx mode
     _rs485_enable();
 
-    sys_stopwatch_ms_start(&bus_tmr, HAL_BUS_SILENCE_MAX_MS);
-}
-
-// void hal_serial_end()
-// {
-//     // wait for transmission of outgoing data
-//     hal_serial_flush();
-
-//     cbi(UCSR0B /**_ucsrb*/, RXEN0);
-//     cbi(UCSR0B /**_ucsrb*/, TXEN0);
-//     cbi(UCSR0B /**_ucsrb*/, RXCIE0);
-//     cbi(UCSR0B /**_ucsrb*/, UDRIE0);
+    if (cb_rx_irq)
+        _rx_irq = cb_rx_irq;
     
-//     // clear any received data
-//     _rx_buffer_head = _rx_buffer_tail;
-// }
-
-int hal_serial_available(void)
-{
-    return ((unsigned int)(HAL_SERIAL_RX_BUFFER_SIZE + _rx_buffer_head - _rx_buffer_tail)) % HAL_SERIAL_RX_BUFFER_SIZE;
-}
-
-// int hal_serial_peek(void)
-// {
-//     if (_rx_buffer_head == _rx_buffer_tail) 
-//     {
-//         return -1;
-//     } 
-//     else 
-//     {
-//         return _rx_buffer[_rx_buffer_tail];
-//     }
-// }
-
-int hal_serial_read(void)
-{
-    // if the head isn't ahead of the tail, we don't have any characters
-    if (_rx_buffer_head == _rx_buffer_tail) 
-    {
-        return -1;
-    } 
-    else 
-    {
-        unsigned char c = _rx_buffer[_rx_buffer_tail];
-        _rx_buffer_tail = (rx_buffer_index_t)(_rx_buffer_tail + 1) % HAL_SERIAL_RX_BUFFER_SIZE;
-        return c;
-    }
+    sys_stopwatch_ms_start(&bus_tmr, HAL_BUS_SILENCE_MAX_MS);
 }
 
 uint16_t hal_serial_rx_silence_ms(void)
@@ -444,30 +313,10 @@ uint16_t hal_serial_rx_silence_ms(void)
     return (uint16_t)(sys_stopwatch_ms_lap(&bus_tmr));
 }
 
-bool hal_serial_tx_busy(void)
-{
-    return (_hal_serial_availableForWrite() > 0);
-}
-
 void hal_serial_flush()
 {
-    // If we have never written a byte, no need to flush. This special
-    // case is needed since there is no way to force the TXC (transmit
-    // complete) bit to 1 during initialization
-    //if ((!_written) || (!_tx_busy))
-
     if (!_tx_busy)
         return;
-
-    // while (bit_is_set(UCSR0B /**_ucsrb*/, UDRIE0) || bit_is_clear(UCSR0A /**_ucsra*/, TXC0)) 
-    // {
-    //     if (bit_is_clear(SREG, SREG_I) && bit_is_set(UCSR0B /**_ucsrb*/, UDRIE0))
-    //     // Interrupts are globally disabled, but the DR empty
-    //     // interrupt should be enabled, so poll the DR empty flag to
-    //     // prevent deadlock
-    //     if (bit_is_set(UCSR0A /**_ucsra*/, UDRE0))
-    //         _hal_serial_tx_udr_empty_irq();
-    // }
 
     // If we get here, nothing is queued anymore (DRIE is disabled) and
     // the hardware finished transmission (TXC is set).
@@ -483,7 +332,6 @@ void hal_serial_flush()
 
 size_t hal_serial_write(uint8_t c)
 {
-    // _written = true;
     _tx_busy = true; //Will be cleared in the TX complete ISR if the buffer is empty
 
     // If the buffer and the data register is empty, just write the byte
@@ -509,7 +357,7 @@ size_t hal_serial_write(uint8_t c)
             UCSR0A /**_ucsra*/ = ((UCSR0A /**_ucsra*/) & ((1 << U2X0) | (1 << TXC0)));
 #endif
         }
-        _rs485_disable_wr_enable_block = false;
+        _rs485_disabled = false;
         return 1;
     }
     tx_buffer_index_t i = (_tx_buffer_head + 1) % HAL_SERIAL_TX_BUFFER_SIZE;
@@ -544,7 +392,11 @@ size_t hal_serial_write(uint8_t c)
         sbi(UCSR0B /**_ucsrb*/, UDRIE0);
     }
     
-    _rs485_disable_wr_enable_block = false;
+    //The RS485 flag is cleared when the data is written completely, but 
+    // the actual line transition will only happen once the TX complete 
+    // ISR is called and the buffer is empty.
+    //Therefore it is imperative that writes with RS485 enabled/disabled should be completed before reverting back again.
+    _rs485_disabled = false;
     return 1;
 }
 
@@ -553,7 +405,7 @@ void hal_serial_rs485_disable(void)
     //By disabling the RS485 driver, we ensure that our RS485 transmission does not cause any bus contention for other nodes
     sys_output_write(output_RS485_DE, LOW);
     sys_output_write(output_RS485_RE, HIGH);
-    _rs485_disable_wr_enable_block = true;
+    _rs485_disabled = true;
 }
 #undef PRINTF_TAG
 

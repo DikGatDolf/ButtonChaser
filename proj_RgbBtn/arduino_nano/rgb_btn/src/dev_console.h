@@ -81,6 +81,10 @@ Global (public) Function prototypes
  */
 void console_init(size_t (*cb_write)(uint8_t), void (*cb_flush)(void), void (*cb_rs485_disable)(void));
 
+/*! Checks if the console buffer contains any valid commands and parses them
+ */
+void console_service(void);
+
 /*! Adds a byte to the read buffer (as if it was recieved from the serial port)
  * @param[in] data_byte The byte to add to the buffer
  */
@@ -130,6 +134,9 @@ void console_print_ram(int Flags, void * Src, unsigned long Address, int Len);
 void console_print_flash(int Flags, void * Src, unsigned long Address, int Len);
 
 void console_flush(void);
+
+void console_enable_alt_output_stream(size_t (*alt_write_cb)(uint8_t));
+
 #undef EXT
 #endif /* __task_console_H__ */
 

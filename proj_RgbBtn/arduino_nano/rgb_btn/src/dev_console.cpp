@@ -133,7 +133,8 @@ typedef struct
 	struct
 	{
 		char buff[CONSOLE_RX_BUFF + 1]; /* The rx buff for data read from the console. */
-		int cnt;						/* The index into the rx buff. */
+		volatile int index;						/* The index into the rx buff. */
+        volatile int line_end;
 	} rx;
 
 
@@ -149,6 +150,7 @@ typedef struct
     // int (*read)(void);
     void (*flush)(void);
     size_t (*write)(uint8_t);
+    size_t (*alt_write)(uint8_t);
     void (*rs485_disable)(void);
 } DeviceConsole_t;
 
@@ -294,8 +296,13 @@ Local (private) Functions
 extern "C" {
 	int serialputc(char c, FILE *fp)
   	{
-        if (_console.write)
+        if (_console.alt_write)
+            _console.alt_write(c);
+        else if (_console.write)
         {
+            //RVN - TODO we should also check and make sure that the RS485 TX is not busy
+            // before we disable it, otherwise we might interrupt a transmission in progress
+
             //We need to disable RS485 RX while we are doing this transmission, 
             // otherwise we will get the same data back and risk a collision on the bus with other nodes
             if (_console.rs485_disable)
@@ -303,8 +310,8 @@ extern "C" {
             //Will be turned back on again once the transmission is done
 
             //RVN - I guess there is a risk that the Transmit Complete interrupt 
-            // turns the RS485 Transceiver back on before we call write(...) below, 
-            // but that should really low risk.
+            // turns the RS485 Transceiver back on (from another, unrelated print which completes) 
+            // before we call write(...) below, but that should really be a low risk.
             
             if(c == '\n')
                 _console.write('\r');//Serial.write('\r');
@@ -812,6 +819,7 @@ void console_init(size_t (*cb_write)(uint8_t), void (*cb_flush)(void), void (*cb
     // _console.read = NULL;
     _console.flush = cb_flush;
     _console.write = cb_write;
+    _console.alt_write = NULL;
     _console.rs485_disable = cb_rs485_disable;
 
     //Let's not re-initialise this task by accident
@@ -824,7 +832,8 @@ void console_init(size_t (*cb_write)(uint8_t), void (*cb_flush)(void), void (*cb
         _console.menu_grp_list.group[i].item_cnt = 0;
         _console.menu_grp_list.group[i].table_ptr = NULL;
     }
-    _console.rx.cnt = 0;
+    _console.rx.index = 0;
+    _console.rx.line_end = false;
 
     // The Console will run on the Debug port
     // Serial.begin(baud);
@@ -840,27 +849,27 @@ void console_init(size_t (*cb_write)(uint8_t), void (*cb_flush)(void), void (*cb
 	iprintln(trCONSOLE|trALWAYS, "#Init OK (Traces: 0x%02X)", _console.tracemask);
 }
 
-// void console_service(void)
-// {
-//     if (!_console_init_done)
-// 	{
-// 		iprintln(trCONSOLE | trALWAYS, "#Not Initialized yet");
-// 		return;
-// 	}
+void console_service(void)
+{
+    if (_console.rx.line_end == 0)
+		return;
 
-//     if ((_console.available) && (_console.read))
-//     {
-//         // read the incoming char:
-//         while (_console.available() /*Serial.available()*/ > 0)
-//         {
-//             int c = _console.read();//Serial.read();
-//             // read the incoming byte:
-//             //iprintln(trALWAYS, "Received: \'%c\' (0x%02X)  - Inptr @ %d\n", rxData, rxData, _console.rx.cnt);
-//             console_read_byte((uint8_t)c);
-//         }
+    _parse_rx_line();
 
-//     }
-// }
+    //Prevent the interrupt handlers from messing around our pointers
+    cli();
+    _console.rx.index = 0;
+    _console.rx.line_end = 0;
+    if (_console.alt_write)
+        _console.alt_write = NULL;
+    sei();
+}
+
+void console_enable_alt_output_stream(size_t (*alt_write_cb)(uint8_t))
+{
+    if (alt_write_cb)
+        _console.alt_write = alt_write_cb;
+}
 
 void console_read_byte(uint8_t data_byte)
 {
@@ -877,19 +886,16 @@ void console_read_byte(uint8_t data_byte)
 #if CONSOLE_ECHO_ENABLED == 1
         serialputc('\n', NULL);
 #endif
-        //  Now parse the line if it is Valid
-        if (_console.rx.cnt > 0)
-            _parse_rx_line();
-        // Start a new line now....
-        _console.rx.cnt = 0; // Reset index pointer
+        // Mark the spot where the line ends
+        _console.rx.line_end = _console.rx.index;
         break;
 
         // ****** Backspace ******
     case 0x08:
         // Move one char back in buffer
-        if (_console.rx.cnt)
+        if (_console.rx.index)
         {
-            _console.rx.cnt--;
+            _console.rx.index--;
 #if CONSOLE_ECHO_ENABLED == 1
             PrintBackSpace();
 #endif
@@ -907,12 +913,12 @@ void console_read_byte(uint8_t data_byte)
         // ****** Escape ******
     case 0x1B:
         // Clear the line...
-        while (_console.rx.cnt)
+        while (_console.rx.index)
         {
 #if CONSOLE_ECHO_ENABLED == 1
             PrintBackSpace();
 #endif
-            _console.rx.cnt--;
+            _console.rx.index--;
         }
         break;
 
@@ -924,20 +930,20 @@ void console_read_byte(uint8_t data_byte)
 #endif
 
         // Do we still have space in the rx buffer?
-        if (_console.rx.cnt < CONSOLE_RX_BUFF) // Wrap index?
+        if (_console.rx.index < CONSOLE_RX_BUFF) // Wrap index?
         {
             // Add char and Null Terminate string
-            _console.rx.buff[_console.rx.cnt++] = data_byte;
+            _console.rx.buff[_console.rx.index++] = data_byte;
         }
         else // The index pointer now wraps, our data is invalid.
         {
-            _console.rx.cnt = 0; // Reset the index pointer
+            _console.rx.index = 0; // Reset the index pointer
         }
         break;
     }
 
     // Always NULL terminate whatever is in the buffer.
-    _console.rx.buff[_console.rx.cnt] = 0; // Null Terminate
+    _console.rx.buff[_console.rx.index] = 0; // Null Terminate
 }
 
 int console_add_menu(const char *_group_name, const console_menu_item_t *_tbl, size_t _cnt, const char *_desc)

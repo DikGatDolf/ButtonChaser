@@ -58,6 +58,7 @@ typedef enum registration_state_e
     no_init,
     un_reg,         //We've not been registered yet
     roll_call,      //We are in the process of responding to a roll-call
+    waiting,        //We are waiting on a registration from the master
     idle,           //We have been registered with the master (got a bit-mask address)
 }registration_state_t;
 
@@ -69,19 +70,18 @@ Structures and unions
  Function prototypes
  *******************************************************************************/
 
-void _blink(void);
-void _check_button(void);
-void _address_update(void);
+void btn_blink(void);
+void check_button_press(void);
+void address_update(void);
 
-void _rx_handler(void);
-uint8_t _read_cmd_next(uint8_t *cmd);
-uint8_t _read_cmd_payload(uint8_t cmd, uint8_t * dst);
+void msg_process(void);
+bool _rx_handler_rollcall_msg(uint8_t _cmd, uint8_t _src, uint8_t _dst);
+bool _read_cmd_payload(uint8_t cmd, uint8_t * dst);
+uint8_t _read_msg_data(uint8_t * dst, uint8_t len);
 uint8_t _read_cmd_payload_len(uint8_t cmd);
 
-void _tx_handler(void);
-void _tx_handler_state_un_reg(uint8_t _cmd);
-void _tx_handler_state_roll_call(uint8_t _cmd);
-void _tx_handler_state_idle(uint8_t _cmd);
+void send_response(void);
+void _rx_handler_state_un_reg(uint8_t _cmd);
 
 bool _is_bcast_msg_for_me(uint32_t bit_mask);
 
@@ -157,13 +157,23 @@ rgb_colour_t colour[3];
 timer_ms_t blink_tmr;
 
 registration_state_t reg_state = no_init; //We are not registered yet
-int8_t my_bit_mask_address = -1; //My address bit mask, valid values 0 to 31
+int8_t my_mask_index = -1; //My address bit mask index, valid values 0 to 31
 
 stopwatch_ms_s roll_call_sw;
 uint32_t roll_call_time_ms = 0; //The time we have to wait for the roll-call to finish
 
-bool accept_bcast_msg = false; //We are not accepting broadcast messages (yet)
-bool response_msg_due = false; //We are not accepting broadcast messages (yet)
+bool response_msg_due = false;
+//uint8_t send_ack_nak = 0x00;
+
+typedef struct {
+    uint8_t src;    // The source address of the message
+    uint8_t dst;    // The destination address of the message
+    uint8_t data[RGB_BTN_MSG_MAX_LEN - sizeof(comms_msg_hdr_t) - sizeof(uint8_t)];
+    uint8_t len;
+    uint8_t rd_index;
+} rx_msg_t;
+
+rx_msg_t msg = {0};
 
 /*******************************************************************************
  Functions
@@ -189,12 +199,12 @@ void setup() {
 
     sys_poll_tmr_stop(&blink_tmr);
 
-    _address_update();
+    address_update();
 
     reg_state = un_reg; //We are not registered yet
 
     //This can only be set by the master device
-    my_bit_mask_address = -1;
+    my_mask_index = -1;
 
     //Testing only
     // sys_poll_tmr_start(&blink_tmr, 200lu, true);
@@ -205,31 +215,28 @@ void loop() {
 
     // put your main code here, to run repeatedly:
 
-    _check_button();
+    check_button_press();
 
-    _blink();
+    btn_blink();
 
     //Check if our communication address has changed
-    _address_update();
+    address_update();
 
-	//Check for anything going out or coming in on the main comms channnel...
-    int8_t available = dev_comms_rx_msg_available();
-    if (available > 0)
-    {
-        iprintln(trMAIN, "Msg Rx'd (%d bytes payload)", available);
-        _rx_handler(); //... and process it
-
-    }
+	//Check for anything we may have received on the main comms channnel...
+    //int8_t available = dev_comms_rx_msg_available();
+    msg.len = dev_comms_rx_msg_available(&msg.src, &msg.dst, msg.data);
+    if (msg.len > 0)
+        msg_process(); //... process it
 
     //If anything requires sending, now is the time to do it
-    _tx_handler();
+    send_response();
    
     // //Check for anything coming in on the Serial Port and process it
-    //console_service();
+    console_service();
 
 }
 
-void _check_button(void)
+void check_button_press(void)
 {
     //Has the button seen any action?
     uint8_t btn_state = dev_button_get_state();
@@ -242,7 +249,7 @@ void _check_button(void)
     }
 }
 
-void _blink(void)
+void btn_blink(void)
 {
     //Do we require blinking on our LED?
 	if (sys_poll_tmr_expired(&blink_tmr))
@@ -253,7 +260,7 @@ void _blink(void)
 	}
 }
 
-void _address_update(void)
+void address_update(void)
 {
     uint8_t stored_addr;
     uint8_t current_addr;
@@ -281,39 +288,192 @@ void _address_update(void)
     //Should raise the flag to get it reset for the next cycle
     
 }
-
-void _rx_handler(void)
+void msg_process(void)
 {
-    uint8_t cmd;
-    accept_bcast_msg = false;
+    uint8_t _u8_val = 0;
+    uint32_t _u32_val = 0;
+    uint8_t _cnt = 0;
+    bool accept_msg = false; //We start off NOT accepting broadcast messages (yet)
+    master_command_t _cmd;
+    uint8_t _myAddr = dev_comms_addr_get();
+
+    msg.rd_index = 0; //Set the read pointer to the start of the data array
+
+    //We are accepting direct messages IF we are WAITING or IDLE
+    if ((msg.src == ADDR_MASTER) && (msg.dst == _myAddr) && (reg_state >= waiting))
+        accept_msg = true;
+
+    dev_comms_response_start(); //Start the response message
 
     //Have we received anything?
-    while (_read_cmd_next(&cmd))
+    while (_read_msg_data((uint8_t *)&_cmd, 1) > 0)
     {
-        uint8_t _masked_cmd = cmd & ~RGB_BTN_FLAG_CMD_COMPLETE;
+        //Check for a roll-call first
+        if (_rx_handler_rollcall_msg(_cmd, msg.src, msg.dst))
+            return; //Handled the roll-call message already
 
-        switch (reg_state)
-        {
-            case no_init:   /*Fall through to un_reg */
-            case un_reg:    _tx_handler_state_un_reg(_masked_cmd);       break;
-            case roll_call: _tx_handler_state_roll_call(_masked_cmd);    break;
-            case idle:      _tx_handler_state_idle(_masked_cmd);         break;
-        }
+        // if (reg_state != idle)
+        //     continue; //We are not in the idle state, so we don't care about anything else
         
-        iprintln(trMAIN, "Handled Cmd (0x%02X) with %d bytes payload", cmd, _read_cmd_payload_len(_masked_cmd));
+        if ((!accept_msg) && ((_cnt > 0) || (_cmd != cmd_bcast_address_mask)))
+            return; // No point in processing the rest of the message if we are not accepting it
+
+        switch (_cmd)
+        {
+            case cmd_bcast_address_mask:
+                if (_read_cmd_payload(_cmd, (uint8_t *)&_u32_val))
+                {
+                    iprint(trALWAYS, "#BCST 0x%08X & 0x%08X : ", BIT_POS(my_mask_index), _u32_val);
+                    //We are being registered by the master, so we need to set our address bit mask
+                    if (_is_bcast_msg_for_me(_u32_val))                    
+                        accept_msg = true;                        
+
+                    iprintln(trALWAYS, "%s", accept_msg? "YES" : "NO");
+                }
+                //else //read failure already handled in _read_cmd_payload()
+                break;
+            
+            case cmd_set_bitmask_index:
+                //We are being registered by the master, so we need to set our address bit mask
+                if (_read_cmd_payload(_cmd, &_u8_val))
+                {
+                    if (((int8_t)_u8_val < 0) || ((int8_t)_u8_val > RGB_BTN_MAX_NODES))
+                    {
+                        iprintln(trALWAYS, "#Invalid index (%d)", _u8_val);
+                        dev_comms_response_add(_cmd, btn_cmd_err_range, &_u8_val, 1);
+                        break; // from switch... continue with the next command
+                    }
+                    my_mask_index = (int8_t)_u8_val; //Set the address bit mask for this device
+                    iprintln(trALWAYS, "#State: IDLE (Index: %d)", my_mask_index);
+                    reg_state = idle; //We are now in the "idle" state
+                    dev_comms_response_add(_cmd, btn_cmd_err_ok, NULL, 0);
+                }
+                //else //read failure already handled in _read_cmd_payload()
+                break;
+
+            case cmd_set_rgb_0:
+                if (_read_cmd_payload(_cmd, (uint8_t *)&_u32_val))
+                {
+                    sys_poll_tmr_stop(&blink_tmr);
+                    colour[0].rgb = _u32_val;
+                    dev_rgb_set_colour(colour[0].rgb);
+                    dev_comms_response_add(_cmd, btn_cmd_err_ok, NULL, 0);
+                }
+                //else //read failure already handled in _read_cmd_payload()
+                break;
+    
+            case cmd_set_rgb_1:
+            case cmd_set_rgb_2:
+                if (_read_cmd_payload(_cmd, (uint8_t *)&_u32_val))
+                {
+                    if (_cmd == cmd_set_rgb_1)
+                        colour[1].rgb = _u32_val;
+                    else
+                        colour[2].rgb = _u32_val;
+                    dev_comms_response_add(_cmd, btn_cmd_err_ok, NULL, 0);
+                }
+                //else //read failure already handled in _read_cmd_payload()
+                break;
+    
+            case cmd_set_blink:
+                if (_read_cmd_payload(_cmd, (uint8_t *)&_u32_val))
+                {
+                    sys_poll_tmr_stop(&blink_tmr);
+                    if (_u32_val > 0) //Only restart the timer if the period is > 0
+                        sys_poll_tmr_start(&blink_tmr, (unsigned long)_u32_val, true);
+                    dev_comms_response_add(_cmd, btn_cmd_err_ok, NULL, 0);
+                }
+                break;
+    
+            case cmd_get_btn:
+                //We're not even bothering with reading a payload....
+                //_read_cmd_payload(_cmd, NULL);   // No data to read
+                //RVN - Should add the button state?
+                //dev_comms_response_add_data(cmd_get_btn, (uint8_t*)&press_time, sizeof(unsigned long));
+                _u32_val = dev_button_get_reaction_time_ms();
+                dev_comms_response_add(_cmd, btn_cmd_err_ok, (uint8_t*)&_u32_val, sizeof(uint32_t));
+                break;
+            
+            case cmd_sw_start:
+                //We're not even bothering with reading a payload....
+                //_read_cmd_payload(_cmd, NULL);   // No data to read
+                //Nothing else.... just start the stopwatch
+                dev_button_measure_start();
+                dev_comms_response_add(_cmd, btn_cmd_err_ok, NULL, 0);
+                break;
+    
+            case cmd_wr_console_cont:
+            case cmd_wr_console_done:
+                uint8_t _data[RGB_BTN_MSG_MAX_LEN - sizeof(comms_msg_hdr_t) - sizeof(uint8_t)];
+                memset(_data, 0, sizeof(_data));
+                _read_cmd_payload(_cmd, _data);
+                for (int8_t i = 0; (i < ((int8_t)sizeof(_data))) && (_data[i] > 0); i++)
+                    console_read_byte(_data[i]);
+                if (_cmd == cmd_wr_console_done)
+                {
+                    //iprintln(trALWAYS, "#Console: \"%s\"", _data);
+                    //RVN - TODO - This is the last part of a console message, so we need to send the response back to the master device
+                    console_enable_alt_output_stream(dev_comms_response_add_byte);
+                    dev_comms_response_add(cmd_wr_console_cont, btn_cmd_err_ok, NULL, 0);
+                    console_read_byte('\n');
+                    console_service(); //This *should* pipe the output to the alternate stream and reset it back to stdouot once it is done
+                    dev_comms_transmit_now();
+                    dev_comms_response_add(cmd_wr_console_done, btn_cmd_err_ok, NULL, 0);
+                }
+                break;
+    
+            //case cmd_set_address:
+            // case cmd_roll_call:             //Already handled
+            default:
+                //Unkown/unhandled command.... return error (NAK?) to master
+                dev_comms_response_add(_cmd, btn_cmd_err_unknown_cmd, NULL, 0);
+                break;
+        }
+        _cnt++;
+
     }
 
+    //If we have a response ready for a direct message, we need to send it immediately, (without waiting for bus silence)
+    if ((msg.src == ADDR_MASTER) && (msg.dst == _myAddr) && (reg_state >= waiting))
+        dev_comms_response_send();
 }
 
-uint8_t _read_cmd_next(uint8_t *cmd)
+uint8_t _read_msg_data(uint8_t * dst, uint8_t len)
 {
-    return dev_comms_read_payload(cmd, 1);
+    uint8_t data_len = min(msg.len, sizeof(msg.data));
+
+    // iprintln(trMAIN, "data_rd_index = %d", _comms.rx.data_rd_index);
+    // iprintln(trMAIN, "data_length   = %d", _comms.rx.data_length);
+    if (len == 0)
+        return 0; //Nothing to do
+
+    if (msg.rd_index >= data_len)
+        return 0; //No data available
+
+    if (len > (data_len - msg.rd_index))
+        return 0; //Requesting more data than available
+
+    if ((dst) && (len > 0))// Don't copy to NULL
+        memcpy(dst, &msg.data[msg.rd_index], len);
+    
+    msg.rd_index += len;
+
+    return len;
 }
 
-uint8_t _read_cmd_payload(uint8_t cmd, uint8_t * dst)
+bool _read_cmd_payload(uint8_t cmd, uint8_t * dst)
 {
-    uint8_t len = _read_cmd_payload_len(cmd);
-    return dev_comms_read_payload(dst, len);
+    //RVN - Cleanup needed
+    uint8_t len[2];
+    len[0] = _read_cmd_payload_len(cmd);
+    len[1] = _read_msg_data(dst, len[0]);
+    if (len[0] != len[1])
+    {
+        iprintln(trALWAYS, "#Error reading %d bytes for cmd 0x%02X (%d)", len[0], cmd, len[0]);
+        dev_comms_response_add((master_command_t)cmd, btn_cmd_err_payload_len, len, 2);
+        return false;
+    }
+    return true;//dev_comms_read_payload(dst, len);
 }
 
 uint8_t _read_cmd_payload_len(uint8_t cmd)
@@ -329,12 +489,13 @@ uint8_t _read_cmd_payload_len(uint8_t cmd)
         case cmd_set_rgb_2:
             return  (3*sizeof(uint8_t));
 
-        case cmd_roll_call:
-        case cmd_set_bcast_mask_bit:
+//        case cmd_roll_call:
+        case cmd_set_bitmask_index:
             return sizeof(uint8_t);
 
-        case cmd_wr_console: // The remainder of the data paylod belongs to this guy
-            return  dev_comms_rx_msg_data_len();
+        case cmd_wr_console_cont: // The remainder of the data paylod belongs to this guy
+        case cmd_wr_console_done:
+            return  (msg.len - msg.rd_index);
 
         default:
             //Everything else
@@ -343,220 +504,91 @@ uint8_t _read_cmd_payload_len(uint8_t cmd)
 
 }
 
-void _tx_handler(void)
+void send_response(void)
 {
 
     //This will also "clear" the response message if we are not in the roll-call state
-    int8_t tx_bus_state = dev_comms_tx_ready(); //Check if the bus is busy or not (-1 = error, 0 = busy, 1 = ready)
+    // int8_t tx_bus_state = dev_comms_tx_ready(); //Check if the bus is busy or not (-1 = error, 0 = busy, 1 = ready)
 
     switch (reg_state)
     {
         case roll_call:
-            if (roll_call_sw.running)
+            //Check if we need to send a response
+            if (sys_stopwatch_ms_lap(&roll_call_sw) < roll_call_time_ms)// && (roll_call_sw.running == true))
+                return; //Not yet, so wait a bit longer
+
+            sys_stopwatch_ms_stop(&roll_call_sw); //Stop the stopwatch for the roll-call response
+
+            //We wait until we are fairly certain that the bus is ready before we send our rollcall response
+            // if (tx_bus_state == 0) //busy
+            //     return;
+            //We are going to try and send the response NOW!
+            if(!dev_comms_response_start()) //Start the response message
             {
-                //Check if we need to send a response
-                if ((sys_stopwatch_ms_lap(&roll_call_sw) < roll_call_time_ms) && (roll_call_sw.running == true))
-                    return; //Not yet, so wait a bit longer
-
-                //We wait until we are fairly certain that the bus is ready before we send our rollcall response
-                if (tx_bus_state == 0) //busy
-                    return;
-                //We are going to try and send the response NOW!
-                dev_comms_response_add_data(cmd_roll_call, NULL, 0, true);
-                //Send the response NOW!
-                if (dev_comms_response_send(false) <= 0)
-                {
-                    //Could NOT send it now.... errors/bus is busy... we'll try again in a bit (between 2 and 50 ms)
-                    roll_call_time_ms = sys_random(2, 50);
-                    //RVN - TODO - This is a bit of a thumbsuck time period.... maybe come back to this later?
-                    sys_stopwatch_ms_start(&roll_call_sw, 0); //Restart the stopwatch for the rollcall response
-                    return;
-                }
-                //else, all good, we sent the response
-                sys_stopwatch_ms_stop(&roll_call_sw); //Stop the stopwatch for the roll-call response
+                //Could NOT send it now.... errors/bus is busy... we'll try again in a bit (between 2 and 50 ms)
+                roll_call_time_ms = sys_random(2, 50);
+                //RVN - TODO - This is a bit of a thumbsuck time period.... maybe come back to this later?
+                sys_stopwatch_ms_start(&roll_call_sw, 0); //Restart the stopwatch for the rollcall response
+                iprintln(trALWAYS, "#ROLL-CALL - wait some more (%u ms)", (uint8_t)roll_call_time_ms);
+                return;
             }
-            //else //Not sure how this happened, but we should not be in the roll-call state anymore
 
-            //Go back to the unregistered state and wait for the master to register us
-            reg_state = un_reg; //We are now in the "unregistered" state
-            iprintln(trALWAYS, "#State: UNREG");
-            return;
-
+            dev_comms_response_add(cmd_roll_call, btn_cmd_err_ok, NULL, 0);
+            dev_comms_response_send();
+            //Now we wait for the master to register us
+            reg_state = waiting; //We are now in the "waiting for registration" state
+            iprintln(trALWAYS, "#State: WAIT");
+        
+            /* Fall through to the next case to send the response message */
+            
+        case waiting:
         case idle:
-            //If we have a message to send, this will send it if the bus is available, otherwise it will be queue a response until the bus is free
-            dev_comms_response_send(true);
-            // if (dev_comms_response_send(true) > 0)
-            //     dev_comms_response_reset(); //Reset this in case we want to send something in the next cycle
-
-            //else //Needs to retry this later
-            return;
+            dev_comms_tx_service();
+            break;
     
         case no_init:
         case un_reg:
         default:
-            /* Do nothing... waiting for rollcall */
-            break;
+            /* Do nothing... waiting for that precious rollcall */
+            break; //This will prevent transmission of any messages until we are (at least)
     }
-    dev_comms_tx_service();
 }
 
-void _trigger_rollcall_response(void)
+bool _rx_handler_rollcall_msg(uint8_t _cmd, uint8_t _src, uint8_t _dst)
 {
-    //RVN - TODO - NArrow the responsse window down a bit.
-    //Means we will respond to the roll-call command between 20 and 2550 ms later
-    roll_call_time_ms = (1+((uint32_t)dev_comms_addr_get())) * 10;
-    iprintln(trALWAYS, "#Answer ROLL-CALL in %lu ms", roll_call_time_ms);
-    sys_stopwatch_ms_start(&roll_call_sw, 0); //Start the stopwatch for the roll-call response
-    reg_state = roll_call; //We are in the process of responding to a roll-call
-}
-
-void _tx_handler_state_un_reg(uint8_t _cmd)
-{
-    //In this state we only deal with *rollcall* commands in *broadcast* messages from the *master*
-    if (dev_comms_rx_msg_src_addr() != ADDR_MASTER)
-        return; //not from the master, not meant for us - iprintln(trMAIN, "#Not for us (0x%02X)", dev_comms_rx_msg_src_addr());
-
-    if (dev_comms_rx_msg_dst_addr() != ADDR_BROADCAST)
-        return;
-
-    if (_cmd != cmd_roll_call)
-        return; //Not a roll-call command, so we ignore it
-
-    _trigger_rollcall_response();
-}
-
-void _tx_handler_state_roll_call(uint8_t _cmd)
-{
-    uint8_t src_addr = dev_comms_rx_msg_src_addr();
-
-    //Again, in this state we are only interested with *rollcall* commands, but this time we are interested message from *anybody*
-
-    if (_cmd != cmd_roll_call)
-        return; //Not a roll-call command, so we ignore it
-
-    //We can track the roll-call responses sent by other nodes to the master determine if we are the only one with this address by the time we are sending our response
-    if (src_addr != ADDR_MASTER)
+    if (_cmd == cmd_roll_call)
     {
-        if (dev_comms_rx_msg_dst_addr() == ADDR_MASTER) 
-        {
-            uint8_t src_addr = dev_comms_rx_msg_src_addr();
-            
-            //We might as well "blacklist" this address to make sure we do not generate this address in the future
-            dev_comms_addr_blacklist(src_addr);
+        if ((_src == ADDR_MASTER) && (_dst == ADDR_BROADCAST))
+        {    
+            //New ROLL-CALL command from the master, so we need to start the roll-call response timer again
+            //RVN - TODO - NArrow the responsse window down a bit.
+            //Means we will respond to the roll-call command between 20 and 2550 ms later
+            roll_call_time_ms = (1+((uint32_t)dev_comms_addr_get())) * 10;
+            iprintln(trALWAYS, "#ROLL-CALL - Answer in %lu ms", roll_call_time_ms);
+            sys_stopwatch_ms_start(&roll_call_sw, 0); //Start the stopwatch for the roll-call response
+            reg_state = roll_call; //We are in the process of responding to a roll-call
+        }
     
-            //If somebody else has the same address as us, we need to generate a new address for ourselves
-            if (src_addr == dev_comms_addr_get())
-                dev_comms_addr_new();
-        }
-    }
-    else if (dev_comms_rx_msg_dst_addr() == ADDR_BROADCAST)   
-    {
-        //Roll-Call request from the master while we are busy responding to a roll call??? OK, let's start again
-        _trigger_rollcall_response();
-    }
-}
-
-void _tx_handler_state_idle(uint8_t _cmd)
-{
-    uint32_t _u32_val = 0;
-    //In Idle mode we only deal with messages from the master
-    if (dev_comms_rx_msg_src_addr() != ADDR_MASTER)
-        return; //not from the master
-
-    //In idle mode we only bother with Broadcast messages under 2 conditions:
-    // 1) It is a <cmd_roll_call> cmd
-    // 2) Our address bit is set along with the corresponding bit in the <cmd_bcast_address_mask> command (should be the very first cmd in the payload) */
-    if (dev_comms_rx_msg_dst_addr() == ADDR_BROADCAST)
-    {
-        if (_cmd == cmd_roll_call)
+        if ((_src != ADDR_MASTER) && (_dst == ADDR_MASTER))
         {
-            //Roll-Call request from the master, while we were in and idle state??? OK, let's start again
-            _trigger_rollcall_response();
-            return; // Nothing else matters
-        }
-        
-        if (_cmd == cmd_bcast_address_mask)
-        {
-            _read_cmd_payload(_cmd, (uint8_t *)&_u32_val);
-            accept_bcast_msg = _is_bcast_msg_for_me(_u32_val);
-            return;
-        }
-    }
-
-    //At this point we are only interested in messages that are not broadcast messages (meant for us) or direct messages for us
-    if ((!accept_bcast_msg) && (dev_comms_rx_msg_dst_addr() != dev_comms_addr_get()))
-        return; //I'm not in the list of recipients (or I'm not registered yet)
-
-
-    switch (_cmd)
-    {
-        case cmd_set_rgb_0:
-            sys_poll_tmr_stop(&blink_tmr);
-            _read_cmd_payload(_cmd, (uint8_t *)&colour[0].rgb);
-            dev_rgb_set_colour(colour[0].rgb);
-            break;
-
-        case cmd_set_rgb_1:
-            _read_cmd_payload(_cmd, (uint8_t *)&colour[1].rgb);
-            break;
-
-        case cmd_set_rgb_2:
-            _read_cmd_payload(_cmd, (uint8_t *)&colour[2].rgb);
-            break;
-
-        case cmd_set_blink:
-            sys_poll_tmr_stop(&blink_tmr);
-            _read_cmd_payload(_cmd, (uint8_t *)&_u32_val);
-            if (_u32_val > 0) //Only restart the timer if the period is > 0
-                sys_poll_tmr_start(&blink_tmr, (unsigned long)_u32_val, true);
-            break;
-
-        case cmd_get_btn:
-            _read_cmd_payload(_cmd, NULL);   // No data to read
-            //RVN - Should add the button state?
-            //dev_comms_response_add_data(cmd_get_btn, (uint8_t*)&press_time, sizeof(unsigned long));
-            _u32_val = dev_button_get_reaction_time_ms();
-            dev_comms_response_add_data(cmd_get_btn, (uint8_t*)&_u32_val, sizeof(uint32_t));
-            break;
-        
-        case cmd_sw_start:
-            _read_cmd_payload(_cmd, NULL);   // No data to read
-            //Nothing else.... just start the stopwatch
-            dev_button_measure_start();
-            break;
-
-        case cmd_wr_console:
-            uint8_t _data[RGB_BTN_MSG_MAX_LEN - sizeof(comms_msg_hdr_t) - sizeof(uint8_t)];
-            memset(_data, 0, sizeof(_data));
-            _read_cmd_payload(_cmd, _data);
-            if (_cmd & RGB_BTN_FLAG_CMD_COMPLETE)
-            {
-                //RVN - TODO This is the last section of this console message , this means we need to redirect the console output
-            }
-            for (int8_t i = 0; (i < ((int8_t)sizeof(_data))) & (_data[i] > 0); i++)
-                console_read_byte(_data[i]);
-
-            //RVN - TODO You still need to figure out how you are going to do this, buddy!
-            // Somehow need to trigger the console read with console_read_byte('\n') which will trigger _parse_rx_line()
-            break;
-
-        //case cmd_set_address:
-        case cmd_roll_call:             //Already handled
-        case cmd_bcast_address_mask:    //Already handled
-        default:
-            //Unkown/unhandled command.... return error (NAK?) to master
-            break;
-    }
-
+            //ROLL-CALL response from another node, so we blacklist its address...
+            dev_comms_blacklist_add(_src);
     
+            //... and generate a new address for ourselves if there is a conflict
+            if (_src == dev_comms_addr_get())
+                dev_comms_addr_new();            
+        }
+        return true; //Handled the roll-call message already 
+    }
+    return false;
 }
 
 bool _is_bcast_msg_for_me(uint32_t bit_mask)
 {
-    if ((my_bit_mask_address < 0) || (my_bit_mask_address > 31))
+    if ((my_mask_index < 0) || (my_mask_index > 31))
         return false; //Not registered yet or.... either way, this is not a valid address
 
-    return ((bit_mask & (1 << my_bit_mask_address)) == 0)? false : true;
+    return ((bit_mask & (1 << my_mask_index)) == 0)? false : true;
 }
 
 #ifdef MAIN_DEBUG

@@ -37,6 +37,7 @@ const char BUILD_TIME_AND_DATE[] = {__TIME__ " " __DATE__}; /* Used in our start
 
 #define input_ADC           (20)
 
+#define output_Debug        (12)
 // #define btnChasePin_SDA     (18)
 // #define btnChasePin_SCL     (19)
 

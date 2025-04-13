@@ -502,7 +502,7 @@ void dev_nvstore_init(void)
     //Now, we need to understand if we have found a valid block or not
     if (_nvstore.new_data)
     {
-        iprintln(trNVSTORE, "#(%lu ms) Last valid block: %d, Data Ver: %d (Wear: %s%%)", lap, _nvstore.current.last_rd, _nvstore.rd_block.hdr.version, float2str(buff, ((float)_nvstore.current.wr_cnt * 100.0f) / (float)NVSTORE_WR_CNT_MAX, 2, 16));
+        iprintln(trNVSTORE, "#(%lu ms) Block: %d/%d (v%d), Wear: %s%%", lap, _nvstore.current.last_rd, NVSTORE_BLOCK_CNT, _nvstore.rd_block.hdr.version, float2str(buff, ((float)_nvstore.current.wr_cnt * 100.0f) / (float)NVSTORE_WR_CNT_MAX, 2, 16));
         _nvstore.new_data = true;
     }
     else
