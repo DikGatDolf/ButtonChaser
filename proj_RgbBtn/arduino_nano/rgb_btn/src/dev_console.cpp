@@ -846,6 +846,7 @@ void console_init(size_t (*cb_write)(uint8_t), void (*cb_flush)(void), void (*cb
 
 	console_add_menu("con", _console_menu_items, ARRAY_SIZE(_console_menu_items), "Console Interface");
 
+	iprintln(trALWAYS|trCONSOLE, "=====================================================");
 	iprintln(trCONSOLE|trALWAYS, "#Init OK (Traces: 0x%02X)", _console.tracemask);
 }
 
@@ -1108,7 +1109,9 @@ bool console_print_tag(const char * fmt, const char * tag)
 
 void console_print(uint8_t traceflags, const char * tag, const char * fmt, ...)
 {
-	if (((trALWAYS | _console.tracemask) & traceflags) == trNONE)
+    //This prevents anything other than console prints from being "streamed". Otherwise it may cause an infinite loop.
+    if (((_console.alt_write) && ((trALWAYS & traceflags) == trNONE)) ||
+        (((trALWAYS | _console.tracemask) & traceflags) == trNONE))
 		return;
 
 	//A line starts with the tag if the format string starts with "#"
@@ -1123,7 +1126,9 @@ void console_print(uint8_t traceflags, const char * tag, const char * fmt, ...)
 
 void console_printline(uint8_t traceflags, const char * tag, const char * fmt, ...)
 {
-    if (((trALWAYS | _console.tracemask) & traceflags) == trNONE)
+    //This prevents anything other than console prints from being "streamed". Otherwise it may cause an infinite loop.
+    if (((_console.alt_write) && ((trALWAYS & traceflags) == trNONE)) ||
+        (((trALWAYS | _console.tracemask) & traceflags) == trNONE))
 		return;
 
 	//A line starts with the tag if the format string starts with "#"

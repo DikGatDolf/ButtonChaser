@@ -100,7 +100,9 @@ void _sys_handler_led(void);
 //bool menuVersion(void);
 /*! Displays the application version
  */
+#if REDUCE_CODESIZE==0
 void _sys_handler_version(void);
+#endif /* REDUCE_CODESIZE */
 
 /*! Calculates the CRC-8 of the given data
  */
@@ -140,7 +142,9 @@ static console_menu_item_t _main_menu_items[] =
     {"crc",     _sys_handler_crc,       "CRC-8 calculator"},
     {"ram",     _sys_handler_dump_ram,  "Display RAM"},
     {"flash",   _sys_handler_dump_flash,"Display FLASH"},
+  #if REDUCE_CODESIZE==0
     {"version", _sys_handler_version,   "Displays app version"},
+  #endif /* REDUCE_CODESIZE */
 };
 #endif /* CONSOLE_ENABLED */
 #endif /* MAIN_DEBUG */
@@ -162,7 +166,10 @@ int8_t my_mask_index = -1; //My address bit mask index, valid values 0 to 31
 stopwatch_ms_s roll_call_sw;
 uint32_t roll_call_time_ms = 0; //The time we have to wait for the roll-call to finish
 
-bool response_msg_due = false;
+//bool response_msg_due = false;
+
+uint8_t my_version = PROJECT_VERSION;
+
 //uint8_t send_ack_nak = 0x00;
 
 typedef struct {
@@ -175,6 +182,7 @@ typedef struct {
 
 rx_msg_t msg = {0};
 
+//timer_ms_t debug_tmr;
 /*******************************************************************************
  Functions
  *******************************************************************************/
@@ -185,7 +193,9 @@ void setup() {
 
     dev_comms_init();
 
+#if REDUCE_CODESIZE==0
     _sys_handler_version();
+#endif /* REDUCE_CODESIZE */
     console_add_menu("main", _main_menu_items, ARRAY_SIZE(_main_menu_items), "Main Menu");
 
     dev_nvstore_init();
@@ -209,9 +219,13 @@ void setup() {
     //Testing only
     // sys_poll_tmr_start(&blink_tmr, 200lu, true);
     // dev_button_measure_start();
+
+    //sys_poll_tmr_stop(&debug_tmr);
+
 }
 
 void loop() {
+
 
     // put your main code here, to run repeatedly:
 
@@ -233,6 +247,17 @@ void loop() {
    
     // //Check for anything coming in on the Serial Port and process it
     console_service();
+
+    // if (sys_poll_tmr_expired(&debug_tmr))
+    // {
+    //     uint8_t _rand = (uint8_t)sys_random(0, 255);
+    //     dev_comms_response_append(cmd_debug_0, btn_cmd_err_ok, NULL, 0, true);
+    //     dev_comms_response_add_byte(_rand);
+    //     // for (uint8_t i = 0; i < sizeof(msg.data)-3; i++)
+    //     //     dev_comms_response_add_byte(_rand + i);
+    //     dev_comms_response_send();
+    // }
+
 
 }
 
@@ -303,8 +328,6 @@ void msg_process(void)
     if ((msg.src == ADDR_MASTER) && (msg.dst == _myAddr) && (reg_state >= waiting))
         accept_msg = true;
 
-    dev_comms_response_start(); //Start the response message
-
     //Have we received anything?
     while (_read_msg_data((uint8_t *)&_cmd, 1) > 0)
     {
@@ -340,13 +363,14 @@ void msg_process(void)
                     if (((int8_t)_u8_val < 0) || ((int8_t)_u8_val > RGB_BTN_MAX_NODES))
                     {
                         iprintln(trALWAYS, "#Invalid index (%d)", _u8_val);
-                        dev_comms_response_add(_cmd, btn_cmd_err_range, &_u8_val, 1);
+                        dev_comms_response_append(_cmd, btn_cmd_err_range, &_u8_val, 1);
                         break; // from switch... continue with the next command
                     }
                     my_mask_index = (int8_t)_u8_val; //Set the address bit mask for this device
                     iprintln(trALWAYS, "#State: IDLE (Index: %d)", my_mask_index);
                     reg_state = idle; //We are now in the "idle" state
-                    dev_comms_response_add(_cmd, btn_cmd_err_ok, NULL, 0);
+                    dev_comms_response_append(_cmd, btn_cmd_err_ok, NULL, 0);
+                    // sys_poll_tmr_start(&debug_tmr, 1000lu, true);
                 }
                 //else //read failure already handled in _read_cmd_payload()
                 break;
@@ -357,7 +381,7 @@ void msg_process(void)
                     sys_poll_tmr_stop(&blink_tmr);
                     colour[0].rgb = _u32_val;
                     dev_rgb_set_colour(colour[0].rgb);
-                    dev_comms_response_add(_cmd, btn_cmd_err_ok, NULL, 0);
+                    dev_comms_response_append(_cmd, btn_cmd_err_ok, NULL, 0);
                 }
                 //else //read failure already handled in _read_cmd_payload()
                 break;
@@ -370,7 +394,7 @@ void msg_process(void)
                         colour[1].rgb = _u32_val;
                     else
                         colour[2].rgb = _u32_val;
-                    dev_comms_response_add(_cmd, btn_cmd_err_ok, NULL, 0);
+                    dev_comms_response_append(_cmd, btn_cmd_err_ok, NULL, 0);
                 }
                 //else //read failure already handled in _read_cmd_payload()
                 break;
@@ -381,7 +405,7 @@ void msg_process(void)
                     sys_poll_tmr_stop(&blink_tmr);
                     if (_u32_val > 0) //Only restart the timer if the period is > 0
                         sys_poll_tmr_start(&blink_tmr, (unsigned long)_u32_val, true);
-                    dev_comms_response_add(_cmd, btn_cmd_err_ok, NULL, 0);
+                    dev_comms_response_append(_cmd, btn_cmd_err_ok, NULL, 0);
                 }
                 break;
     
@@ -391,7 +415,7 @@ void msg_process(void)
                 //RVN - Should add the button state?
                 //dev_comms_response_add_data(cmd_get_btn, (uint8_t*)&press_time, sizeof(unsigned long));
                 _u32_val = dev_button_get_reaction_time_ms();
-                dev_comms_response_add(_cmd, btn_cmd_err_ok, (uint8_t*)&_u32_val, sizeof(uint32_t));
+                dev_comms_response_append(_cmd, btn_cmd_err_ok, (uint8_t*)&_u32_val, sizeof(uint32_t));
                 break;
             
             case cmd_sw_start:
@@ -399,7 +423,7 @@ void msg_process(void)
                 //_read_cmd_payload(_cmd, NULL);   // No data to read
                 //Nothing else.... just start the stopwatch
                 dev_button_measure_start();
-                dev_comms_response_add(_cmd, btn_cmd_err_ok, NULL, 0);
+                dev_comms_response_append(_cmd, btn_cmd_err_ok, NULL, 0);
                 break;
     
             case cmd_wr_console_cont:
@@ -413,12 +437,13 @@ void msg_process(void)
                 {
                     //iprintln(trALWAYS, "#Console: \"%s\"", _data);
                     //RVN - TODO - This is the last part of a console message, so we need to send the response back to the master device
+                    //Maybe wise to turn OFF all COMMS and HAL_SERIAL traces while this is happening?
                     console_enable_alt_output_stream(dev_comms_response_add_byte);
-                    dev_comms_response_add(cmd_wr_console_cont, btn_cmd_err_ok, NULL, 0);
+                    dev_comms_response_append(cmd_wr_console_cont, btn_cmd_err_ok, NULL, 0);
                     console_read_byte('\n');
                     console_service(); //This *should* pipe the output to the alternate stream and reset it back to stdouot once it is done
                     dev_comms_transmit_now();
-                    dev_comms_response_add(cmd_wr_console_done, btn_cmd_err_ok, NULL, 0);
+                    dev_comms_response_append(cmd_wr_console_done, btn_cmd_err_ok, NULL, 0);
                 }
                 break;
     
@@ -426,7 +451,7 @@ void msg_process(void)
             // case cmd_roll_call:             //Already handled
             default:
                 //Unkown/unhandled command.... return error (NAK?) to master
-                dev_comms_response_add(_cmd, btn_cmd_err_unknown_cmd, NULL, 0);
+                dev_comms_response_append(_cmd, btn_cmd_err_unknown_cmd, NULL, 0);
                 break;
         }
         _cnt++;
@@ -470,7 +495,7 @@ bool _read_cmd_payload(uint8_t cmd, uint8_t * dst)
     if (len[0] != len[1])
     {
         iprintln(trALWAYS, "#Error reading %d bytes for cmd 0x%02X (%d)", len[0], cmd, len[0]);
-        dev_comms_response_add((master_command_t)cmd, btn_cmd_err_payload_len, len, 2);
+        dev_comms_response_append((master_command_t)cmd, btn_cmd_err_payload_len, len, 2);
         return false;
     }
     return true;//dev_comms_read_payload(dst, len);
@@ -523,7 +548,7 @@ void send_response(void)
             // if (tx_bus_state == 0) //busy
             //     return;
             //We are going to try and send the response NOW!
-            if(!dev_comms_response_start()) //Start the response message
+            if(!dev_comms_tx_ready()) //Start the response message
             {
                 //Could NOT send it now.... errors/bus is busy... we'll try again in a bit (between 2 and 50 ms)
                 roll_call_time_ms = sys_random(2, 50);
@@ -533,7 +558,7 @@ void send_response(void)
                 return;
             }
 
-            dev_comms_response_add(cmd_roll_call, btn_cmd_err_ok, NULL, 0);
+            dev_comms_response_append(cmd_roll_call, btn_cmd_err_ok, &my_version, 1, true);
             dev_comms_response_send();
             //Now we wait for the master to register us
             reg_state = waiting; //We are now in the "waiting for registration" state
@@ -549,7 +574,7 @@ void send_response(void)
         case no_init:
         case un_reg:
         default:
-            /* Do nothing... waiting for that precious rollcall */
+            /* Do nothing... waiting for that precious rollcall msg*/
             break; //This will prevent transmission of any messages until we are (at least)
     }
 }
@@ -733,6 +758,7 @@ void _sys_handler_led(void)
 }
 #endif /* DEV_RGB_DEBUG */
 
+#if REDUCE_CODESIZE==0
 void _sys_handler_version(void)
 {
 	iprintln(trALWAYS, "");
@@ -744,6 +770,7 @@ void _sys_handler_version(void)
 	iprintln(trALWAYS, "ESP32-C3 (Clock %lu MHz)", F_CPU / 1000000L);
 	iprintln(trALWAYS, "=====================================================");
 }
+#endif /* REDUCE_CODESIZE */
 
 void _sys_handler_crc(void)
 {

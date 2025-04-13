@@ -127,6 +127,8 @@ Transmission State Machine:
 
 #define PRINTF_TAG ("COMMS") /* This must be undefined at the end of the file*/
 
+#define WAIT_BUS_SILENCE_MAX_MS     (15)
+
 /******************************************************************************
 Macros
 ******************************************************************************/
@@ -172,11 +174,10 @@ typedef struct dev_comms_st
     }rx;
     struct {
         comms_msg_t msg;
-        uint8_t buff[(RGB_BTN_MSG_MAX_LEN*2)+2];    //Absolute worst case scenario
-        // comms_msg_tx_state_t state = tx_idle;
+//        uint8_t buff[(RGB_BTN_MSG_MAX_LEN*2)+2];    //Absolute worst case scenario
         uint8_t retry_cnt = 0;
         uint8_t seq;
-        uint8_t length;
+        uint8_t data_length;
     }tx;
     uint8_t addr;           /* My assigned address */
     dev_comms_blacklist_t blacklist; /* List of addresses that are not allowed to be used */
@@ -192,7 +193,8 @@ bool _dev_comms_verify_addr(uint8_t addr);
 void _dev_comms_tx_start(void);
 bool _dev_comms_rx_handler_add_data_check_overflow(uint8_t rx_data);
 unsigned int  _dev_comms_response_add_console_resp(uint8_t * data, uint8_t data_len);
-unsigned int _dev_comms_response_add_data(uint8_t crc, uint8_t start_index, uint8_t * data, uint8_t data_len);
+unsigned int _dev_comms_response_add_data(uint8_t * data, uint8_t data_len);
+void _dev_comms_response_start(void);
 
 /******************************************************************************
 Local variables
@@ -205,7 +207,6 @@ volatile comms_msg_tx_state_t _tx_state = tx_idle;
 volatile bool _msg_available = false;
 
 stopwatch_ms_s _tx_sw;
-timer_ms_t _tx_tmr; //The time we have to wait for the message to be sent
 
 // volatile bool tx_success = false;
 // volatile bool tx_error = false;
@@ -287,32 +288,32 @@ bool _dev_comms_rx_handler_add_data_check_overflow(uint8_t rx_data)
  */
 void _dev_comms_tx_start(void)
 {
-    if (_comms.tx.length == 0)
+    if (_comms.tx.data_length == 0)
     {
         //How did we get to this point?
         _tx_state = tx_idle;
-        //iprintln(trCOMMS, "#No Msg data to Tx (%d bytes)", _comms.tx.length);
-        dev_rgb_set_colour(colGreen);
         return;
     }
-    //iprintln(trCOMMS, "#Msg Tx %d bytes (Seq # %d)", _comms.tx.length, _comms.tx.msg.hdr.id);
+    uint8_t * msg = (uint8_t *)&_comms.tx.msg;
+    uint8_t msg_len = (sizeof(comms_msg_hdr_t) + _comms.tx.data_length + sizeof(uint8_t));
+    //iprintln(trCOMMS, "#TX: %d/%d bytes (%d) - 0x%06X", msg_len, RGB_BTN_MSG_MAX_LEN, _comms.tx.msg.hdr.id, msg);
 
     //Make sure any console prints are finished before we start sending... 
     // this ensures that the RS-485 is enabled again once the last TX complete IRQ has fired.
     hal_serial_flush(); 
 
-    //Do this only once the bus is silent
-    if (_rx_state != rx_listen)
+    //wait here for the bus to go silent!
+    while ((_rx_state != rx_listen) && (hal_serial_rx_silence_ms() < WAIT_BUS_SILENCE_MAX_MS))
     {
-        dev_rgb_set_colour(colBlue);
-        return;
+        //We really don't want to be waiting here forever.... 
+        // if the bus has been silent for 15 ms, then we are done waiting.
     }
 
     //NO PRINT SECTION START - Make sure there are NO console prints in this section
 
-    uint8_t * msg = (uint8_t *)&_comms.tx.msg;
     hal_serial_write(STX);
-    for (uint8_t i = 0; i < min(_comms.tx.length, sizeof(comms_msg_t)); i++)
+    _tx_state = tx_echo_rx;
+    for (uint8_t i = 0; i < msg_len; i++)
     {
         uint8_t tx_data = msg[i];
         if ((tx_data == STX) || (tx_data == DLE) || (tx_data == ETX))
@@ -323,8 +324,9 @@ void _dev_comms_tx_start(void)
         hal_serial_write(tx_data);
     }
     hal_serial_write(ETX);        
-    //Right, we've sent the message, now we need to check if we received it correctly
-    _tx_state = tx_echo_rx;
+    //Right, we've sent the message (well, actually we've only loaded it into 
+    // the hal_serial tx buffer, but the transmission should have started already), 
+    // now we need to wait and check if we received it correctly (pleasures of half-duplex comms)
     
     //Make sure the entire message is sent over RS485 before we continue (with potential printf's)
     hal_serial_flush(); 
@@ -334,7 +336,6 @@ void _dev_comms_tx_start(void)
     //NO PRINT SECTION END
 
     //iprintln(trCOMMS, "#Msg Tx Complete (%d)", _comms.tx.retry_cnt);
-    //dev_rgb_set_colour(colYellow);
 
     return;
 }
@@ -359,6 +360,11 @@ bool _dev_comms_verify_addr(uint8_t addr)
     
     return true;
 }
+
+// uint8_t _tx_err_msg_len;
+// comms_msg_t _tx_err_msg = {0};
+// uint8_t _rx_err_msg_len;
+// comms_msg_t _rx_err_msg = {0};
 
 void _rx_irq_callback(uint8_t rx_data)
 {
@@ -391,15 +397,12 @@ void _rx_irq_callback(uint8_t rx_data)
                 // if we were sending just now, we want to check if our rx and tx buffers match
                 if (memcmp((uint8_t *)&_comms.rx.msg, (uint8_t *)&_comms.tx.msg, min(_comms.rx.length, RGB_BTN_MSG_MAX_LEN)) == 0)
                 {
-                    // tx_success = true;
                     _comms.tx.seq++;
+                    //No need to check this message in the application.... we are done with it
                     _tx_state = tx_idle;
                 }
-                //else  //only reason this would happen is if we had a bus collision
+                // else  //only reason this would happen is if we had a bus collision
                 // If we remain in this state we will get a timeout once the bus is free again and our retry mechanism will kick in
-
-                //No need to check this message in the application, we are done with it
-
             }
             else if (!prevent_buffer_overwrite)
                 _msg_available = true; //We have a message available, but we need to check if it is valid first
@@ -423,7 +426,7 @@ void _rx_irq_callback(uint8_t rx_data)
     {
         if (!prevent_buffer_overwrite)
         {
-            if (!_dev_comms_rx_handler_add_data_check_overflow(rx_data))
+            if (!_dev_comms_rx_handler_add_data_check_overflow(rx_data^DLE))
                 prevent_buffer_overwrite = true; //Error.... but what can we do... just discard the remainder of the incoming stream
         }
         _rx_state = rx_busy;
@@ -431,21 +434,22 @@ void _rx_irq_callback(uint8_t rx_data)
 }
 
 
-unsigned int _dev_comms_response_add_data(uint8_t crc, uint8_t start_index, uint8_t * data, uint8_t data_len)
+unsigned int _dev_comms_response_add_data(uint8_t * data, uint8_t data_len)
 {
-    if ((data != NULL) && (data_len > 0))
-    {
-        memcpy(&((uint8_t *)&_comms.tx.msg)[_comms.tx.length], data, data_len);
-        _comms.tx.length += data_len; // for the payload
-    }
+    if ((data == NULL) || (data_len == 0))
+        return 0; //Nothing to do
+
+    uint8_t _crc = _comms.tx.msg.data[_comms.tx.data_length];
+
+    memcpy(&_comms.tx.msg.data[_comms.tx.data_length], data, data_len);
 
     //Calculate the crc of the newly added data in the message
-    ((uint8_t *)&_comms.tx.msg)[_comms.tx.length] = crc8_n(crc, (((uint8_t *)&_comms.tx.msg)+start_index), _comms.tx.length - start_index);
+    _comms.tx.msg.data[_comms.tx.data_length + data_len] = crc8_n(_crc, &_comms.tx.msg.data[_comms.tx.data_length], data_len);
 
-    //Do NOT increment the length here,... in case more data gets added, the CRC should be overwritten 
-    // and then re-calculated at the end of the newly added data
+    //NOW we can increment the datalenth
+    _comms.tx.data_length += data_len; // for the payload
 
-    return data_len; // The number of bytes added (+2 for the command and response code)
+    return data_len;
 }
 
 unsigned int  _dev_comms_response_add_console_resp(uint8_t * data, uint8_t data_len)
@@ -457,33 +461,29 @@ unsigned int  _dev_comms_response_add_console_resp(uint8_t * data, uint8_t data_
     if (data_len > (sizeof(_comms.tx.msg.data) - sizeof(uint8_t))) //For the CRC
         return 0;
 
-    if ((_comms.tx.length + data_len) > (RGB_BTN_MSG_MAX_LEN - sizeof(uint8_t))) //For the CRC
+    if ((_comms.tx.data_length + data_len) > sizeof(_comms.tx.msg.data)) //For the CRC
     {
-        //What say you we send what we have so far, and then start a new message?
+        //Let's send what we have so far, and then start a new message?
         dev_comms_transmit_now();
-        dev_rgb_set_colour(colPurple);
-        dev_comms_response_add(cmd_wr_console_cont, btn_cmd_err_ok, NULL, 0);
-        //dev_rgb_set_colour(colWhite);
+        dev_comms_response_append(cmd_wr_console_cont, btn_cmd_err_ok, NULL, 0);
         //RVN - TODO - This needs to be tested!!!!
     }
 
-    uint8_t _start_index = _comms.tx.length; //Where the current CRC is located
-    uint8_t _crc = ((uint8_t *)&_comms.tx.msg)[_comms.tx.length];
+    return _dev_comms_response_add_data(data, data_len); //The number of bytes added
+}
 
-    return _dev_comms_response_add_data(_crc, _start_index, data, data_len); //The number of bytes added
-    // if ((data != NULL) && (data_len > 0))
-    // {
-    //     memcpy(&((uint8_t *)&_comms.tx.msg)[_comms.tx.length], data, data_len);
-    //     _comms.tx.length += data_len; // for the payload
-    // }
+void _dev_comms_response_start(void)
+{
 
-    // //Calculate the crc of the newly added data in the message
-    // ((uint8_t *)&_comms.tx.msg)[_comms.tx.length] = crc8_n(_crc, (((uint8_t *)&_comms.tx.msg)+_start_index), _comms.tx.length - _start_index);
+    _comms.tx.data_length = 0;//sizeof(comms_msg_hdr_t);         //Reset to the beginning of the data
+    _comms.tx.msg.hdr.version = RGB_BTN_MSG_VERSION;    //Superfluous, but just in case
+    _comms.tx.msg.hdr.id = _comms.tx.seq;               //Should have incremented after the last transmission
+    _comms.tx.msg.hdr.src = _comms.addr;                //Our Address (might have changed since our last message)
+    _comms.tx.msg.hdr.dst = ADDR_MASTER;          //We only ever talk to the master!!!!!
 
-    // //Do NOT increment the length here,... in case more data gets added, the CRC should be overwritten 
-    // // and then re-calculated at the end of the newly added data
+    _comms.tx.msg.data[0] = crc8_n(0, ((uint8_t *)&_comms.tx.msg), sizeof(comms_msg_hdr_t));
 
-    // return data_len; // The number of bytes added (+2 for the command and response code)
+    _tx_state = tx_msg_busy; //We are starting to build a message
 }
 
 /******************************************************************************
@@ -511,52 +511,50 @@ void dev_comms_init(void)
     _comms.addr = dev_comms_addr_new();
     _comms.init_done = true;
 
-    sys_set_io_mode(output_Debug, OUTPUT);
+    //sys_set_io_mode(output_Debug, OUTPUT);
 
     iprintln(trCOMMS, "#Initialised - Payload size: %d/%d (Seq # %d)", sizeof(_comms.rx.msg.data), sizeof(comms_msg_t), _comms.tx.seq);
 }
 
-bool dev_comms_response_start(void)
+bool dev_comms_tx_ready(void)
 {
     //We can restart a message only if we are idle or if the buffer contains unsent data
-    if ((_tx_state != tx_idle) && (_tx_state != tx_msg_busy))
-        return false; //We are not ready to send a message
-
-    _comms.tx.length = sizeof(comms_msg_hdr_t);         //Reset to the beginning of the data
-    _comms.tx.msg.hdr.version = RGB_BTN_MSG_VERSION;    //Superfluous, but just in case
-    _comms.tx.msg.hdr.id = _comms.tx.seq;               //Should have incremented after the last transmission
-    _comms.tx.msg.hdr.src = _comms.addr;                //Our Address (might have changed since our last message)
-    _comms.tx.msg.hdr.dst = ADDR_MASTER;          //We only ever talk to the master!!!!!
-
-    ((uint8_t *)&_comms.tx.msg)[_comms.tx.length] = crc8_n(0, ((uint8_t *)&_comms.tx.msg), sizeof(comms_msg_hdr_t));
-
-    _tx_state = tx_msg_busy; //We are starting to build a message
-    return true;
+    return ((_tx_state == tx_idle) || (_tx_state == tx_msg_busy));
 }
 
-unsigned int dev_comms_response_add(master_command_t cmd, response_code_t resp_code, uint8_t * data, uint8_t data_len)
+unsigned int dev_comms_response_append(master_command_t cmd, response_code_t resp_code, uint8_t * data, uint8_t data_len, bool restart)
 {
-    // We cannot send a message if we are not ready to send now, otherwise we will overwrite data being sent
-    if (_tx_state != tx_msg_busy) //Must be preceded with start()
-        return 0;
-
-    if ((uint8_t)(data_len + 2) > (sizeof(_comms.tx.msg.data)))
+    //We *know* we will be adding at least 2 bytes (cmd and resp_code)
+    if ((uint8_t)(data_len +2) > sizeof(_comms.tx.msg.data))
         return 0; //This is NEVER gonna fit!!!
 
-    if ((uint8_t)(_comms.tx.length + data_len + 2) > (RGB_BTN_MSG_MAX_LEN - sizeof(uint8_t))) //For the CRC
+    // We cannot send a message if we are not ready to send now, otherwise we will overwrite data being sent
+    if ((_tx_state == tx_idle) || (restart))
+        _dev_comms_response_start();
+    
+    //If another message is already in progress (queued or tx_echo_rx), starting a new one
+    // will overwrite the buffered data used ot confirm good transmission
+    if (_tx_state != tx_msg_busy)
+        return 0;
+
+    if ((uint8_t)(_comms.tx.data_length + data_len + 2) > sizeof(_comms.tx.msg.data))
     {
-        //What say you we send what we have so far, and then start a new message?
+        //Let's send what we have so far, and then start a new message?
         dev_comms_transmit_now();
+        //We need to "prime" the message first....
+        _dev_comms_response_start();
         //RVN - TODO - This needs to be tested!!!!
     }
 
-    uint8_t _start_index = _comms.tx.length; //Where the current CRC is located
-    uint8_t _crc = ((uint8_t *)&_comms.tx.msg)[_comms.tx.length];
+    uint8_t _crc = _comms.tx.msg.data[_comms.tx.data_length];
 
-    ((uint8_t *)&_comms.tx.msg)[_comms.tx.length++] = cmd;
-    ((uint8_t *)&_comms.tx.msg)[_comms.tx.length++] = resp_code;
+    _comms.tx.msg.data[_comms.tx.data_length    ] = cmd;
+    _comms.tx.msg.data[_comms.tx.data_length + 1] = resp_code;
+    _comms.tx.msg.data[_comms.tx.data_length + 2] = crc8_n(_crc, &_comms.tx.msg.data[_comms.tx.data_length], 2);
+    
+    _comms.tx.data_length += 2; //For the command and response code
 
-    return (2 + _dev_comms_response_add_data(_crc, _start_index, data, data_len)); //The number of bytes added (+2 for the command and response code)
+    return (2 + _dev_comms_response_add_data(data, data_len)); //The number of bytes added (+2 for the command and response code)
 }
 
 size_t dev_comms_response_add_byte(uint8_t data)
@@ -566,66 +564,22 @@ size_t dev_comms_response_add_byte(uint8_t data)
 
 void dev_comms_response_send(void)
 {
-    if ((_comms.tx.length <= (sizeof(comms_msg_hdr_t ))) || (_tx_state != tx_msg_busy)) //Must be preceded with start()
+    if ((_comms.tx.data_length == 0) || (_tx_state != tx_msg_busy)) //Must be preceded with start()
         return; //Nothing to send, let the user think everything is all good
 
-    //The CRC is already added to the message length, so we need to make sure we don't overflow the buffer
-    // if (_comms.tx.length > (RGB_BTN_MSG_MAX_LEN - sizeof(uint8_t)))
-    // {
-    //     // This is a complete mess.... how did this happen?
-    //     //RVN - TODO - Error!!!!
-    //     return -2;
-    // }
-
-    _comms.tx.length++; //For the CRC
     _comms.tx.retry_cnt = 0; //We are starting a new transmission, so reset the retry count
     _tx_state = tx_queued; //Will be started once the bus is free
 
-    // return 0;
+    //RVN - TODO - We can probably spin up the transmission immediately, but we need to check if the bus is free first
+    //Hell, we might as well wait right here for a free bus?
 }
 
 void dev_comms_transmit_now(void)
 {
-    // comms_msg_tx_state_t last_tx_state;
-    dev_rgb_set_colour(colRed);
     dev_comms_response_send();
-    //tx_state == tx_queued;
-    sys_output_write(output_Debug, HIGH);
-    // last_tx_state = _tx_state;
-    sys_poll_tmr_start(&_tx_tmr, 10L, true); //Check for successful transmission only once every 5ms (RVN, cehck this)
     do { 
-        sys_output_write(output_Debug, LOW);
-        //Discard any incoming data while we are busy transmitting
-        // dev_comms_rx_msg_available(NULL, NULL, NULL); //Check if we have a message available
-        if (sys_poll_tmr_expired(&_tx_tmr))
-        {
-            dev_comms_tx_service();
-            sys_output_write(output_Debug, HIGH); //Disable the RS-485 driver
-        }
-
-        // if (last_tx_state != _tx_state)
-        // {
-        //     switch (_tx_state)
-        //     {
-        //         case tx_idle:
-        //             dev_rgb_set_colour(colGreen);
-        //             break;
-        //         case tx_msg_busy:
-        //             dev_rgb_set_colour(colBlue);
-        //             break;
-        //         case tx_echo_rx:
-        //             dev_rgb_set_colour(colPurple);
-        //             break;
-        //         case tx_queued:
-        //             dev_rgb_set_colour(colOrange);
-        //             break;
-        //         default:
-        //             break;
-        //     }
-        //     last_tx_state = _tx_state;
-        // }
+        _dev_comms_tx_start(); //dev_comms_tx_service();
     }while (_tx_state != tx_idle); //Wait for the bus to be free again
-    dev_comms_response_start();
 }
 
 void dev_comms_tx_service(void)
@@ -646,11 +600,11 @@ void dev_comms_tx_service(void)
                 _tx_state = tx_idle;
                 iprintln(trCOMMS, "#TX Error: %s (%d bytes)", "No Echo", _comms.rx.length);
                 iprintln(trCOMMS, "#TX data:");
-                console_print_ram(trCOMMS, &_comms.tx.msg, (unsigned long)&_comms.tx.msg, _comms.tx.length);//min(_comms.tx.length, sizeof(comms_msg_t)));
+                console_print_ram(trCOMMS, &_comms.tx.msg, (unsigned long)&_comms.tx.msg, _comms.tx.data_length + sizeof(comms_msg_hdr_t) + sizeof(uint8_t));
+                _comms.tx.seq++; // Let's not re-use this sequence number again, then the master will know that something went wrong on our end.
+                return;
             }
-            else
-                _dev_comms_tx_start();
-            break;
+            //else - fall through to tx_queued
 
         case tx_queued:
             _dev_comms_tx_start();

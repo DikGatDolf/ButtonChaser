@@ -83,9 +83,9 @@ Macros
   #endif
 #endif
 
-#define HAL_SERIAL_BAUDRATE     (115200L)
+#define HAL_SERIAL_BAUDRATE         (115200L)
 
-#define HAL_BUS_SILENCE_MAX_MS   (UINT16_MAX)
+#define HAL_BUS_SILENCE_MAX_MS          (UINT16_MAX)
 
 /******************************************************************************
 Warnings
