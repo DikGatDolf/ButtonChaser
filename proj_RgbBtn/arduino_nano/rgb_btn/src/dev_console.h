@@ -42,17 +42,30 @@ extern void console_print(uint8_t traceflags, const char * tag, const char *fmt,
 #define trALL		((uint8_t)(~trALWAYS))
 #define trNONE		((uint8_t)0)
 
+#ifndef CONSOLE_ENABLED
+void dummy_print_func(void){/* Do nothing */}
+#endif /* CONSOLE_ENABLED */
+
+
 /******************************************************************************
 Print an entire line (or not). A leading '#' is replaced with the PRINTF_TAG, 
  and the print is concluded with an newline character.
 The passed traceflags is compared with the system set trace print flag(s) to
  determine if the print can happen or not.
 ******************************************************************************/
+#ifdef CONSOLE_ENABLED
 #define iprintln(traceflags, fmtstr, ...) console_printline(traceflags, PRINTF_TAG, PSTR(fmtstr), ##__VA_ARGS__)
+#else
+#define iprintln(traceflags, fmtstr, ...) dummy_print_func()
+#endif /* CONSOLE_ENABLED */
 /******************************************************************************
 "Incomplete" version of dbgPrint.... no "\n" added at the end
 ******************************************************************************/
+#ifdef CONSOLE_ENABLED
 #define iprint(traceflags, fmtstr, ...) console_print(traceflags, PRINTF_TAG, PSTR(fmtstr), ##__VA_ARGS__)
+#else
+#define iprint(traceflags, fmtstr, ...) dummy_print_func()
+#endif /* CONSOLE_ENABLED */
 
 /******************************************************************************
 Struct & Unions

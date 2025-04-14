@@ -281,6 +281,17 @@ bool _dev_comms_rx_handler_add_data_check_overflow(uint8_t rx_data)
 
     return true;
 }
+typedef struct
+{
+    bool active;
+    uint8_t seq;
+    uint8_t tx_data[RGB_BTN_MSG_MAX_LEN];
+    uint8_t tx_len;   
+    uint8_t rx_data[RGB_BTN_MSG_MAX_LEN];
+    uint8_t rx_len;
+}comms_err_t;
+
+comms_err_t _err = {0};
 
 /*! @brief Writes the data from the tx msg buffer to the serial port (including escaping)
  * This function will block until the message is completely sent 
@@ -312,7 +323,10 @@ void _dev_comms_tx_start(void)
     //NO PRINT SECTION START - Make sure there are NO console prints in this section
 
     hal_serial_write(STX);
+    //We need to make sure our IRQ callback is processiong the received data/echo correctly. 
+    //This state (tx_echo_rx) is handled in the serial receive IRQ callback
     _tx_state = tx_echo_rx;
+
     for (uint8_t i = 0; i < msg_len; i++)
     {
         uint8_t tx_data = msg[i];
@@ -335,9 +349,35 @@ void _dev_comms_tx_start(void)
     
     //NO PRINT SECTION END
 
-    //iprintln(trCOMMS, "#Msg Tx Complete (%d)", _comms.tx.retry_cnt);
+    //RVN - TODO - Why do we not wait and check for the echo right here?
+    // If our TX state goes into idle, we got it (all handled by the interrupts)
+    // otherwise, if the rx state goes into listen, a completed message has been received, but not matched (bus collision?)
+    // Lastly, if the bus is silent for a period, then everybody is waiting for everybody.
+    while (_tx_state != tx_queued)
+    {
+        if (hal_serial_rx_silence_ms() >= WAIT_BUS_SILENCE_MAX_MS) // NO ECHO and bus is stuck in some weird RX state (missed ETX?)
+            _rx_state = rx_listen; //Force the bus to go into listen mode
 
-    return;
+        if (_rx_state == rx_listen) // NO ECHO 
+            _tx_state = tx_queued; //will break out of the while and kick off our retry mechanism
+        
+        if (_tx_state == tx_idle) // ECHO RECEIVED - All good, baby!
+            return; //we are done here
+    }
+
+    if (_comms.tx.retry_cnt >= 5)
+    {
+        //We have retried this message too many times, so we need to give up and move on
+        if (!_err.active)
+        {
+            _err.active = true;
+            _err.seq = _comms.tx.msg.hdr.id;
+            _err.tx_len = _comms.tx.data_length + sizeof(comms_msg_hdr_t) + sizeof(uint8_t);
+            memcpy(_err.tx_data, (uint8_t *)&_comms.tx.msg, _err.tx_len);
+            _err.rx_len = _comms.rx.length;
+            memcpy(_err.rx_data, (uint8_t *)&_comms.rx.msg, _err.rx_len);
+        }    
+    }
 }
 
 bool _dev_comms_verify_addr(uint8_t addr)
@@ -371,13 +411,13 @@ void _rx_irq_callback(uint8_t rx_data)
     //This flag is set when (1) an STX is receivedan AND _msg_available is currently set or 
     // (2) when an error occurs within a message (e.g. buffer overflow). 
     // While set, no received data will be saved, preserving the data in the buffer.
-    static bool prevent_buffer_overwrite = false;
+    static bool protecting_rx_msg_buffer = false;
 
     //This is a callback which is called from the serial interrupt handler
     if (rx_data == STX)
     {
         //Discard any encapsulated messaged we receive while we have an unhandled message in the RX buffer
-        prevent_buffer_overwrite = _msg_available;
+        protecting_rx_msg_buffer = _msg_available;
 
         _comms.rx.length = 0;
         _rx_state = rx_busy;
@@ -404,30 +444,30 @@ void _rx_irq_callback(uint8_t rx_data)
                 // else  //only reason this would happen is if we had a bus collision
                 // If we remain in this state we will get a timeout once the bus is free again and our retry mechanism will kick in
             }
-            else if (!prevent_buffer_overwrite)
+            else if (!protecting_rx_msg_buffer)
                 _msg_available = true; //We have a message available, but we need to check if it is valid first
 
-            prevent_buffer_overwrite = false; //Don't need this anymore
+            protecting_rx_msg_buffer = false; //Don't need this anymore
             _rx_state = rx_listen; 
         }
         else if (rx_data == DLE)
             _rx_state = rx_escaping;
         else 
         {
-            if (!prevent_buffer_overwrite)
+            if (!protecting_rx_msg_buffer)
             {
                 if (!_dev_comms_rx_handler_add_data_check_overflow(rx_data))
-                    prevent_buffer_overwrite = true; //Error.... but what can we do... just discard the remainder of the incoming stream
+                    protecting_rx_msg_buffer = true; //Error.... but what can we do... just discard the remainder of the incoming stream
             }
             // _rx_state = rx_busy;
         }
     }
     else //if (_rx_state == rx_escaping)
     {
-        if (!prevent_buffer_overwrite)
+        if (!protecting_rx_msg_buffer)
         {
             if (!_dev_comms_rx_handler_add_data_check_overflow(rx_data^DLE))
-                prevent_buffer_overwrite = true; //Error.... but what can we do... just discard the remainder of the incoming stream
+                protecting_rx_msg_buffer = true; //Error.... but what can we do... just discard the remainder of the incoming stream
         }
         _rx_state = rx_busy;
     }
@@ -584,32 +624,35 @@ void dev_comms_transmit_now(void)
 
 void dev_comms_tx_service(void)
 {
+    if (_tx_state != tx_echo_rx) 
+    {
+        //We are waiting for our transmission to be echoed back to us
+        if (_comms.tx.retry_cnt >= 5)
+        {
+            //We have retried this message too many times, so we need to give up and move on
+            _tx_state = tx_idle;
+            iprintln(trCOMMS, "#TX Error: %s (%d bytes)", "No Echo", _comms.rx.length);
+            iprintln(trCOMMS, "#TX data:");
+            console_print_ram(trCOMMS, &_comms.tx.msg, (unsigned long)&_comms.tx.msg, _comms.tx.data_length + sizeof(comms_msg_hdr_t) + sizeof(uint8_t));
+            _comms.tx.seq++; // Let's not re-use this sequence number again, then the master will know that something went wrong on our end.
+            return;
+        }
+
+    }
+
     switch (_tx_state)
     {
-        case tx_idle:
-            break;
-
-        case tx_msg_busy:
-            /* Do nothing */
-            break;
-
         case tx_echo_rx:
-            if (_comms.tx.retry_cnt >= 5)
-            {
-                //We have retried this message too many times, so we need to give up and move on
-                _tx_state = tx_idle;
-                iprintln(trCOMMS, "#TX Error: %s (%d bytes)", "No Echo", _comms.rx.length);
-                iprintln(trCOMMS, "#TX data:");
-                console_print_ram(trCOMMS, &_comms.tx.msg, (unsigned long)&_comms.tx.msg, _comms.tx.data_length + sizeof(comms_msg_hdr_t) + sizeof(uint8_t));
-                _comms.tx.seq++; // Let's not re-use this sequence number again, then the master will know that something went wrong on our end.
-                return;
-            }
             //else - fall through to tx_queued
 
         case tx_queued:
             _dev_comms_tx_start();
             break;
 
+        case tx_idle:
+        case tx_msg_busy:
+            /* Do nothing */
+            break;
         default:
             //We should never get here
             break;
@@ -709,6 +752,18 @@ int8_t dev_comms_rx_msg_available(uint8_t * _src, uint8_t * _dst, uint8_t * _dat
     _msg_available = false;
 
     return ret_val;
+}
+
+void dev_comms_check_error(void)
+{
+    if (!_err.active)
+        return; //No error to report
+
+    iprintln(trCOMMS, "#TX Err - %d bytes (seq %d)", _err.tx_len, _err.seq);
+    console_print_ram(trCOMMS, _err.tx_data, 0, _err.tx_len);
+    iprintln(trCOMMS, "#Last RX - %d bytes (seq %d)", _err.rx_len, ((comms_msg_t *)&_err.rx_data)->hdr.id);
+    console_print_ram(trCOMMS, _err.rx_data, 0, _err.rx_len);
+    _err.active = false;
 }
 
 #undef PRINTF_TAG

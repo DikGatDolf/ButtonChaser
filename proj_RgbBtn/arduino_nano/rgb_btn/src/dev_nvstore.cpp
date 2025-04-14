@@ -111,7 +111,9 @@ typedef struct
     } current;
     nvstore_block_t rd_block;
     bool            new_data;
+#if (DEV_NVSTORE_DEBUG == 1)
     stopwatch_ms_t sw;
+#endif /* DEV_NVSTORE_DEBUG */
 } dev_nvstore_t;
 
 /*******************************************************************************
@@ -123,6 +125,7 @@ uint8_t _nvstore_read_block(uint8_t * data, uint8_t block_nr);
 void _dev_nvstore_menu_handler_print_block(uint8_t flags, uint8_t block_nr, nvstore_block_t * block, uint8_t calc_crc);
 
 #ifdef CONSOLE_ENABLED
+#if (DEV_NVSTORE_DEBUG == 1)
 void _dev_nvstore_menu_handler_rd(void);
 void _dev_nvstore_menu_handler_wr(void);
 /*******************************************************************************
@@ -134,6 +137,7 @@ static console_menu_item_t _nvstore_menu_items[] =
     {"read",    _dev_nvstore_menu_handler_rd,   "Reads Non-Volatile (EEPROM) data"},
     {"write",   _dev_nvstore_menu_handler_wr,   "Writes Non-Volatile (EEPROM) data"},
 };
+#endif /* DEV_NVSTORE_DEBUG */
 #endif /* CONSOLE_ENABLED */
 
 dev_nvstore_t _nvstore;
@@ -215,6 +219,7 @@ void _dev_nvstore_menu_handler_print_block(uint8_t flags, uint8_t block_nr, nvst
 }
 
 #ifdef CONSOLE_ENABLED
+#if (DEV_NVSTORE_DEBUG == 1)
 void _dev_nvstore_menu_handler_rd(void)
 {
     char *argStr;// = console_arg_pop();
@@ -440,6 +445,7 @@ void _dev_nvstore_menu_handler_wr(void)
 #endif /* REDUCE_CODESIZE */
     }
 }
+#endif /* DEV_NVSTORE_DEBUG */
 #endif /* CONSOLE_ENABLED */
 /*******************************************************************************
  Global (public) Functions
@@ -450,10 +456,12 @@ void dev_nvstore_init(void)
     //bool found = false;
     nvstore_block_t _tmp_block;
     uint8_t _calc_block_crc = 0;
+#if (DEV_NVSTORE_DEBUG == 1)
     char buff[16];
 
     //iprintln(trNVSTORE, "#Initialising (Version %d, Block Size %d bytes)", NVSTORE_DATA_VERSION, NVSTORE_BLOCK_SIZE);
     sys_stopwatch_ms_start(&_nvstore.sw);
+#endif /* DEV_NVSTORE_DEBUG */
 
     _nvstore.current.last_rd = (uint8_t)-1;     /* Invalid block number */
     _nvstore.current.wr_cnt = 0;                /* Invalid write count */
@@ -497,20 +505,30 @@ void dev_nvstore_init(void)
         _nvstore.new_data = true;
     }
 
+#if (DEV_NVSTORE_DEBUG == 1)
     unsigned long lap = sys_stopwatch_ms_stop(&_nvstore.sw);
+#endif /* DEV_NVSTORE_DEBUG */
 
     //Now, we need to understand if we have found a valid block or not
     if (_nvstore.new_data)
     {
+#if (DEV_NVSTORE_DEBUG == 1)
         iprintln(trNVSTORE, "#(%lu ms) Block: %d/%d (v%d), Wear: %s%%", lap, _nvstore.current.last_rd, NVSTORE_BLOCK_CNT, _nvstore.rd_block.hdr.version, float2str(buff, ((float)_nvstore.current.wr_cnt * 100.0f) / (float)NVSTORE_WR_CNT_MAX, 2, 16));
+#endif /* DEV_NVSTORE_DEBUG */
         _nvstore.new_data = true;
     }
+#if (DEV_NVSTORE_DEBUG == 1)
     else
     {
         iprintln(trNVSTORE, "#(%lu ms) No valid block found", lap);
     }
+#endif /* DEV_NVSTORE_DEBUG */
 
-    console_add_menu("nvs", _nvstore_menu_items, ARRAY_SIZE(_nvstore_menu_items), "Non-Volatile Storage");
+#ifdef CONSOLE_ENABLED
+#if (DEV_NVSTORE_DEBUG == 1)
+        console_add_menu("nvs", _nvstore_menu_items, ARRAY_SIZE(_nvstore_menu_items), "Non-Volatile Storage");
+#endif /* DEV_NVSTORE_DEBUG */
+#endif /* CONSOLE_ENABLED */
 
     return;
 }
@@ -527,7 +545,9 @@ bool dev_nvstore_read(uint8_t * data, uint8_t len)
 
     if (_nvstore.current.last_rd >= NVSTORE_BLOCK_CNT)
     {
+#if (DEV_NVSTORE_DEBUG == 1)
         iprintln(trNVSTORE, "#No valid block exists in NV Store");
+#endif /* DEV_NVSTORE_DEBUG */
         return false;
     }
 
@@ -550,13 +570,15 @@ bool dev_nvstore_write(uint8_t * data, uint8_t len)
 
     if (len == 0)
     {
-        iprintln(trNVSTORE, "#Nothing to write (%d)", len);
+        // iprintln(trNVSTORE, "#Nothing to write (%d)", len);
         return false;
     }
 
     if (len > NVSTORE_BLOCK_DATA_SIZE)
     {
+#if (DEV_NVSTORE_DEBUG == 1)
         iprintln(trNVSTORE, "#Data too large to fit in a block (%d > %d)", len, NVSTORE_BLOCK_DATA_SIZE);
+#endif /* DEV_NVSTORE_DEBUG */
         return false;
     }
 
@@ -572,18 +594,18 @@ bool dev_nvstore_write(uint8_t * data, uint8_t len)
     calc_crc = _nvstore_read_block((uint8_t *)&_tmp_block, wr_block_nr);
     if (calc_crc != 0)
     {
-        iprintln(trNVSTORE, "#CRC mismatch in block %d - Calc: 0x%02X (Expected: 0x00)", wr_block_nr, _tmp_block.crc);
+        iprintln(trNVSTORE, "#CRC ERR - block %d - 0x%02X (Expected: 0x00)", wr_block_nr, _tmp_block.crc);
         return false;
     }
     if (_tmp_block.hdr.wr_cnt != (_nvstore.current.wr_cnt + 1))
     {
-        iprintln(trNVSTORE, "#Write count mismatch in block %d - Calc: %06lu (Expected: %06lu)", wr_block_nr, _tmp_block.hdr.wr_cnt, _nvstore.current.wr_cnt + 1);
+        iprintln(trNVSTORE, "#WR Cnt ERR - block %d - %06lu (Expected: %06lu)", wr_block_nr, _tmp_block.hdr.wr_cnt, _nvstore.current.wr_cnt + 1);
         return false;
     }
     //Only check the length of data that was written
     if (memcmp(data, &_tmp_block.data, len) != 0)
     {
-        iprintln(trNVSTORE, "#Data mismatch in block %d", wr_block_nr);
+        iprintln(trNVSTORE, "#Data mismatch - block %d", wr_block_nr);
         console_print_ram(trNVSTORE, &data, 256 + wr_block_nr, len);
         console_print_ram(trNVSTORE, &_tmp_block.data, wr_block_nr, NVSTORE_BLOCK_SIZE);
         return false;

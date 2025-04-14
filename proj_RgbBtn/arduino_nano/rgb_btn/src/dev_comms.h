@@ -54,6 +54,9 @@ size_t dev_comms_response_add_byte(uint8_t data);
 void dev_comms_response_send(void);
 void dev_comms_transmit_now(void);
 
+void dev_comms_check_error(void);
+
+
 #endif /* __dev_comms_H__ */
 
 /****************************** END OF FILE **********************************/

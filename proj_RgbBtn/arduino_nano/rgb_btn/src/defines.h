@@ -65,6 +65,10 @@ const char BUILD_TIME_AND_DATE[] = {__TIME__ " " __DATE__}; /* Used in our start
 */
 #define DEV_BTN_DEBUG       (0)
 
+/* Suppresses a bunch of debug prints and console functionality for the NVStore driver:
+    Usage: RAM: 134 bytes, Flash: 3,112 bytes
+*/
+#define DEV_NVSTORE_DEBUG       (0)
 
 #ifdef __cplusplus
 }

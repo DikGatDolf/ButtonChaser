@@ -233,7 +233,7 @@ bool _pwm_assign_pin(led_colour_type col, int pin)
     if (col >= rgbMAX)
     {
 #if (DEV_RGB_DEBUG == 1)
-        iprintln(trRGB | trALWAYS, "#Invalid LED colour (%d)", col);
+        iprintln(trRGB, "#Invalid LED colour (%d)", col);
 #endif
         return false;
     }
@@ -331,7 +331,7 @@ uint8_t dev_rgb_start(int pin_red, int pin_green, int pin_blue)
 
 #if (DEV_RGB_DEBUG == 1)
         if (pin_count != 0)
-            iprintln(trRGB | trALWAYS, "#Already running with %d colour(s) @ %s Hz", pin_count, float2str(freq_str, _rgb.act_freq, 2, 16));
+            iprintln(trRGB, "#Already running with %d colour(s) @ %s Hz", pin_count, float2str(freq_str, _rgb.act_freq, 2, 16));
 #endif        
     }
     else
@@ -365,12 +365,12 @@ uint8_t dev_rgb_start(int pin_red, int pin_green, int pin_blue)
 	{
 #if (DEV_RGB_DEBUG == 1)
 		//We could not find a prescaler that will give us the desired period
-        iprintln(trRGB | trALWAYS, "#Could not achieve %s Hz", float2str(freq_str, target_frequency, 2, 16));
+        iprintln(trRGB, "#Could not achieve %s Hz", float2str(freq_str, target_frequency, 2, 16));
 #endif
 		return -1;
 	}
 
-    // iprintln(trRGB | trALWAYS, "#Prescaler = %d", _rgb.prescaler);
+    // iprintln(trRGB, "#Prescaler = %d", _rgb.prescaler);
 
 	TIMSK2 &= ~(1<<TOIE2);					// Make sure the timer is stopped
 	TCCR2A &= ~((1<<WGM21) | (1<<WGM20));	// NORMAL MODE
@@ -414,7 +414,7 @@ uint8_t dev_rgb_start(int pin_red, int pin_green, int pin_blue)
 	}
 
 	dev_rgb_tcnt2 = (uint8_t)(256 - (unsigned int)((float)F_CPU / target_frequency / _rgb.prescaler));
-    //iprintln(trRGB | trALWAYS, "#TCNT2 = %d", dev_rgb_tcnt2);
+    //iprintln(trRGB, "#TCNT2 = %d", dev_rgb_tcnt2);
 	dev_rgb_dc_cnt = 0;
 
     //iprintln(trRGB, "#TCNT2 = %d", dev_rgb_tcnt2);
@@ -435,7 +435,7 @@ uint8_t dev_rgb_start(int pin_red, int pin_green, int pin_blue)
     //Debug - sys_output_write(14, LOW);
 
 #if (DEV_RGB_DEBUG == 1)
-    iprintln(trRGB|trALWAYS, "#Running at %s Hz with %d pins (%d bit resolution)", float2str(freq_str, _rgb.act_freq, 2, 16), _rgb.pin_cnt, PWM_BIT_RESOLUTION);
+    iprintln(trRGB, "#Running at %s Hz with %d pins (%d bit resolution)", float2str(freq_str, _rgb.act_freq, 2, 16), _rgb.pin_cnt, PWM_BIT_RESOLUTION);
 #endif
     
     return 0;
