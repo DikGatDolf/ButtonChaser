@@ -70,21 +70,32 @@ Structures and unions
  Function prototypes
  *******************************************************************************/
 
-void btn_blink(void);
-void check_button_press(void);
+void blink_start(unsigned long _period_ms);
+void blink_pause(void);
+void blink_resume(void);
+void blink_stop(void);
+void blink_action(void);
+
 void address_update(void);
 
 void msg_process(void);
 bool rollcall_msg_handler(uint8_t _cmd, uint8_t _src, uint8_t _dst);
-bool read_cmd_payload(uint8_t cmd, uint8_t * dst);
+void send_roll_call_response(void);
+bool read_cmd_payload(uint8_t cmd, uint8_t * dst, uint8_t len);
 uint8_t read_msg_data(uint8_t * dst, uint8_t len);
-uint8_t read_cmd_payload_len(uint8_t cmd);
 
-void send_response(void);
+void state_machine_handler(void);
 void _rx_handler_state_un_reg(uint8_t _cmd);
 
 bool is_bcast_msg_for_me(uint32_t bit_mask);
 
+void button_long_press(void);
+void button_double_press(void);
+void button_press(void);
+void button_down(void);
+//void button_release(void);
+
+//void tmr_debug(void);
 
  //Menu Commands (without any owners)
 #ifdef MAIN_DEBUG
@@ -122,8 +133,6 @@ void _sys_handler_dump_generic(char * memType, unsigned long memStart, unsigned 
 #endif /* CONSOLE_ENABLED */
 #endif /* MAIN_DEBUG */
 
-void _button_change_irq(void);
-
 /*******************************************************************************
  local variables
  *******************************************************************************/
@@ -158,8 +167,8 @@ const char BuildTimeData[] = { __TIME__ " " __DATE__ }; /* Used in our startup B
  2) Tertiary colour - used as a fallback (primary) colour once the button is pressed
 */
 rgb_colour_t colour[3];
-timer_ms_t blink_tmr;
 
+volatile unsigned long blink_period_ms;   // 1ms ~ 49 days.
 registration_state_t reg_state = no_init; //We are not registered yet
 int8_t my_mask_index = -1; //My address bit mask index, valid values 0 to 31
 
@@ -182,7 +191,11 @@ typedef struct {
 
 rx_msg_t msg = {0};
 
-//timer_ms_t debug_tmr;
+stopwatch_ms_t reaction_time_sw;
+unsigned long reaction_time_ms;
+
+uint8_t system_flags = flag_unreg; //The state of the button (pressed or not pressed)
+
 /*******************************************************************************
  Functions
  *******************************************************************************/
@@ -190,7 +203,7 @@ rx_msg_t msg = {0};
 void setup() {
 
     // put your setup code here, to run once:
-
+ 
     dev_comms_init();
 
 #if REDUCE_CODESIZE==0
@@ -202,81 +215,150 @@ void setup() {
    
     dev_rgb_start(output_Led_Red, output_Led_Green, output_Led_Blue);
 
-    dev_button_init();
-    colour[0].rgb = (uint32_t)colOrange;
-    colour[1].rgb = (uint32_t)colGreen;
+    reaction_time_ms = 0lu;
+    sys_stopwatch_ms_stop(&reaction_time_sw);
+
+    dev_button_init(button_down, NULL /*button_release*/, button_press, button_long_press, button_double_press);
+    
+    colour[0].rgb = (uint32_t)colYellow;
+    colour[1].rgb = (uint32_t)colBlue;
     colour[2].rgb = (uint32_t)colTeal;
 
-    sys_poll_tmr_stop(&blink_tmr);
+    blink_stop(); //Make sure we are NOT blinking
 
     address_update();
 
     reg_state = un_reg; //We are not registered yet
+    system_flags |= flag_unreg;
 
     //This can only be set by the master device
     my_mask_index = -1;
 
     //Testing only
     // sys_poll_tmr_start(&blink_tmr, 200lu, true);
-    // dev_button_measure_start();
 
     //sys_poll_tmr_stop(&debug_tmr);
-
+    // _tmr_expired = false;
+    // sys_cb_tmr_start(&tmr_debug, 5000lu);
 }
+
+// void tmr_debug() 
+// {
+//     _tmr_expired = true;
+// }
 
 void loop() {
 
+    // if (_tmr_expired)
+    // {
+    //     _tmr_expired = false;
+    //     iprintln(trALWAYS, "#Timer expired");
+    //     sys_cb_tmr_start(&tmr_debug, 2000lu);
+    // }
 
     // put your main code here, to run repeatedly:
 
-    check_button_press();
-
-    btn_blink();
+    dev_button_service(); //Check if the button has been pressed and handle it
 
     //Check if our communication address has changed
     address_update();
 
 	//Check for anything we want to send or may have received on the main comms channnel...
     msg_process(); //... process it
+
+    //Handle the state machine  transitions for the device
+    state_machine_handler(); //RVN - TODO - This might not be needed at all?
   
     // //Check for anything coming in on the Serial Port and process it
     console_service();
-
-    // if (sys_poll_tmr_expired(&debug_tmr))
-    // {
-    //     uint8_t _rand = (uint8_t)sys_random(0, 255);
-    //     dev_comms_response_append(cmd_debug_0, btn_cmd_err_ok, NULL, 0, true);
-    //     dev_comms_response_add_byte(_rand);
-    //     // for (uint8_t i = 0; i < sizeof(msg.data)-3; i++)
-    //     //     dev_comms_response_add_byte(_rand + i);
-    //     dev_comms_response_send();
-    // }
-
-
 }
 
-void check_button_press(void)
+void button_long_press(void)
 {
-    //Has the button seen any action?
-    uint8_t btn_state = dev_button_get_state();
-    //We only process btn_pressed and only if the button is/was active!
-    if ((btn_state & (btn_active | btn_pressed)) == (btn_active | btn_pressed))
+    system_flags |= flag_l_press;
+    // iprintln(trMAIN, "#Btn: Long Press");
+    sys_stopwatch_ms_start(&reaction_time_sw);
+    blink_stop();
+    dev_rgb_set_colour(colRed);    
+}
+
+void button_double_press(void)
+{
+    system_flags |= flag_d_press;
+    // iprintln(trMAIN, "#Btn: Dbl Press");
+    if (blink_period_ms > 0)
     {
-        //iprintln(trBUTTON, "#Button Pressed %lu ms", dev_button_get_reaction_time_ms());
-        sys_poll_tmr_stop(&blink_tmr);
-        dev_rgb_set_colour(colour[2].rgb);
+        //Stop the blinking timer, as we are not interested in it anymore
+        blink_stop();
+        dev_rgb_set_colour(colBlack); //Turn off the LED
     }
+    else //Start the blinking timer
+        blink_start(200lu); //Start blinking at 200ms intervals
 }
 
-void btn_blink(void)
+void button_press(void)
 {
-    //Do we require blinking on our LED?
-	if (sys_poll_tmr_expired(&blink_tmr))
-	{
-        //Swop the colours on the RGB LED and set the new colour
-        SWOP_U32(colour[0].rgb, colour[1].rgb);
-        dev_rgb_set_colour(colour[0].rgb);
-	}
+    system_flags |= flag_s_press;
+}
+
+void button_down(void)
+{
+    //If we are measuring the reaction time, get the elapsed time now
+    if (reaction_time_sw.running)
+    {
+        system_flags |= flag_deactivated;
+        reaction_time_ms = sys_stopwatch_ms_stop(&reaction_time_sw);
+        //iprintln(trBUTTON, "#Button Pressed %lu ms", dev_button_get_reaction_time_ms());
+        blink_stop(); //Stop blinking if we are measuring the reaction time
+        dev_rgb_set_colour(colGreen);    
+        iprintln(trMAIN, "#Time: %lu ms", reaction_time_ms);
+    }
+    
+    //iprintln(trMAIN, "#Btn: Down");
+}
+
+// void button_release(void)
+// {
+//     iprintln(trMAIN, "#Btn: Release");
+// }
+
+void blink_start(unsigned long _period_ms)
+{
+    blink_period_ms = _period_ms;
+    if (_period_ms > 0)
+        sys_cb_tmr_start(blink_action, blink_period_ms, true);
+    else
+        blink_stop();
+}
+
+void blink_pause(void)
+{
+    //If we are not blinking, this will have no effect
+    sys_cb_tmr_stop(blink_action);
+}
+
+void blink_resume(void)
+{
+    //If we are not blinking, this will have no effect
+    if (blink_period_ms > 0)
+        sys_cb_tmr_start(blink_action, blink_period_ms, true);
+}
+
+void blink_stop(void)
+{
+    blink_period_ms = 0lu;
+    sys_cb_tmr_stop(blink_action);
+}
+
+void blink_action(void)
+{
+    //Swop the colours on the RGB LED
+    SWOP_U32(colour[0].rgb, colour[1].rgb);
+    //Set the new colour
+    dev_rgb_set_colour(colour[0].rgb);
+    //Restart the timer    
+    if (blink_period_ms == 0)
+        sys_cb_tmr_stop(blink_action); // will self-destruct after exiting this function
 }
 
 void address_update(void)
@@ -318,7 +400,11 @@ void msg_process(void)
     uint8_t _myAddr = dev_comms_addr_get();
    
     //If anything requires sending, now is the time to do it
-    send_response();
+    if (reg_state == roll_call)
+    {
+        send_roll_call_response();
+        return; //This is all we do in this state
+    }
 
     //HAve we received anything?
     msg.len = dev_comms_rx_msg_available(&msg.src, &msg.dst, msg.data);
@@ -347,10 +433,11 @@ void msg_process(void)
         switch (_cmd)
         {
             case cmd_bcast_address_mask:
-                if (read_cmd_payload(_cmd, (uint8_t *)&_u32_val))
+            {
+                if (read_cmd_payload(_cmd, (uint8_t *)&_u32_val, sizeof(uint8_t)))
                 {
                     iprint(trALWAYS, "#BCST 0x%08X & 0x%08X : ", BIT_POS(my_mask_index), _u32_val);
-                    //We are being registered by the master, so we need to set our address bit mask
+                    //We need to check if the broadcast message applies to us or not
                     if (is_bcast_msg_for_me(_u32_val))                    
                         accept_msg = true;                        
 
@@ -358,10 +445,12 @@ void msg_process(void)
                 }
                 //else //read failure already handled in read_cmd_payload()
                 break;
+            }
             
             case cmd_set_bitmask_index:
+            {
                 //We are being registered by the master, so we need to set our address bit mask
-                if (read_cmd_payload(_cmd, &_u8_val))
+                if (read_cmd_payload(_cmd, &_u8_val, sizeof(uint8_t)))
                 {
                     if (((int8_t)_u8_val < 0) || ((int8_t)_u8_val > RGB_BTN_MAX_NODES))
                     {
@@ -377,85 +466,130 @@ void msg_process(void)
                 }
                 //else //read failure already handled in read_cmd_payload()
                 break;
-
+            }
+            
             case cmd_set_rgb_0:
-                if (read_cmd_payload(_cmd, (uint8_t *)&_u32_val))
-                {
-                    sys_poll_tmr_stop(&blink_tmr);
-                    colour[0].rgb = _u32_val;
-                    dev_rgb_set_colour(colour[0].rgb);
-                    dev_comms_response_append(_cmd, btn_cmd_err_ok, NULL, 0);
-                }
-                //else //read failure already handled in read_cmd_payload()
-                break;
-    
             case cmd_set_rgb_1:
             case cmd_set_rgb_2:
-                if (read_cmd_payload(_cmd, (uint8_t *)&_u32_val))
+            {
+                if (read_cmd_payload(_cmd, (uint8_t *)&_u32_val, (3*sizeof(uint8_t))))
                 {
-                    if (_cmd == cmd_set_rgb_1)
-                        colour[1].rgb = _u32_val;
-                    else
-                        colour[2].rgb = _u32_val;
+                    blink_pause(); //pause blinking if we are changing LED colours
+                    colour[_cmd - cmd_set_rgb_0].rgb = _u32_val;
+                    //If we are changing the primary colour, we need to set it now
+                    if (_cmd == cmd_set_rgb_0)
+                        dev_rgb_set_colour(colour[0].rgb);
+                    blink_resume(); //resume blinking if we are changing LED colours
                     dev_comms_response_append(_cmd, btn_cmd_err_ok, NULL, 0);
                 }
                 //else //read failure already handled in read_cmd_payload()
                 break;
-    
+            }
+            
             case cmd_set_blink:
-                if (read_cmd_payload(_cmd, (uint8_t *)&_u32_val))
+            {
+                if (read_cmd_payload(_cmd, (uint8_t *)&_u32_val, sizeof(uint32_t)))
                 {
-                    sys_poll_tmr_stop(&blink_tmr);
+                    blink_stop(); //Stop blinking if we are measuring the reaction time
                     if (_u32_val > 0) //Only restart the timer if the period is > 0
-                        sys_poll_tmr_start(&blink_tmr, (unsigned long)_u32_val, true);
+                        blink_start(_u32_val); //Start blinking at the specified intervals
                     dev_comms_response_append(_cmd, btn_cmd_err_ok, NULL, 0);
                 }
                 break;
-    
-            case cmd_get_btn:
-                //We're not even bothering with reading a payload....
-                //read_cmd_payload(_cmd, NULL);   // No data to read
-                //RVN - Should add the button state?
-                //dev_comms_response_add_data(cmd_get_btn, (uint8_t*)&press_time, sizeof(unsigned long));
-                _u32_val = dev_button_get_reaction_time_ms();
-                dev_comms_response_append(_cmd, btn_cmd_err_ok, (uint8_t*)&_u32_val, sizeof(uint32_t));
-                break;
+            }   
             
-            case cmd_sw_start:
+            case cmd_start_sw:
+            {
                 //We're not even bothering with reading a payload....
-                //read_cmd_payload(_cmd, NULL);   // No data to read
-                //Nothing else.... just start the stopwatch
-                dev_button_measure_start();
+                // ...just start the stopwatch
+                system_flags |= flag_active;
+                reaction_time_ms = 0lu;
+                sys_stopwatch_ms_start(&reaction_time_sw);
                 dev_comms_response_append(_cmd, btn_cmd_err_ok, NULL, 0);
                 break;
-    
+            }
+            
+            case cmd_new_add:
+            {
+                //The master is assigning a new address to us, so we need to set it
+                if (read_cmd_payload(_cmd, (uint8_t *)&_u8_val, sizeof(uint8_t)))
+                {
+                    if (dev_comms_addr_set(_u8_val))
+                    {
+                        dev_nvstore_write(&_u8_val, sizeof(uint8_t)); //Save the new address to the NV store
+                        dev_comms_response_append(_cmd, btn_cmd_err_ok, NULL, 0);
+                    }
+                    else
+                        dev_comms_response_append(_cmd, btn_cmd_err_range, NULL, 0);
+                }
+                //else //read failure already handled in read_cmd_payload()
+                break;
+            }
+            
+            case cmd_get_rgb_0:
+            case cmd_get_rgb_1:
+            case cmd_get_rgb_2:
+            {
+                _u32_val = colour[_cmd-cmd_get_rgb_0].rgb;
+                dev_comms_response_append(_cmd, btn_cmd_err_ok, (uint8_t*)&_u32_val, (3*sizeof(uint8_t)));
+                break;
+            }
+
+            case cmd_get_blink:
+            {
+                _u32_val = blink_period_ms; //Get the period of the timer
+                dev_comms_response_append(_cmd, btn_cmd_err_ok, (uint8_t*)&_u32_val, sizeof(uint32_t));
+                break;
+            }
+
+            case cmd_get_sw_time:
+            {
+                //We're not even bothering with reading a payload....
+                _u32_val = reaction_time_ms;
+                dev_comms_response_append(_cmd, btn_cmd_err_ok, (uint8_t*)&_u32_val, sizeof(uint32_t));
+                break;
+            }
+            
+            case cmd_get_flags:
+            {
+                //We're not even bothering with reading a payload....
+                //read_cmd_payload(_cmd, NULL);   // No data to read
+                dev_comms_response_append(_cmd, btn_cmd_err_ok, (uint8_t*)&system_flags, sizeof(uint8_t));
+                break;
+            }
+            
             case cmd_wr_console_cont:
             case cmd_wr_console_done:
+            {
                 uint8_t _data[RGB_BTN_MSG_MAX_LEN - sizeof(comms_msg_hdr_t) - sizeof(uint8_t)];
                 memset(_data, 0, sizeof(_data));
-                read_cmd_payload(_cmd, _data);
-                for (int8_t i = 0; (i < ((int8_t)sizeof(_data))) && (_data[i] > 0); i++)
-                    console_read_byte(_data[i]);
-                if (_cmd == cmd_wr_console_done)
+                if (read_cmd_payload(_cmd, _data, (msg.len - msg.rd_index)))
                 {
-                    //iprintln(trALWAYS, "#Console: \"%s\"", _data);
-                    //RVN - TODO - This is the last part of a console message, so we need to send the response back to the master device
-                    //Maybe wise to turn OFF all COMMS and HAL_SERIAL traces while this is happening?
-                    console_enable_alt_output_stream(dev_comms_response_add_byte);
-                    dev_comms_response_append(cmd_wr_console_cont, btn_cmd_err_ok, NULL, 0);
-                    console_read_byte('\n');
-                    console_service(); //This *should* pipe the output to the alternate stream and reset it back to stdouot once it is done
-                    dev_comms_transmit_now();
-                    dev_comms_response_append(cmd_wr_console_done, btn_cmd_err_ok, NULL, 0);
+                    for (int8_t i = 0; (i < ((int8_t)sizeof(_data))) && (_data[i] > 0); i++)
+                        console_read_byte(_data[i]);
+                    if (_cmd == cmd_wr_console_done)
+                    {
+                        //iprintln(trALWAYS, "#Console: \"%s\"", _data);
+                        //Maybe wise to turn OFF all COMMS and HAL_SERIAL traces while this is happening?
+                        console_enable_alt_output_stream(dev_comms_response_add_byte);
+                        dev_comms_response_append(cmd_wr_console_cont, btn_cmd_err_ok, NULL, 0);
+                        console_read_byte('\n');
+                        console_service(); //This *should* pipe the output to the alternate stream and reset it back to stdouot once it is done
+                        dev_comms_transmit_now();
+                        dev_comms_response_append(cmd_wr_console_done, btn_cmd_err_ok, NULL, 0);
+                    }
                 }
+                //else //read failure already handled in read_cmd_payload()
                 break;
-    
-            //case cmd_set_address:
-            // case cmd_roll_call:             //Already handled
+            }
+            
+            // case cmd_roll_call:             //Already handled in rollcall_msg_handler()
             default:
+            {
                 //Unkown/unhandled command.... return error (NAK?) to master
                 dev_comms_response_append(_cmd, btn_cmd_err_unknown_cmd, NULL, 0);
                 break;
+            }
         }
         _cnt++;
 
@@ -463,7 +597,7 @@ void msg_process(void)
 
     //If we have a response ready for a direct message, we need to send it immediately, (without waiting for bus silence)
     if ((msg.src == ADDR_MASTER) && (msg.dst == _myAddr) && (reg_state >= waiting))
-        dev_comms_response_send();
+        dev_comms_transmit_now();
 }
 
 uint8_t read_msg_data(uint8_t * dst, uint8_t len)
@@ -489,50 +623,78 @@ uint8_t read_msg_data(uint8_t * dst, uint8_t len)
     return len;
 }
 
-bool read_cmd_payload(uint8_t cmd, uint8_t * dst)
+bool read_cmd_payload(uint8_t cmd, uint8_t * dst, uint8_t len)
 {
-    //RVN - Cleanup needed
-    uint8_t len[2];
-    len[0] = read_cmd_payload_len(cmd);
-    len[1] = read_msg_data(dst, len[0]);
-    if (len[0] != len[1])
+    if (read_msg_data(dst, len) != len)
     {
-        iprintln(trALWAYS, "#Error reading %d bytes for cmd 0x%02X (%d)", len[0], cmd, len[0]);
-        dev_comms_response_append((master_command_t)cmd, btn_cmd_err_payload_len, len, 2);
+        iprintln(trALWAYS, "#Error reading %d bytes for cmd 0x%02X", len, cmd);
+        dev_comms_response_append((master_command_t)cmd, btn_cmd_err_payload_len, &len, 1);
         return false;
     }
     return true;//dev_comms_read_payload(dst, len);
 }
 
-uint8_t read_cmd_payload_len(uint8_t cmd)
+// uint8_t read_cmd_payload_len(uint8_t cmd)
+// {
+//     switch (cmd)
+//     {
+//         case cmd_bcast_address_mask:
+//         case cmd_set_blink:
+//             return sizeof(uint32_t);
+
+//         case cmd_set_rgb_0:
+//         case cmd_set_rgb_1:
+//         case cmd_set_rgb_2:
+//             return  (3*sizeof(uint8_t));
+
+//         case cmd_new_add:
+//         case cmd_set_bitmask_index:
+//             return sizeof(uint8_t);
+
+//         case cmd_wr_console_cont: // The remainder of the data paylod belongs to this guy
+//         case cmd_wr_console_done:
+//             return  (msg.len - msg.rd_index);
+
+//         default:
+//             //Everything else
+//             return 0;
+//     }
+
+// }
+
+void send_roll_call_response(void)
 {
-    switch (cmd)
+    if (reg_state != roll_call)
+        return; //We are not in the roll-call state, so we don't need to send a response
+
+    if (sys_stopwatch_ms_lap(&roll_call_sw) < roll_call_time_ms)// && (roll_call_sw.running == true))
+        return; //Not yet, so wait a bit longer
+
+    sys_stopwatch_ms_stop(&roll_call_sw); //Stop the stopwatch for the roll-call response
+
+    //We wait until we are fairly certain that the bus is ready before we send our rollcall response
+    // if (tx_bus_state == 0) //busy
+    //     return;
+    //We are going to try and send the response NOW!
+    if(!dev_comms_tx_ready()) //Start the response message
     {
-        case cmd_bcast_address_mask:
-        case cmd_set_blink:
-            return sizeof(uint32_t);
-
-        case cmd_set_rgb_0:
-        case cmd_set_rgb_1:
-        case cmd_set_rgb_2:
-            return  (3*sizeof(uint8_t));
-
-//        case cmd_roll_call:
-        case cmd_set_bitmask_index:
-            return sizeof(uint8_t);
-
-        case cmd_wr_console_cont: // The remainder of the data paylod belongs to this guy
-        case cmd_wr_console_done:
-            return  (msg.len - msg.rd_index);
-
-        default:
-            //Everything else
-            return 0;
+        //Could NOT send it now.... errors/bus is busy... we'll try again in a bit (between 2 and 50 ms)
+        roll_call_time_ms = sys_random(2, 50);
+        //RVN - TODO - This is a bit of a thumbsuck time period.... maybe come back to this later?
+        sys_stopwatch_ms_start(&roll_call_sw, 0); //Restart the stopwatch for the rollcall response
+        iprintln(trALWAYS, "#ROLL-CALL - wait some more (%u ms)", (uint8_t)roll_call_time_ms);
+        return;
     }
 
+    dev_comms_response_append(cmd_roll_call, btn_cmd_err_ok, &my_version, 1, true);
+    dev_comms_transmit_now(); //Send the response message now
+
+    //Now we wait for the master to register us
+    reg_state = waiting; //We are now in the "waiting for registration" state
+    iprintln(trALWAYS, "#State: WAIT");
 }
 
-void send_response(void)
+void state_machine_handler(void)
 {
 
     //This will also "clear" the response message if we are not in the roll-call state
@@ -540,64 +702,42 @@ void send_response(void)
 
     switch (reg_state)
     {
-        case roll_call:
-            //Check if we need to send a response
-            if (sys_stopwatch_ms_lap(&roll_call_sw) < roll_call_time_ms)// && (roll_call_sw.running == true))
-                return; //Not yet, so wait a bit longer
-
-            sys_stopwatch_ms_stop(&roll_call_sw); //Stop the stopwatch for the roll-call response
-
-            //We wait until we are fairly certain that the bus is ready before we send our rollcall response
-            // if (tx_bus_state == 0) //busy
-            //     return;
-            //We are going to try and send the response NOW!
-            if(!dev_comms_tx_ready()) //Start the response message
-            {
-                //Could NOT send it now.... errors/bus is busy... we'll try again in a bit (between 2 and 50 ms)
-                roll_call_time_ms = sys_random(2, 50);
-                //RVN - TODO - This is a bit of a thumbsuck time period.... maybe come back to this later?
-                sys_stopwatch_ms_start(&roll_call_sw, 0); //Restart the stopwatch for the rollcall response
-                iprintln(trALWAYS, "#ROLL-CALL - wait some more (%u ms)", (uint8_t)roll_call_time_ms);
-                return;
-            }
-
-            dev_comms_response_append(cmd_roll_call, btn_cmd_err_ok, &my_version, 1, true);
-            dev_comms_response_send();
-            //Now we wait for the master to register us
-            reg_state = waiting; //We are now in the "waiting for registration" state
-            iprintln(trALWAYS, "#State: WAIT");
-        
-            /* Fall through to the next case to send the response message */
-            
-        case waiting:
-        case idle:
-            dev_comms_tx_service();
-            break;
-    
         case no_init:
         case un_reg:
+        case roll_call:
+        case waiting:
+            system_flags |= flag_unreg;
+            break;
+
+        case idle:
+            system_flags &= ~flag_unreg;
+            break;
+    
         default:
             /* Do nothing... waiting for that precious rollcall msg*/
             break; //This will prevent transmission of any messages until we are (at least)
     }
-    dev_comms_check_error();
+    
+    //dev_comms_check_error();
 }
 
 bool rollcall_msg_handler(uint8_t _cmd, uint8_t _src, uint8_t _dst)
 {
     if (_cmd == cmd_roll_call)
     {
+        //Was this a roll-call message from the master device?
         if ((_src == ADDR_MASTER) && (_dst == ADDR_BROADCAST))
         {    
             //New ROLL-CALL command from the master, so we need to start the roll-call response timer again
-            //RVN - TODO - NArrow the responsse window down a bit.
-            //Means we will respond to the roll-call command between 20 and 2550 ms later
+            //RVN - TODO - Narrow the response window down a bit.
             roll_call_time_ms = (1+((uint32_t)dev_comms_addr_get())) * 10;
+            //Means we will respond to the roll-call command between 20 and 2550 ms later
             iprintln(trALWAYS, "#ROLL-CALL - Answer in %lu ms", roll_call_time_ms);
             sys_stopwatch_ms_start(&roll_call_sw, 0); //Start the stopwatch for the roll-call response
             reg_state = roll_call; //We are in the process of responding to a roll-call
         }
-    
+
+        // or was this a roll-call response from another device?
         if ((_src != ADDR_MASTER) && (_dst == ADDR_MASTER))
         {
             //ROLL-CALL response from another node, so we blacklist its address...

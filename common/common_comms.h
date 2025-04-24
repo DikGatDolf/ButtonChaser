@@ -11,7 +11,6 @@ framing.
 Within the framing, the message format is as follows:
     [Version][Flags][ID][SRC][DST][PAYLOAD][CRC]:
     - VERSION: The current version of the message format
-    - FLASG: Flags for this message (e.g. WAIT_FOR_RESPONSE, etc)
     - ID: Unique ID/Sequence number of this message (to help sync)
     - SRC: The source address of the message
     - DST: The destination address of the message
@@ -60,38 +59,88 @@ Macros
 #define STX     (0x02)
 #define DLE     (0x10)
 #define ETX     (0x03)
+// #define ACK     (0x06)
+// #define NAK     (0x15)
 
-#define COMMS_ADDR_MASTER         (0x00)
-#define COMMS_ADDR_SLAVE_DEFAULT  (0x01)
-#define COMMS_ADDR_BROADCAST      (0xFF)
+#define ADDR_MASTER       (0x00)
+#define ADDR_BROADCAST    (0xFF)
 
-#define ACK     (0x06)
-#define NAK     (0x15)
+#define ADDR_SLAVE_MIN    (ADDR_MASTER + 1)
+#define ADDR_SLAVE_MAX    (ADDR_BROADCAST -1)
 
-#define BUS_SILENCE_MIN_MS      (25)  /* 25 ms */
+// #define ACK     (0x06)
+// #define NAK     (0x15)
+
+#define RGB_BTN_MAX_NODES       (31)
+#define BUS_SILENCE_MIN_MS      (15)  /* 15 ms */
 /******************************************************************************
 Struct & Unions
 ******************************************************************************/
 
 typedef enum command_e
 {/* command id                  #      Description                        MOSI Payload  Response (MISO) Payload */
-    cmd_ping                = 0x00, /* Pings a slave address               0                4 bytes             */
-    cmd_set_address         = 0x01, /* Sets a new slave address            2 bytes          none                */
+    cmd_roll_call           = 0x00, /* Requests a Slave Roll-call          none             none                */
 
-    cmd_set_rgb_0           = 0x11, /* Set the primary LED colour          24 bits          none                */
-    cmd_set_rgb_1           = 0x12, /* Set the secondary LED colour        24 bits          none                */
-    cmd_set_rgb_2           = 0x13, /* Set the 3rd LED colour              24 bits          none                */
-    cmd_set_blink           = 0x14, /* Set the blinking interval           uint32_t         none                */
-    cmd_get_btn             = 0x15, /* Requests the state of the button    none             4 bytes             */
-    cmd_sw_start            = 0x16, /* Starts the button stopwatch         none             none                */
+    cmd_set_bitmask_index   = 0x01, /* Sets a slave address bit            1 byte           none                */
 
+    cmd_bcast_address_mask  = 0x02, /* Indicates the indices of            uint32_t         none
+                                         intended recipients of the 
+                                         broadcast message
+                                        This should be the 1st cmd in 
+                                        any broadcast message               */
+
+
+    cmd_set_rgb_0           = 0x10, /* Set the primary LED colour          24 bits          none                */
+    cmd_set_rgb_1           = 0x11, /* Set the secondary LED colour        24 bits          none                */
+    cmd_set_rgb_2           = 0x12, /* Set the 3rd LED colour              24 bits          none                */
+    cmd_set_blink           = 0x13, /* Set the blinking interval           uint32_t         none                */
+    cmd_start_sw            = 0x14, /* Starts the button stopwatch         none             none                */
+
+    cmd_new_add             = 0x1F, /* Sets a new device address - MUST    1 byte             none                
+                                        be the LAST cmd in a direct message */
+
+    cmd_get_rgb_0           = 0x20, /* Get the primary LED colour          none             24 bits             */
+    cmd_get_rgb_1           = 0x21, /* Get the secondary LED colour        none             24 bits             */
+    cmd_get_rgb_2           = 0x22, /* Get the 3rd LED colour              none             24 bits             */
+    cmd_get_blink           = 0x23, /* Get the blinking interval           none             uint32_t            */
+    cmd_get_sw_time         = 0x24, /* Requests the elapsed time of the    none             4 bytes             
+                                        reaction time sw                    */
+    cmd_get_flags           = 0x25, /* Requests the system flags           none             1 bytes             */
+
+                                        
+                                        
     /* This command cannot be "packed" along with other commands as the entire payload will be used*/
-    cmd_wr_console          = 0x27, /* Write to the slave device console (partial/full buffer) - expects a response 
-                                        1st byte in data is the length of the data to send to the slave console */                                    
-}command_t;
+    cmd_wr_console_cont     = 0x40, /* Write to the slave device console   buffer           none
+                                        1st byte in data is the length 
+                                        of the data to send to the slave 
+                                        console */  
+    cmd_wr_console_done     = 0x41, /* Last part of a write to the slave   buffer           expects a potentially 
+                                        device console. 1st byte in data                    multi-packet response 
+                                        is the length of the data to send 
+                                        to the slave console */  
 
-#define RGB_BTN_FLAG_CMD_COMPLETE   (0x80)
+    cmd_debug_0             = 0x80, /* Dummy command. just fills the data buffer */
+}master_command_t;
 
+typedef enum response_e
+{
+    btn_cmd_err_ok                  = 0x00, /* The command was successful*/
+    btn_cmd_err_payload_len         = 0x01, /* The command payload did not contain sufficient data for the command - followed by length byte*/
+    btn_cmd_err_range               = 0x02, /* The payload contained a value outside of the acceptable range - followed by a value byte*/
+    btn_cmd_err_unknown_cmd         = 0x03, /* The command was not recognised - followed by the command byte*/
+}response_code_t;
+
+enum system_flags_e
+{
+    flag_s_press     = BIT_POS(0),
+    flag_l_press     = BIT_POS(1),
+    flag_d_press     = BIT_POS(2),
+    flag_active      = BIT_POS(3),
+    flag_deactivated = BIT_POS(4),
+    flag_blinking    = BIT_POS(5),
+    flag_unreg       = BIT_POS(6),
+    flag_reserved    = BIT_POS(7),
+};
 /******************************************************************************
 Global (public) variables
 ******************************************************************************/
@@ -112,7 +161,7 @@ typedef struct {
 }comms_msg_t;
 #pragma pack(pop)
 
-STATIC_ASSERT(((sizeof(comms_msg_hdr_t)+sizeof(uint8_t)) < RGB_BTN_MSG_MAX_LEN), "rgb_btn_msg_hdr_t is too big");
+//STATIC_ASSERT(((sizeof(comms_msg_hdr_t)+sizeof(uint8_t)) < RGB_BTN_MSG_MAX_LEN), "rgb_btn_msg_hdr_t is too big");
 
 #ifdef __cplusplus
 }

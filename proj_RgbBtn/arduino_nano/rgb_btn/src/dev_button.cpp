@@ -25,30 +25,44 @@ Macros
 #endif
 #define PRINTF_TAG ("Button") /* This must be undefined at the end of the file*/
 
-#define BTN_DEBOUNCE_TIME_MS    (50)	/* Debounce time in ms */
+#define BTN_DEBOUNCE_TIME_MS       (50)	/* Debounce time in ms */
+#define BTN_LONG_PRESS_TIME_MS     (500)	/* Btn Dwn hold time to trigger a long-press event */
+#define BTN_DBL_PRESS_TIME_MS      (650)	/* Period within which 2 btn presses will register a double-press */
 
 /******************************************************************************
 Structs and Unions
 ******************************************************************************/
+enum button_event_e
+{
+    btn_down        = BIT_POS(0),   // Falling Edge
+    btn_release     = BIT_POS(1),   // Rising Edge
+    btn_long_press  = BIT_POS(2),   // Implies Release
+    btn_shrt_press  = BIT_POS(3),   // Implies Release
+    btn_dbl_press   = BIT_POS(4),   // Implies Short Press and Release
+};
 
 /******************************************************************************
 Local function definitions
 ******************************************************************************/
+void _debounce_cb(void);
+void _dbl_press_cb(void);
+void _long_press_cb(void);
 
 /******************************************************************************
 Local variables
 ******************************************************************************/
 
-void (*int0_irq_cb)(void) = NULL;
-timer_ms_t debounce_tmr;
-//int pin_state;
-uint8_t button_state;
-stopwatch_ms_t button_press_sw;
-unsigned long press_time;
+volatile uint8_t button_event;
+volatile uint8_t _last_pin_state = HIGH;
+volatile bool _dbl_press_flag = false;
+volatile bool _long_press_flag = false;
 
-#if (DEV_BTN_DEBUG == 1)
-stopwatch_ms_t debug_sw;
-#endif
+
+void (*_btn_down_cb)(void) = NULL;
+void (*_btn_release_cb)(void) = NULL;
+void (*_btn_short_press_cb)(void) = NULL;
+void (*_btn_long_press_cb)(void) = NULL;
+void (*_btn_dbl_press_cb)(void) = NULL;
 
 /******************************************************************************
 Local functions
@@ -56,9 +70,78 @@ Local functions
 
 ISR(INT0_vect) // INT0
 {
-    sys_poll_tmr_start(&debounce_tmr, BTN_DEBOUNCE_TIME_MS, false);
+    //Just start the debounce timer, and let the timer ISR handle the rest
+    //sys_poll_tmr_start(&debounce_tmr, BTN_DEBOUNCE_TIME_MS, false);
+    sys_cb_tmr_start(&_debounce_cb, BTN_DEBOUNCE_TIME_MS);
 }
 
+//This function is called from the timer ISR.
+void _debounce_cb(void)
+{
+    //Whatever the state of the pin, it has been stable for the debounce period
+    uint8_t _pin_state = sys_input_read(input_Button);
+    if (_pin_state == _last_pin_state)
+        return; //No change in state, so just return the current state
+
+    //Save the current state 
+    _last_pin_state = _pin_state; //Save the last state
+
+    //We have either a button press or release event
+    if (_pin_state == LOW)
+    {
+        //Button pressed
+        button_event |= btn_down;
+
+        //We need to start the measurement for the long press time now.
+        _long_press_flag = true; //Set the flag to indicate we are waiting for a long-press
+        sys_cb_tmr_start(&_long_press_cb, BTN_LONG_PRESS_TIME_MS);
+    }
+    else
+    {
+        //Button released
+        button_event |= btn_release;
+
+        //Stop the long press timer, as we are not interested in it anymore
+        if (_long_press_flag)
+        {
+            _long_press_flag = false; //Reset the flag for the next time
+            sys_cb_tmr_stop(&_long_press_cb);
+            button_event |= btn_shrt_press;
+        }
+        //else, the long press event should already have been triggered, so we don't need to do anything
+        
+        //Are we still in time for a double-press event?
+        if (_dbl_press_flag)
+        {
+            //We have a double-press event, so we need to stop the timer
+            button_event |= btn_dbl_press;
+            sys_cb_tmr_stop(&_dbl_press_cb);
+            _dbl_press_flag = false; //Reset the flag for the next time
+        }
+        else // Nope.... this is a normal single press event
+        {    
+            //But we we can start the measurement for a double-press now
+            _dbl_press_flag = true; //Set the flag to indicate we are waiting for a double-press
+            sys_cb_tmr_start(&_dbl_press_cb, BTN_DBL_PRESS_TIME_MS);
+        }
+    }
+}
+
+// If/when this function is called, we have a long-press event
+void _long_press_cb(void)
+{
+    //for safety, just check if the button is still pressed
+    if ((_last_pin_state == LOW) && (_long_press_flag))
+        button_event |= btn_long_press;
+
+    _long_press_flag = false; //No long-press event, so reset the flag
+}
+
+void _dbl_press_cb(void)
+{
+    _dbl_press_flag = false; //Double-press timeout
+
+}
 /******************************************************************************
 Local functions
 ******************************************************************************/
@@ -67,91 +150,79 @@ Local functions
 Global functions
 ******************************************************************************/
 
-void dev_button_init(void)
+void dev_button_init(
+    void (*_cb_btn_down)(void), 
+    void (*_cb_btn_release)(void), 
+    void (*_cb_short_press)(void), 
+    void (*_cb_long_press)(void), 
+    void (*_cb_dbl_press)(void))
 {
+    sys_tmr_init(); //Initialise the timer system
+
     sys_set_io_mode(input_Button, INPUT_PULLUP);
 
-#if defined(EICRA) && defined(ISC00) && defined(EIMSK)
     EICRA = (EICRA & ~((1 << ISC00) | (1 << ISC01))) | (CHANGE << ISC00);
     EIMSK |= (1 << INT0);
-#elif defined(MCUCR) && defined(ISC00) && defined(GICR)
-    MCUCR = (MCUCR & ~((1 << ISC00) | (1 << ISC01))) | (CHANGE << ISC00);
-    GICR |= (1 << INT0);
-#elif defined(MCUCR) && defined(ISC00) && defined(GIMSK)
-    MCUCR = (MCUCR & ~((1 << ISC00) | (1 << ISC01))) | (CHANGE << ISC00);
-    GIMSK |= (1 << INT0);
-#else
-    #error attachInterrupt not finished for this CPU (case 0)
-#endif
-    button_state = btn_up;
-    press_time = 0lu;
-    sys_stopwatch_ms_start(&button_press_sw);
 
-    sys_poll_tmr_start(&debounce_tmr, BTN_DEBOUNCE_TIME_MS, false);
+    if (_cb_btn_down != NULL)
+        _btn_down_cb = _cb_btn_down;
+    if (_cb_btn_release != NULL)
+        _btn_release_cb = _cb_btn_release;  
+    if (_cb_short_press != NULL)
+        _btn_short_press_cb = _cb_short_press;
+    if (_cb_long_press != NULL)
+        _btn_long_press_cb = _cb_long_press;
+    if (_cb_dbl_press != NULL)
+        _btn_dbl_press_cb = _cb_dbl_press;
+
+    button_event = 0;
+
+    //sys_poll_tmr_start(&debounce_tmr, BTN_DEBOUNCE_TIME_MS, false);
+    sys_cb_tmr_start(&_debounce_cb, BTN_DEBOUNCE_TIME_MS);
 
     iprintln(trBUTTON, "#Initialised (%d)", sys_input_read(input_Button));
 }
 
-void dev_button_measure_start(void)
+void dev_button_service(void)
 {
-    press_time = 0lu;
-    sys_stopwatch_ms_start(&button_press_sw);
-    button_state |= btn_active;
-}
 
-unsigned long dev_button_get_reaction_time_ms(void)
-{
-    return press_time;// sys_stopwatch_ms_lap(&button_press_sw);
-}
+    if (button_event == 0)
+        return; //No button event, so just return
+    
 
-uint8_t dev_button_get_state(void)
-{
-    //For now we only want to check a change in up.down state
-    uint8_t _old_state = (button_state & (btn_up | btn_down));
-
-    //Clear the pressed and released flags, as these are one-shot flags
-    if ((button_state & (btn_released | btn_pressed)) != 0)
-        button_state &= ~(btn_released | btn_pressed);
-
-    uint8_t _tmp_btn_state = 0; //No state assumed
-    int _pin_state_0 = sys_input_read(input_Button);
-
-    if (!sys_poll_tmr_expired(&debounce_tmr))
-        return button_state;
-
-    //To check if the button has not been pressed while we check the timer
-    int _pin_state_1 = sys_input_read(input_Button);
-    if (_pin_state_1 != _pin_state_0)
-        return button_state;
-
-    //State has been stable for the debounce time
-    _tmp_btn_state = (_pin_state_0 == LOW)? btn_down : btn_up;
-    if (_old_state == _tmp_btn_state)
-        return button_state;
-
-    // Means the button state has changed... and was debounced properly. We have a new state!!
-    button_state = _tmp_btn_state;
-    button_state |= (button_press_sw.running)? btn_active : 0;
-#if (DEV_BTN_DEBUG == 1)
-    press_time = sys_stopwatch_ms_stop(&debug_sw);
-    sys_stopwatch_ms_start(&debug_sw);
-#endif
-    if (_tmp_btn_state == btn_down)
+    if (button_event & btn_down)
     {
-        button_state |= btn_pressed;
-
-        if (button_press_sw.running)
-            press_time = sys_stopwatch_ms_stop(&button_press_sw);
+        if (_btn_down_cb != NULL)
+            _btn_down_cb();
+        button_event &= ~btn_down; //Clear the button down event
     }
-    else
+
+    if (button_event & btn_release)
     {
-        button_state |= btn_released;
+        if (_btn_release_cb != NULL)
+            _btn_release_cb();
+        button_event &= ~btn_release; //Clear the button release event
     }
-#if (DEV_BTN_DEBUG == 1)
-    iprintln(trBUTTON, "#%s (%lu ms)", (button_state & btn_pressed)? "Pressed" : "Released", press_time);
-#endif
 
-    return button_state;
+    if (button_event & btn_shrt_press)
+    {
+        if (_btn_short_press_cb != NULL)
+            _btn_short_press_cb();
+        button_event &= ~btn_shrt_press; //Clear the short press event
+    }
+
+    if (button_event & btn_long_press)
+    {
+        if (_btn_long_press_cb != NULL)
+            _btn_long_press_cb();
+        button_event &= ~btn_long_press; //Clear the long press event
+    }
+    if (button_event & btn_dbl_press)
+    {
+        if (_btn_dbl_press_cb != NULL)
+            _btn_dbl_press_cb();
+        button_event &= ~btn_dbl_press; //Clear the double press event
+    }
 }
 
 #undef PRINTF_TAG

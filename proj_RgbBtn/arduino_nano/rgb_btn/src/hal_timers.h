@@ -25,7 +25,8 @@ Macros
 /******************************************************************************
 Struct & Unions
 ******************************************************************************/
-// structs
+typedef void (*sys_cb_tmr_exp_t)(void);
+
 typedef struct
 {
     unsigned long started;   // 1ms ~ 49 days.
@@ -50,6 +51,28 @@ variables
 /******************************************************************************
 functions
 ******************************************************************************/
+
+/*! Initializes the timer module. This function must be called before any other
+ *  timer functions. It sets up the timer interrupt and initializes the timer 
+ *  structures.
+ */
+void sys_tmr_init(void);
+
+/*! Starts a timer with a callback function and an interval. This timer is 
+ * self-destructive, i.e. it will be destroyed after it has expired.
+ * @param cb_tmr_exp  The callback function to call when the timer expires. 
+ *  Please Note that this function is executed in the context of the timer 
+ *  interrupt, so it must be quick and not block.
+ * @param interval    period (in ms) after which to expire (unsigned long)
+ * @returns true if the timer could be enabled, false if not.
+*/
+bool sys_cb_tmr_start(void (*cb_tmr_exp)(void), unsigned long interval, bool reload = false);
+
+/*! Stops a timer with a callback function. This function will remove the 
+ *  callback function from the list of timers and stop it.
+ * @param cb_tmr_exp  The callback function to stop. 
+*/
+void sys_cb_tmr_stop(void (*cb_tmr_exp)(void));
 
 /*! Sets the timers interval and starts it. 
  * @param t         a pointer to a static timer_ms_t 

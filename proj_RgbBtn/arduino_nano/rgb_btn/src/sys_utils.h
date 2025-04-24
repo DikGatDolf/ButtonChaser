@@ -38,14 +38,14 @@ Macros
     ;enum { ASSERT_CONCAT(assert_line_, __LINE__) = 1/(int)(!!(e)) }
 #endif
 
-#define BIT_POS(pos)			(1U << pos)
+#define BIT_POS(pos)			    (1U << pos)
 
-#define SET_BIT(x, pos)			(x |= BIT_POS(pos))
-#define CLEAR_BIT(x, pos) 		(x &= (~BIT_POS(pos)))
-#define TOGGLE_BIT(x, pos) 		(x ^= BIT_POS(pos))
+#define SET_BIT(x, pos)			    (x |= BIT_POS(pos))
+#define CLEAR_BIT(x, pos) 		    (x &= (~BIT_POS(pos)))
+#define TOGGLE_BIT(x, pos) 		    (x ^= BIT_POS(pos))
 
-#define BIT_IS_SET(x,pos) 		((x) & BIT_POS(pos))
-#define BIT_IS_CLEAR(x,pos) 	(~BIT_IS_SET(x,pos))
+#define IS_BIT_SET(value, bit)      (value & BIT_POS(bit))
+#define IS_BIT_CLEAR(value, bit)    (!(value & BIT_POS(bit)))
 
 #define sign_f(a)	((a < 0)? -1.0 : 1.0)
 #define INPUT_EDGE_NONE		0

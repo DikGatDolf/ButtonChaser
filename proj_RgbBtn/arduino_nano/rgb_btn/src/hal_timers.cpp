@@ -35,14 +35,160 @@ The Timer must be polled (TimerPoll) to see when it has expired
 /*******************************************************************************
 local defines
  *******************************************************************************/
+#define TMR1_CNT_VAL        (F_CPU/1000/64)
+#define TMR1_TCNT_LOADVAL   (0xFFFF - TMR1_CNT_VAL + 1)
+#define MAX_CB_TMR_CNT      (4)
 
 /*******************************************************************************
 local variables
- *******************************************************************************/
+*******************************************************************************/
+typedef struct cb_tmr_s
+{
+    sys_cb_tmr_exp_t func;
+    volatile unsigned long ms_cnt;  // 1ms ~ 49 days.
+    unsigned long ms_period;        // 1ms ~ 49 days.
+    bool reload_mode; //Reload mode
+} cb_tmr_t;
 
+cb_tmr_t cb_tmr[MAX_CB_TMR_CNT];
+
+bool sys_tmr_init_ok = false;
 /*******************************************************************************
 local functions
  *******************************************************************************/
+ISR(TIMER1_OVF_vect)
+{
+    //Load the timer with the value to start counting from (0x00)
+    ATOMIC_BLOCK(ATOMIC_RESTORESTATE) 
+    {
+        //Set the counter to a value which will cause it to overflow every 1ms
+        TCNT1 = TMR1_TCNT_LOADVAL; 
+    }
+    for (int i = 0; i < MAX_CB_TMR_CNT; i++)
+    {
+        if (cb_tmr[i].func)
+        {
+            if ((--cb_tmr[i].ms_cnt) == 0)
+            {
+                cb_tmr[i].func();       //Call the function
+                if(cb_tmr[i].reload_mode)
+                    cb_tmr[i].ms_cnt = cb_tmr[i].ms_period; //Reload the timer
+                else
+                    cb_tmr[i].func = NULL;  //Clear the function pointer to indicate that it is free
+            }
+        }
+    }
+}
+
+/*******************************************************************************
+Global/Public functions
+ *******************************************************************************/
+void sys_tmr_init(void)
+{
+    if (sys_tmr_init_ok)
+        return; //Already initialized
+
+    //The poll timer and stopwatch makes use of the millis() function (to 
+    // determine the time elapsed), which in turn makes use of the timer0.
+
+    //We are going to repurpose timer1 for our own use, so we need to 
+    // reconfigure it
+
+
+	// Stop the timer 1
+	cbi(TIMSK1, TOIE1);
+	
+    //Set the timer 1 to normal mode (no PWM, no CTC, no fast PWM)
+	cbi(TCCR1A, WGM11);
+	cbi(TCCR1A, WGM10);
+
+	//Set timer 1 prescale factor to 64
+	sbi(TCCR1B, CS11);
+	sbi(TCCR1B, CS10);
+
+    //Load the timer with the value to start counting from (0x00)
+    ATOMIC_BLOCK(ATOMIC_RESTORESTATE) 
+    {
+        //Set the counter to a value which will cause it to overflow every 1ms
+        TCNT1 = TMR1_TCNT_LOADVAL; 
+    }
+
+    // Now the prescaler is set so that timer1 ticks every 64 clock cycles, and the
+    // the overflow handler is called every 250 ticks.
+
+    for (int i = 0; i < MAX_CB_TMR_CNT; i++)
+    {
+        cb_tmr[i].func = NULL;
+        cb_tmr[i].ms_cnt = 0;
+    }
+
+	// enable timer 1 overflow interrupt
+	sbi(TIMSK1, TOIE1);
+
+    sys_tmr_init_ok = true; //Set the timer as initialized
+}
+
+bool sys_cb_tmr_start(void (*cb_tmr_exp)(void), unsigned long interval, bool reload)
+{
+    if (!sys_tmr_init_ok)
+        return false; //Timer not initialized
+
+    //First we need to check if this callback is not already in the list
+    for (int i = 0; i < MAX_CB_TMR_CNT; i++)
+    {
+        if (cb_tmr[i].func == cb_tmr_exp)
+        {
+            //Already in the list, so just reset the timer
+            ATOMIC_BLOCK(ATOMIC_RESTORESTATE) 
+            {
+                cb_tmr[i].ms_period = interval; // 1ms ~ 49 days.
+                cb_tmr[i].ms_cnt = interval;    // 1ms ~ 49 days.
+                cb_tmr[i].reload_mode = reload;
+            }
+            return true;
+        }
+    }
+
+    //Not in the list, so we need to find a free slot
+    for (int i = 0; i < MAX_CB_TMR_CNT; i++)
+    {
+        if (!cb_tmr[i].func)
+        {
+            ATOMIC_BLOCK(ATOMIC_RESTORESTATE) 
+            {
+                cb_tmr[i].ms_period = interval; // 1ms ~ 49 days.
+                cb_tmr[i].ms_cnt = interval;
+                cb_tmr[i].func = cb_tmr_exp;
+                cb_tmr[i].reload_mode = reload;
+            }
+            return true;
+        }
+    }
+    return false; //No free callback timers available
+}
+
+void sys_cb_tmr_stop(void (*cb_tmr_exp)(void))
+{
+    if (!sys_tmr_init_ok)
+        return; //Timer not initialized
+
+    //First we need to check if this callback is not already in the list
+    for (int i = 0; i < MAX_CB_TMR_CNT; i++)
+    {
+        if (cb_tmr[i].func == cb_tmr_exp)
+        {
+            ATOMIC_BLOCK(ATOMIC_RESTORESTATE) 
+            {
+                //In the list, just remove it
+                cb_tmr[i].ms_period = 0lu;
+                cb_tmr[i].ms_cnt = 0lu;
+                cb_tmr[i].func = NULL;
+                cb_tmr[i].reload_mode = false;
+            }
+            return;
+        }
+    }
+}
 
 void sys_poll_tmr_start(timer_ms_t *t, unsigned long interval, bool auto_reload)
 {

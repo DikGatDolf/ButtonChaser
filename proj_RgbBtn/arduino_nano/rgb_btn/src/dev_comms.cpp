@@ -190,7 +190,7 @@ void _rx_irq_callback(uint8_t rx_data);
 //char * _comms_rx_error_msg(int err_data);
 int8_t _comms_check_rx_msg(int *_data);
 bool _dev_comms_verify_addr(uint8_t addr);
-void _dev_comms_tx_start(void);
+
 bool _dev_comms_rx_handler_add_data_check_overflow(uint8_t rx_data);
 unsigned int  _dev_comms_response_add_console_resp(uint8_t * data, uint8_t data_len);
 unsigned int _dev_comms_response_add_data(uint8_t * data, uint8_t data_len);
@@ -208,39 +208,9 @@ volatile bool _msg_available = false;
 
 stopwatch_ms_s _tx_sw;
 
-// volatile bool tx_success = false;
-// volatile bool tx_error = false;
 /******************************************************************************
 Local functions
 ******************************************************************************/
-// char * _comms_rx_error_msg(int8_t code, int err_data)
-// {
-//     static char buff[32];
-//     buff[0] = 0;
-//     // if (code == rx_err_sync)
-//     // {    
-//     //     snprintf(buff, sizeof(buff), "RX Sync Error (0x%02X)", err_data);
-//     // }
-//     // else if (code == rx_err_ovflw)
-//     // {
-//     //     snprintf(buff, sizeof(buff), "RX Overflow (%d)", err_data);
-//     // }
-//     // else 
-//     if (code == rx_err_crc)
-//     {
-//         snprintf(buff, sizeof(buff), "CRC Failed (0x%02X)", err_data);
-//     }
-//     else if (code == rx_err_version)
-//     {
-//         snprintf(buff, sizeof(buff), "Unkown Version (%d >= %d)", _comms.rx.msg.hdr.version, RGB_BTN_MSG_VERSION);
-//     }
-//     else
-//     {    
-//         snprintf(buff, sizeof(buff), "Unkown Error %d (0x%02X)", code, err_data);
-//     }
-
-//     return buff;
-// }
 
 int8_t _comms_check_rx_msg(int *_data)
 {
@@ -280,104 +250,6 @@ bool _dev_comms_rx_handler_add_data_check_overflow(uint8_t rx_data)
     _comms.rx.length++;
 
     return true;
-}
-typedef struct
-{
-    bool active;
-    uint8_t seq;
-    uint8_t tx_data[RGB_BTN_MSG_MAX_LEN];
-    uint8_t tx_len;   
-    uint8_t rx_data[RGB_BTN_MSG_MAX_LEN];
-    uint8_t rx_len;
-}comms_err_t;
-
-comms_err_t _err = {0};
-
-/*! @brief Writes the data from the tx msg buffer to the serial port (including escaping)
- * This function will block until the message is completely sent 
- * @return true if the message was sent successfully, false if the bus was not available
- */
-void _dev_comms_tx_start(void)
-{
-    if (_comms.tx.data_length == 0)
-    {
-        //How did we get to this point?
-        _tx_state = tx_idle;
-        return;
-    }
-    uint8_t * msg = (uint8_t *)&_comms.tx.msg;
-    uint8_t msg_len = (sizeof(comms_msg_hdr_t) + _comms.tx.data_length + sizeof(uint8_t));
-    //iprintln(trCOMMS, "#TX: %d/%d bytes (%d) - 0x%06X", msg_len, RGB_BTN_MSG_MAX_LEN, _comms.tx.msg.hdr.id, msg);
-
-    //Make sure any console prints are finished before we start sending... 
-    // this ensures that the RS-485 is enabled again once the last TX complete IRQ has fired.
-    hal_serial_flush(); 
-
-    //wait here for the bus to go silent!
-    while ((_rx_state != rx_listen) && (hal_serial_rx_silence_ms() < WAIT_BUS_SILENCE_MAX_MS))
-    {
-        //We really don't want to be waiting here forever.... 
-        // if the bus has been silent for 15 ms, then we are done waiting.
-    }
-
-    //NO PRINT SECTION START - Make sure there are NO console prints in this section
-
-    hal_serial_write(STX);
-    //We need to make sure our IRQ callback is processiong the received data/echo correctly. 
-    //This state (tx_echo_rx) is handled in the serial receive IRQ callback
-    _tx_state = tx_echo_rx;
-
-    for (uint8_t i = 0; i < msg_len; i++)
-    {
-        uint8_t tx_data = msg[i];
-        if ((tx_data == STX) || (tx_data == DLE) || (tx_data == ETX))
-        {
-            hal_serial_write(DLE);
-            tx_data ^= DLE;
-        }
-        hal_serial_write(tx_data);
-    }
-    hal_serial_write(ETX);        
-    //Right, we've sent the message (well, actually we've only loaded it into 
-    // the hal_serial tx buffer, but the transmission should have started already), 
-    // now we need to wait and check if we received it correctly (pleasures of half-duplex comms)
-    
-    //Make sure the entire message is sent over RS485 before we continue (with potential printf's)
-    hal_serial_flush(); 
-
-    _comms.tx.retry_cnt++;
-    
-    //NO PRINT SECTION END
-
-    //RVN - TODO - Why do we not wait and check for the echo right here?
-    // If our TX state goes into idle, we got it (all handled by the interrupts)
-    // otherwise, if the rx state goes into listen, a completed message has been received, but not matched (bus collision?)
-    // Lastly, if the bus is silent for a period, then everybody is waiting for everybody.
-    while (_tx_state != tx_queued)
-    {
-        if (hal_serial_rx_silence_ms() >= WAIT_BUS_SILENCE_MAX_MS) // NO ECHO and bus is stuck in some weird RX state (missed ETX?)
-            _rx_state = rx_listen; //Force the bus to go into listen mode
-
-        if (_rx_state == rx_listen) // NO ECHO 
-            _tx_state = tx_queued; //will break out of the while and kick off our retry mechanism
-        
-        if (_tx_state == tx_idle) // ECHO RECEIVED - All good, baby!
-            return; //we are done here
-    }
-
-    if (_comms.tx.retry_cnt >= 5)
-    {
-        //We have retried this message too many times, so we need to give up and move on
-        if (!_err.active)
-        {
-            _err.active = true;
-            _err.seq = _comms.tx.msg.hdr.id;
-            _err.tx_len = _comms.tx.data_length + sizeof(comms_msg_hdr_t) + sizeof(uint8_t);
-            memcpy(_err.tx_data, (uint8_t *)&_comms.tx.msg, _err.tx_len);
-            _err.rx_len = _comms.rx.length;
-            memcpy(_err.rx_data, (uint8_t *)&_comms.rx.msg, _err.rx_len);
-        }    
-    }
 }
 
 bool _dev_comms_verify_addr(uint8_t addr)
@@ -506,7 +378,6 @@ unsigned int  _dev_comms_response_add_console_resp(uint8_t * data, uint8_t data_
         //Let's send what we have so far, and then start a new message?
         dev_comms_transmit_now();
         dev_comms_response_append(cmd_wr_console_cont, btn_cmd_err_ok, NULL, 0);
-        //RVN - TODO - This needs to be tested!!!!
     }
 
     return _dev_comms_response_add_data(data, data_len); //The number of bytes added
@@ -583,7 +454,7 @@ unsigned int dev_comms_response_append(master_command_t cmd, response_code_t res
         dev_comms_transmit_now();
         //We need to "prime" the message first....
         _dev_comms_response_start();
-        //RVN - TODO - This needs to be tested!!!!
+        //TODO - This needs to be tested!!!! (see _dev_comms_response_add_console_resp, where it HAS been tested)
     }
 
     uint8_t _crc = _comms.tx.msg.data[_comms.tx.data_length];
@@ -602,61 +473,97 @@ size_t dev_comms_response_add_byte(uint8_t data)
     return (size_t) _dev_comms_response_add_console_resp(&data, 1);
 }
 
-void dev_comms_response_send(void)
+void dev_comms_transmit_now(void)
 {
+
     if ((_comms.tx.data_length == 0) || (_tx_state != tx_msg_busy)) //Must be preceded with start()
         return; //Nothing to send, let the user think everything is all good
 
     _comms.tx.retry_cnt = 0; //We are starting a new transmission, so reset the retry count
     _tx_state = tx_queued; //Will be started once the bus is free
 
-    //RVN - TODO - We can probably spin up the transmission immediately, but we need to check if the bus is free first
-    //Hell, we might as well wait right here for a free bus?
-}
+    do { //while (_comms.tx.retry_cnt < 5)
 
-void dev_comms_transmit_now(void)
-{
-    dev_comms_response_send();
-    do { 
-        _dev_comms_tx_start(); //dev_comms_tx_service();
-    }while (_tx_state != tx_idle); //Wait for the bus to be free again
-}
-
-void dev_comms_tx_service(void)
-{
-    if (_tx_state != tx_echo_rx) 
-    {
-        //We are waiting for our transmission to be echoed back to us
-        if (_comms.tx.retry_cnt >= 5)
+        if (_comms.tx.data_length == 0)
         {
-            //We have retried this message too many times, so we need to give up and move on
+            //How did we get to this point?
             _tx_state = tx_idle;
-            iprintln(trCOMMS, "#TX Error: %s (%d bytes)", "No Echo", _comms.rx.length);
-            iprintln(trCOMMS, "#TX data:");
-            console_print_ram(trCOMMS, &_comms.tx.msg, (unsigned long)&_comms.tx.msg, _comms.tx.data_length + sizeof(comms_msg_hdr_t) + sizeof(uint8_t));
-            _comms.tx.seq++; // Let's not re-use this sequence number again, then the master will know that something went wrong on our end.
             return;
         }
+        uint8_t * msg = (uint8_t *)&_comms.tx.msg;
+        uint8_t msg_len = (sizeof(comms_msg_hdr_t) + _comms.tx.data_length + sizeof(uint8_t));
+        //iprintln(trCOMMS, "#TX: %d/%d bytes (%d) - 0x%06X", msg_len, RGB_BTN_MSG_MAX_LEN, _comms.tx.msg.hdr.id, msg);
+    
+        //Make sure any console prints are finished before we start sending... 
+        // this ensures that the RS-485 is enabled again once the last TX complete IRQ has fired.
+        hal_serial_flush(); 
+    
+        //wait here for the bus to go silent!
+        while ((_rx_state != rx_listen) && (hal_serial_rx_silence_ms() < WAIT_BUS_SILENCE_MAX_MS))
+        {
+            //We really don't want to be waiting here forever.... 
+            // if the bus has been silent for 15 ms, then we are done waiting.
+        }
+    
+        
+        {   //NO PRINT SECTION START            
+            hal_serial_write(STX);
+            //We need to make sure our IRQ callback is processiong the received data/echo correctly. 
+            //This state (tx_echo_rx) is handled in the serial receive IRQ callback
+            _tx_state = tx_echo_rx;
+        
+            for (uint8_t i = 0; i < msg_len; i++)
+            {
+                uint8_t tx_data = msg[i];
+                if ((tx_data == STX) || (tx_data == DLE) || (tx_data == ETX))
+                {
+                    hal_serial_write(DLE);
+                    tx_data ^= DLE;
+                }
+                hal_serial_write(tx_data);
+            }
+            hal_serial_write(ETX);        
+            //Right, we've sent the message (well, actually we've only loaded it into 
+            // the hal_serial tx buffer, but the transmission should have started already), 
+            // now we need to wait and check if we received it correctly (pleasures of half-duplex comms)
+            
+            //Make sure the entire message is sent over RS485 before we continue (with potential printf's)
+            hal_serial_flush(); 
+        
+            _comms.tx.retry_cnt++;
+        } //NO PRINT SECTION END
+    
+        // If our TX state goes into idle, we got it (all handled by the interrupts)
+        // otherwise, if the rx state goes into listen, a completed message has been received, but not matched (bus collision?)
+        // Lastly, if the bus is silent for a period, then everybody is waiting for everybody.
+        do //
+        {
+            if (hal_serial_rx_silence_ms() >= WAIT_BUS_SILENCE_MAX_MS) // NO ECHO and bus is stuck in some weird RX state (missed ETX?)
+            {
+                //iprintln(trCOMMS, "#Bus silent for %u ms", hal_serial_rx_silence_ms());
+                _rx_state = rx_listen; //Force the bus to go into listen mode
+            }
+    
+            if ((_rx_state == rx_listen) && (_tx_state == tx_echo_rx))// NO ECHO 
+            {
+                //iprintln(trCOMMS, "#No ECHO Rx'd");
+                //iprintln(trCOMMS, "#TX Err - %d bytes (seq %d)", _comms.tx.data_length + sizeof(comms_msg_hdr_t) + sizeof(uint8_t), _comms.tx.msg.hdr.id);
+                //console_print_ram(trCOMMS, (uint8_t *)&_comms.tx.msg, 0, _comms.tx.data_length + sizeof(comms_msg_hdr_t) + sizeof(uint8_t));
+                //iprintln(trCOMMS, "#Last RX - %d bytes (seq %d)", _comms.rx.length, _comms.rx.msg.hdr.id);
+                //console_print_ram(trCOMMS, (uint8_t *)&_comms.rx.msg, 0, _comms.rx.length);
+                break; //from do-while loop
+            }
+            
+            if (_tx_state == tx_idle) // ECHO RECEIVED - All good, baby!
+                return; //we are done here
 
-    }
+        }while (_tx_state == tx_echo_rx); //Wait for the echo to be received
+    
+        //Reaching this point means we have not received an echo of our message, so we need to retry it
+        //We have retried this message too many times, so we need to give up and move on
+    }while (_comms.tx.retry_cnt < 5);//(_tx_state != tx_idle); //Wait for the bus to be free again
 
-    switch (_tx_state)
-    {
-        case tx_echo_rx:
-            //else - fall through to tx_queued
-
-        case tx_queued:
-            _dev_comms_tx_start();
-            break;
-
-        case tx_idle:
-        case tx_msg_busy:
-            /* Do nothing */
-            break;
-        default:
-            //We should never get here
-            break;
-    }
+    iprintln(trCOMMS, "#TX Abandonded after %d tries", _comms.tx.retry_cnt);
 }
 
 uint8_t dev_comms_addr_get(void)
@@ -754,17 +661,17 @@ int8_t dev_comms_rx_msg_available(uint8_t * _src, uint8_t * _dst, uint8_t * _dat
     return ret_val;
 }
 
-void dev_comms_check_error(void)
-{
-    if (!_err.active)
-        return; //No error to report
+// void dev_comms_check_error(void)
+// {
+//     if (!_err.active)
+//         return; //No error to report
 
-    iprintln(trCOMMS, "#TX Err - %d bytes (seq %d)", _err.tx_len, _err.seq);
-    console_print_ram(trCOMMS, _err.tx_data, 0, _err.tx_len);
-    iprintln(trCOMMS, "#Last RX - %d bytes (seq %d)", _err.rx_len, ((comms_msg_t *)&_err.rx_data)->hdr.id);
-    console_print_ram(trCOMMS, _err.rx_data, 0, _err.rx_len);
-    _err.active = false;
-}
+//     iprintln(trCOMMS, "#TX Err - %d bytes (seq %d)", _err.tx_len, _err.seq);
+//     console_print_ram(trCOMMS, _err.tx_data, 0, _err.tx_len);
+//     iprintln(trCOMMS, "#Last RX - %d bytes (seq %d)", _err.rx_len, ((comms_msg_t *)&_err.rx_data)->hdr.id);
+//     console_print_ram(trCOMMS, _err.rx_data, 0, _err.rx_len);
+//     _err.active = false;
+// }
 
 #undef PRINTF_TAG
 /*************************** END OF FILE *************************************/

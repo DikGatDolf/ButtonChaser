@@ -6,22 +6,6 @@ Author:     Rudolph van Niekerk
 Processor:  Arduino Nano (ATmega328)
 Compiler:	Arduino AVR Compiler
 
-
-This implements timers which has to be polled to check for expiry.
-The timer will act as a one-shot timer in normal operation.
-To make the timer behave as a recurring timer, reload the interval and start
-the timer once it has expired (using TimerStart()).
-
-The General Timer (timer_ms_t type) - 1 kHz granularity
-The general Timers enables the program to create a downcounter with a
-preloaded value. This timer will then decrement every 1 ms until it has
-expired.
-Usage:
-The module making use of the timers must host a timer_ms_t structure in RAM and
-add it to the linked list (TimerAdd) to ensure that it is maintained.
-Removing it from the linked list (TimerRemove) will  make it dormant.
-The Timer must be polled (TimerPoll) to see when it has expired
-
  ******************************************************************************/
 
 /*******************************************************************************

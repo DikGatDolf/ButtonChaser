@@ -300,19 +300,12 @@ extern "C" {
             _console.alt_write(c);
         else if (_console.write)
         {
-            //RVN - TODO we should also check and make sure that the RS485 TX is not busy
-            // before we disable it, otherwise we might interrupt a transmission in progress
-
             //We need to disable RS485 RX while we are doing this transmission, 
             // otherwise we will get the same data back and risk a collision on the bus with other nodes
             if (_console.rs485_disable)
                 _console.rs485_disable(); 
             //Will be turned back on again once the transmission is done
-
-            //RVN - I guess there is a risk that the Transmit Complete interrupt 
-            // turns the RS485 Transceiver back on (from another, unrelated print which completes) 
-            // before we call write(...) below, but that should really be a low risk.
-            
+           
             if(c == '\n')
                 _console.write('\r');//Serial.write('\r');
             return _console.write((int)c);//return Serial.write((int)c);
@@ -869,7 +862,7 @@ void console_service(void)
 void console_enable_alt_output_stream(size_t (*alt_write_cb)(uint8_t))
 {
     if (alt_write_cb)
-        _console.alt_write = alt_write_cb;
+        _console.alt_write = alt_write_cb; //This is "turned off" again at the end of the console_service() function
 }
 
 void console_read_byte(uint8_t data_byte)
