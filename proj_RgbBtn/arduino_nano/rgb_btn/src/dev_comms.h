@@ -45,7 +45,7 @@ unsigned int dev_comms_response_append(master_command_t cmd, response_code_t res
 
 size_t dev_comms_response_add_byte(uint8_t data);
 
-void dev_comms_transmit_now(void);
+bool dev_comms_transmit_now(void);
 
 
 #endif /* __dev_comms_H__ */

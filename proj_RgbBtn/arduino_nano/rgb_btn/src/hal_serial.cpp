@@ -113,7 +113,6 @@ Local function definitions
 //void _hal_serial_rx_complete_irq(void);
 
 void _hal_serial_tx_udr_empty_irq(void);
-void _rs485_enable(void);
 
 /******************************************************************************
 Local variables
@@ -121,7 +120,6 @@ Local variables
 
 //This flag ensures that we don't accidentally enable the RS485 transceiver in 
 // the TX complete ISR when we are about to start transmitting 
-bool _rs485_disabled = false; 
 volatile bool _tx_busy = false; 
 
 void (*_rx_irq)(uint8_t) = NULL;
@@ -193,11 +191,8 @@ ISR(USART_UDRE_vect) // USART, Data Register Empty
 
 ISR( USART_TX_vect) // USART Tx Complete
 {
-    if ((_tx_buffer_head == _tx_buffer_tail) && (!_rs485_disabled))
-    {
-        // Buffer empty, so enable the RS485 transceiver
-        _rs485_enable();
-    }
+    if (_tx_buffer_head == _tx_buffer_tail)
+        _tx_busy = false;
 }
 
 /******************************************************************************
@@ -252,13 +247,6 @@ void _hal_serial_tx_udr_empty_irq(void)
         */
 }
 
-void _rs485_enable(void)
-{
-    sys_output_write(output_RS485_DE, HIGH);
-    sys_output_write(output_RS485_RE, LOW);
-    _tx_busy = false;
-}
-
 // Public Methods //////////////////////////////////////////////////////////////
 
 void hal_serial_init(void (*cb_rx_irq)(uint8_t))
@@ -294,14 +282,6 @@ void hal_serial_init(void (*cb_rx_irq)(uint8_t))
     sbi(UCSR0B /**_ucsrb*/, RXCIE0);    // Enable RX interrupt
     cbi(UCSR0B /**_ucsrb*/, UDRIE0);    // Disable Data Register Empty interrupt
 
-
-    //We have to implement the RS485 Driver and Receiver Enable pin for the  transceiver
-    sys_set_io_mode(output_RS485_DE, OUTPUT);
-    sys_set_io_mode(output_RS485_RE, OUTPUT);
-
-    //Let's start up with the RS485 transceiver in tx/rx mode
-    _rs485_enable();
-
     if (cb_rx_irq)
         _rx_irq = cb_rx_irq;
     
@@ -324,10 +304,7 @@ void hal_serial_flush()
     while (_tx_busy)
     {
         //nop -  Wait for the TX complete interrupt to be called and the buffer is empty
-        // sys_output_write(output_RS485_DE, HIGH);
-        // sys_output_write(output_RS485_DE, LOW);
     }
-    // sys_output_write(output_RS485_DE, HIGH);
 }
 
 size_t hal_serial_write(uint8_t c)
@@ -357,7 +334,6 @@ size_t hal_serial_write(uint8_t c)
             UCSR0A /**_ucsra*/ = ((UCSR0A /**_ucsra*/) & ((1 << U2X0) | (1 << TXC0)));
 #endif
         }
-        _rs485_disabled = false;
         return 1;
     }
     tx_buffer_index_t i = (_tx_buffer_head + 1) % HAL_SERIAL_TX_BUFFER_SIZE;
@@ -392,21 +368,9 @@ size_t hal_serial_write(uint8_t c)
         sbi(UCSR0B /**_ucsrb*/, UDRIE0);
     }
     
-    //The RS485 flag is cleared when the data is written completely, but 
-    // the actual line transition will only happen once the TX complete 
-    // ISR is called and the buffer is empty.
-    //Therefore it is imperative that writes with RS485 enabled/disabled should be completed before reverting back again.
-    _rs485_disabled = false;
     return 1;
 }
 
-void hal_serial_rs485_disable(void)
-{
-    //By disabling the RS485 driver, we ensure that our RS485 transmission does not cause any bus contention for other nodes
-    sys_output_write(output_RS485_DE, LOW);
-    sys_output_write(output_RS485_RE, HIGH);
-    _rs485_disabled = true;
-}
 #undef PRINTF_TAG
 
 /*************************** END OF FILE *************************************/

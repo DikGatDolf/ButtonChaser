@@ -90,9 +90,8 @@ Global (public) Function prototypes
 /*! Initialises the Console
  * @param[in] cb_write The function to call to write a byte to the serial port
  * @param[in] cb_flush The function to call to flush the serial port
- * @param[in] cb_rs485_disable The function to call to disable the RS485 driver
  */
-void console_init(size_t (*cb_write)(uint8_t), void (*cb_flush)(void), void (*cb_rs485_disable)(void));
+void console_init(size_t (*cb_write)(uint8_t), void (*cb_flush)(void));
 
 /*! Checks if the console buffer contains any valid commands and parses them
  */

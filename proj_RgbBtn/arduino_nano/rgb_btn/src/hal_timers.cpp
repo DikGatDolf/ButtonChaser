@@ -319,7 +319,7 @@ unsigned long sys_stopwatch_ms_lap(stopwatch_ms_t* sw)
 unsigned long sys_stopwatch_ms_reset(stopwatch_ms_t* sw)
 {
     unsigned long elapsed = sys_stopwatch_ms_lap(sw);
-    sys_stopwatch_ms_start(sw);
+    sys_stopwatch_ms_start(sw, sw->max_time);
     return elapsed;
 }
 

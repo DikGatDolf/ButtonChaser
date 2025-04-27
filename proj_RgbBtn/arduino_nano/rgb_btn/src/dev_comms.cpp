@@ -376,7 +376,8 @@ unsigned int  _dev_comms_response_add_console_resp(uint8_t * data, uint8_t data_
     if ((_comms.tx.data_length + data_len) > sizeof(_comms.tx.msg.data)) //For the CRC
     {
         //Let's send what we have so far, and then start a new message?
-        dev_comms_transmit_now();
+        if (!dev_comms_transmit_now())
+            iprintln(trALWAYS, "#Error sending interim console response msg");
         dev_comms_response_append(cmd_wr_console_cont, btn_cmd_err_ok, NULL, 0);
     }
 
@@ -416,7 +417,12 @@ void dev_comms_init(void)
 
     hal_serial_init(_rx_irq_callback);
 
-    console_init(hal_serial_write, hal_serial_flush, hal_serial_rs485_disable);
+    //We have to implement the RS485 Driver and Receiver Enable pin for the  transceiver
+    sys_set_io_mode(output_RS485_DE, OUTPUT);
+    sys_set_io_mode(output_RS485_RE, OUTPUT);
+    sys_output_write(output_RS485_RE, LOW);
+
+    console_init(hal_serial_write, hal_serial_flush);
 
     //Generate a new random (and potentially, only temporary) address
     _comms.addr = dev_comms_addr_new();
@@ -451,7 +457,8 @@ unsigned int dev_comms_response_append(master_command_t cmd, response_code_t res
     if ((uint8_t)(_comms.tx.data_length + data_len + 2) > sizeof(_comms.tx.msg.data))
     {
         //Let's send what we have so far, and then start a new message?
-        dev_comms_transmit_now();
+        if (!dev_comms_transmit_now()) //Send the response message now
+            iprintln(trALWAYS, "#Error sending interim msg");
         //We need to "prime" the message first....
         _dev_comms_response_start();
         //TODO - This needs to be tested!!!! (see _dev_comms_response_add_console_resp, where it HAS been tested)
@@ -473,40 +480,53 @@ size_t dev_comms_response_add_byte(uint8_t data)
     return (size_t) _dev_comms_response_add_console_resp(&data, 1);
 }
 
-void dev_comms_transmit_now(void)
+bool dev_comms_transmit_now(void)
 {
 
     if ((_comms.tx.data_length == 0) || (_tx_state != tx_msg_busy)) //Must be preceded with start()
-        return; //Nothing to send, let the user think everything is all good
+        return true; //Nothing to send, let the user think everything is all good
 
     _comms.tx.retry_cnt = 0; //We are starting a new transmission, so reset the retry count
     _tx_state = tx_queued; //Will be started once the bus is free
 
     do { //while (_comms.tx.retry_cnt < 5)
 
-        if (_comms.tx.data_length == 0)
-        {
-            //How did we get to this point?
-            _tx_state = tx_idle;
-            return;
-        }
+        // if (_comms.tx.data_length == 0)
+        // {
+        //     //How did we get to this point?
+        //     _tx_state = tx_idle;
+        //     return;
+        // }
         uint8_t * msg = (uint8_t *)&_comms.tx.msg;
         uint8_t msg_len = (sizeof(comms_msg_hdr_t) + _comms.tx.data_length + sizeof(uint8_t));
-        //iprintln(trCOMMS, "#TX: %d/%d bytes (%d) - 0x%06X", msg_len, RGB_BTN_MSG_MAX_LEN, _comms.tx.msg.hdr.id, msg);
+        iprintln(trCOMMS, "#TX: %d bytes (%d) - %d, %d ms", msg_len, _comms.tx.msg.hdr.id, _rx_state, hal_serial_rx_silence_ms());
     
         //Make sure any console prints are finished before we start sending... 
         // this ensures that the RS-485 is enabled again once the last TX complete IRQ has fired.
         hal_serial_flush(); 
     
         //wait here for the bus to go silent!
-        while ((_rx_state != rx_listen) && (hal_serial_rx_silence_ms() < WAIT_BUS_SILENCE_MAX_MS))
+        while (_rx_state != rx_listen)
         {
             //We really don't want to be waiting here forever.... 
             // if the bus has been silent for 15 ms, then we are done waiting.
+            if (hal_serial_rx_silence_ms() >= WAIT_BUS_SILENCE_MAX_MS)
+            {
+                iprintln(trCOMMS, "#TX abandoned, bus busy > %d ms", hal_serial_rx_silence_ms());
+                return false; //We are not going to wait forever for the bus to be free
+            }
         }
-    
         
         {   //NO PRINT SECTION START            
+            //Make sure any console prints are finished before we start sending... 
+            hal_serial_flush(); 
+
+            //We need to enable RS485 RX while we are doing this transmission, 
+            //Will be disabled again once the transmission is done
+            sys_output_write(output_RS485_DE, HIGH);
+            //RVN - TEST - I think we can the RE LOW, and just toggle DE when we want/need to
+            //sys_output_write(output_RS485_RE, LOW);
+
             hal_serial_write(STX);
             //We need to make sure our IRQ callback is processiong the received data/echo correctly. 
             //This state (tx_echo_rx) is handled in the serial receive IRQ callback
@@ -527,8 +547,11 @@ void dev_comms_transmit_now(void)
             // the hal_serial tx buffer, but the transmission should have started already), 
             // now we need to wait and check if we received it correctly (pleasures of half-duplex comms)
             
-            //Make sure the entire message is sent over RS485 before we continue (with potential printf's)
+            //Make sure the entire message is sent over RS485 before we disable the RS485 again
             hal_serial_flush(); 
+
+            //We need to disable RS485 RX once the transmission is done, otherwise we will risk a collision on the bus with other nodes
+            sys_output_write(output_RS485_DE, LOW);
         
             _comms.tx.retry_cnt++;
         } //NO PRINT SECTION END
@@ -555,7 +578,7 @@ void dev_comms_transmit_now(void)
             }
             
             if (_tx_state == tx_idle) // ECHO RECEIVED - All good, baby!
-                return; //we are done here
+                return true; //we are done here
 
         }while (_tx_state == tx_echo_rx); //Wait for the echo to be received
     
@@ -563,7 +586,15 @@ void dev_comms_transmit_now(void)
         //We have retried this message too many times, so we need to give up and move on
     }while (_comms.tx.retry_cnt < 5);//(_tx_state != tx_idle); //Wait for the bus to be free again
 
-    iprintln(trCOMMS, "#TX Abandonded after %d tries", _comms.tx.retry_cnt);
+    iprintln(trCOMMS, "#TX Abandonded after %d tries (0x%02X)", _comms.tx.retry_cnt, _comms.tx.msg.hdr.id);
+
+    //We increment the sequence number, so that the master will know that something went wrong
+    _comms.tx.seq++;
+
+    //Return to an idle state, so that we can start a new message
+    _tx_state = tx_idle;
+
+    return false; //We have failed to send the message
 }
 
 uint8_t dev_comms_addr_get(void)

@@ -575,7 +575,8 @@ void msg_process(void)
                         dev_comms_response_append(cmd_wr_console_cont, btn_cmd_err_ok, NULL, 0);
                         console_read_byte('\n');
                         console_service(); //This *should* pipe the output to the alternate stream and reset it back to stdouot once it is done
-                        dev_comms_transmit_now();
+                        if (!dev_comms_transmit_now()) //Send the response message now
+                            iprintln(trALWAYS, "#Error sending console response msg");
                         dev_comms_response_append(cmd_wr_console_done, btn_cmd_err_ok, NULL, 0);
                     }
                 }
@@ -597,7 +598,8 @@ void msg_process(void)
 
     //If we have a response ready for a direct message, we need to send it immediately, (without waiting for bus silence)
     if ((msg.src == ADDR_MASTER) && (msg.dst == _myAddr) && (reg_state >= waiting))
-        dev_comms_transmit_now();
+        if (!dev_comms_transmit_now()) //Send the response message now
+            iprintln(trALWAYS, "#Error sending response");
 }
 
 uint8_t read_msg_data(uint8_t * dst, uint8_t len)
@@ -634,34 +636,6 @@ bool read_cmd_payload(uint8_t cmd, uint8_t * dst, uint8_t len)
     return true;//dev_comms_read_payload(dst, len);
 }
 
-// uint8_t read_cmd_payload_len(uint8_t cmd)
-// {
-//     switch (cmd)
-//     {
-//         case cmd_bcast_address_mask:
-//         case cmd_set_blink:
-//             return sizeof(uint32_t);
-
-//         case cmd_set_rgb_0:
-//         case cmd_set_rgb_1:
-//         case cmd_set_rgb_2:
-//             return  (3*sizeof(uint8_t));
-
-//         case cmd_new_add:
-//         case cmd_set_bitmask_index:
-//             return sizeof(uint8_t);
-
-//         case cmd_wr_console_cont: // The remainder of the data paylod belongs to this guy
-//         case cmd_wr_console_done:
-//             return  (msg.len - msg.rd_index);
-
-//         default:
-//             //Everything else
-//             return 0;
-//     }
-
-// }
-
 void send_roll_call_response(void)
 {
     if (reg_state != roll_call)
@@ -687,11 +661,17 @@ void send_roll_call_response(void)
     }
 
     dev_comms_response_append(cmd_roll_call, btn_cmd_err_ok, &my_version, 1, true);
-    dev_comms_transmit_now(); //Send the response message now
-
-    //Now we wait for the master to register us
-    reg_state = waiting; //We are now in the "waiting for registration" state
-    iprintln(trALWAYS, "#State: WAIT");
+    if (dev_comms_transmit_now()) //Send the response message now
+    {
+        //Now we wait for the master to register us
+        reg_state = waiting; //We are now in the "waiting for registration" state
+        iprintln(trALWAYS, "#State: WAIT");
+    }
+    else
+    {
+        iprintln(trALWAYS, "#Error sending roll-call response");
+        reg_state = un_reg; //RVN - TODO - we need to go back to the state we were in before the roll-call started (no necessarily un_reg)
+    }
 }
 
 void state_machine_handler(void)

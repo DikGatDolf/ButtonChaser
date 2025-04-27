@@ -151,7 +151,6 @@ typedef struct
     void (*flush)(void);
     size_t (*write)(uint8_t);
     size_t (*alt_write)(uint8_t);
-    void (*rs485_disable)(void);
 } DeviceConsole_t;
 
 /*******************************************************************************
@@ -299,13 +298,7 @@ extern "C" {
         if (_console.alt_write)
             _console.alt_write(c);
         else if (_console.write)
-        {
-            //We need to disable RS485 RX while we are doing this transmission, 
-            // otherwise we will get the same data back and risk a collision on the bus with other nodes
-            if (_console.rs485_disable)
-                _console.rs485_disable(); 
-            //Will be turned back on again once the transmission is done
-           
+        {          
             if(c == '\n')
                 _console.write('\r');//Serial.write('\r');
             return _console.write((int)c);//return Serial.write((int)c);
@@ -799,7 +792,7 @@ void _console_handler_trace(void)
 Global (public) Functions
 *******************************************************************************/
 
-void console_init(size_t (*cb_write)(uint8_t), void (*cb_flush)(void), void (*cb_rs485_disable)(void))
+void console_init(size_t (*cb_write)(uint8_t), void (*cb_flush)(void))
 {
     // void (*flush)(void);
     // size_t (*write)(uint8_t);
@@ -813,7 +806,6 @@ void console_init(size_t (*cb_write)(uint8_t), void (*cb_flush)(void), void (*cb
     _console.flush = cb_flush;
     _console.write = cb_write;
     _console.alt_write = NULL;
-    _console.rs485_disable = cb_rs485_disable;
 
     //Let's not re-initialise this task by accident
 	if (_console_init_done)

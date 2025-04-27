@@ -61,22 +61,6 @@ void hal_serial_flush(void);
  */
 size_t hal_serial_write(uint8_t c);
 
-/*! Returns true if the serial port is busy with a transmission
- * @return true if the serial port is busy with a transmission
- */
-//bool hal_serial_tx_busy(void);
-
-/*! Temporarely disables the RS485 transceiver until the next transmission 
- *  is complete. The RS485 transceiver is automatically re-enabled once the 
- *  next TX complete ISR is exeucted and the TX buffer is empty. Therefore 
- *  it is imperative that writes with RS485 enabled/disabled should be 
- *  completed before reverting back again and starting a new transmission, 
- *  by calling hal_serial_flush() directly after queueing the last byte into 
- *  the TX buffer
- */
-void hal_serial_rs485_disable(void);
-
-
 #endif /* __hal_serial_H__ */
 
 /****************************** END OF FILE **********************************/
