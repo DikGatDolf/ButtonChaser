@@ -85,8 +85,6 @@ Macros
 
 #define HAL_SERIAL_BAUDRATE         (115200L)
 
-#define HAL_BUS_SILENCE_MAX_MS          (UINT16_MAX)
-
 /******************************************************************************
 Warnings
 ******************************************************************************/
@@ -123,7 +121,6 @@ Local variables
 volatile bool _tx_busy = false; 
 
 void (*_rx_irq)(uint8_t) = NULL;
-stopwatch_ms_t bus_tmr;
 
 volatile tx_buffer_index_t _tx_buffer_head;
 volatile tx_buffer_index_t _tx_buffer_tail;
@@ -155,9 +152,6 @@ ISR(USART_RX_vect) // USART Rx Complete
         // Parity error, read byte but discard it
         UDR0 /**_udr*/;
     };
-
-    //This calls millis() underneath.... which calls cli()... 
-    sys_stopwatch_ms_start(&bus_tmr, HAL_BUS_SILENCE_MAX_MS); //~65 seconds
 
     /* Receiver Error Flags
         The USART receiver has three error flags: Frame error (FEn), data overrun (DORn) and parity error (UPEn). All can be
@@ -285,12 +279,6 @@ void hal_serial_init(void (*cb_rx_irq)(uint8_t))
     if (cb_rx_irq)
         _rx_irq = cb_rx_irq;
     
-    sys_stopwatch_ms_start(&bus_tmr, HAL_BUS_SILENCE_MAX_MS);
-}
-
-uint16_t hal_serial_rx_silence_ms(void)
-{
-    return (uint16_t)(sys_stopwatch_ms_lap(&bus_tmr));
 }
 
 void hal_serial_flush()

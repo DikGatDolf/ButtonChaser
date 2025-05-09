@@ -127,8 +127,6 @@ Transmission State Machine:
 
 #define PRINTF_TAG ("COMMS") /* This must be undefined at the end of the file*/
 
-#define WAIT_BUS_SILENCE_MAX_MS     (15)
-
 /******************************************************************************
 Macros
 ******************************************************************************/
@@ -153,7 +151,7 @@ typedef enum e_comms_msg_tx_state
 {
     tx_idle,        // Waiting for a message to send
     tx_msg_busy,    // We have started to build a message
-    tx_queued,      // We are busy transmitting a message (between ETX and STX)
+//    tx_queued,      // We are busy transmitting a message (between ETX and STX)
     tx_echo_rx,     // Checking the RX'd msg to see if we had a collision
 }comms_msg_tx_state_t;
 
@@ -187,6 +185,8 @@ typedef struct dev_comms_st
 Local function definitions
 ******************************************************************************/
 void _rx_irq_callback(uint8_t rx_data);
+void _bus_silence_expiry(void);
+
 //char * _comms_rx_error_msg(int err_data);
 int8_t _comms_check_rx_msg(int *_data);
 bool _dev_comms_verify_addr(uint8_t addr);
@@ -203,6 +203,9 @@ Local variables
 dev_comms_t _comms;
 volatile comms_msg_rx_state_t _rx_state = rx_listen;
 volatile comms_msg_tx_state_t _tx_state = tx_idle;
+
+//RVN - TODO - Consider seperating the MSG transmission state from the MSG state.
+//This would make it easier to buffer messages for transmission as well.
 
 volatile bool _msg_available = false;
 
@@ -285,6 +288,8 @@ void _rx_irq_callback(uint8_t rx_data)
     // While set, no received data will be saved, preserving the data in the buffer.
     static bool protecting_rx_msg_buffer = false;
 
+    sys_cb_tmr_start(&_bus_silence_expiry, BUS_SILENCE_MIN_MS);
+
     //This is a callback which is called from the serial interrupt handler
     if (rx_data == STX)
     {
@@ -320,7 +325,8 @@ void _rx_irq_callback(uint8_t rx_data)
                 _msg_available = true; //We have a message available, but we need to check if it is valid first
 
             protecting_rx_msg_buffer = false; //Don't need this anymore
-            _rx_state = rx_listen; 
+            _rx_state = rx_listen;
+            sys_cb_tmr_stop(&_bus_silence_expiry); //Stop the bus silence timer
         }
         else if (rx_data == DLE)
             _rx_state = rx_escaping;
@@ -345,6 +351,13 @@ void _rx_irq_callback(uint8_t rx_data)
     }
 }
 
+void _bus_silence_expiry(void)
+{
+    //If the RX state is not in listen mode after 15ms of silence, we force it to listen mode. Obviously a transmission was interrupted
+    // and we need to start over again.
+    if (_rx_state != rx_listen)
+        _rx_state = rx_listen;
+}
 
 unsigned int _dev_comms_response_add_data(uint8_t * data, uint8_t data_len)
 {
@@ -429,6 +442,7 @@ void dev_comms_init(void)
     _comms.init_done = true;
 
     //sys_set_io_mode(output_Debug, OUTPUT);
+    sys_cb_tmr_start(&_bus_silence_expiry, BUS_SILENCE_MIN_MS);
 
     iprintln(trCOMMS, "#Initialised - Payload size: %d/%d (Seq # %d)", sizeof(_comms.rx.msg.data), sizeof(comms_msg_t), _comms.tx.seq);
 }
@@ -487,7 +501,7 @@ bool dev_comms_transmit_now(void)
         return true; //Nothing to send, let the user think everything is all good
 
     _comms.tx.retry_cnt = 0; //We are starting a new transmission, so reset the retry count
-    _tx_state = tx_queued; //Will be started once the bus is free
+//    _tx_state = tx_queued; //Will be started once the bus is free
 
     do { //while (_comms.tx.retry_cnt < 5)
 
@@ -499,7 +513,8 @@ bool dev_comms_transmit_now(void)
         // }
         uint8_t * msg = (uint8_t *)&_comms.tx.msg;
         uint8_t msg_len = (sizeof(comms_msg_hdr_t) + _comms.tx.data_length + sizeof(uint8_t));
-        iprintln(trCOMMS, "#TX: %d bytes (%d) - %d, %d ms", msg_len, _comms.tx.msg.hdr.id, _rx_state, hal_serial_rx_silence_ms());
+        iprintln(trCOMMS, "#TX: %d bytes (%d)", msg_len, _comms.tx.msg.hdr.id);
+        //iprintln(trCOMMS, "#TX: %d bytes (%d) - %d, %d ms", msg_len, _comms.tx.msg.hdr.id, _rx_state, hal_serial_rx_silence_ms());
     
         //Make sure any console prints are finished before we start sending... 
         // this ensures that the RS-485 is enabled again once the last TX complete IRQ has fired.
@@ -508,13 +523,7 @@ bool dev_comms_transmit_now(void)
         //wait here for the bus to go silent!
         while (_rx_state != rx_listen)
         {
-            //We really don't want to be waiting here forever.... 
-            // if the bus has been silent for 15 ms, then we are done waiting.
-            if (hal_serial_rx_silence_ms() >= WAIT_BUS_SILENCE_MAX_MS)
-            {
-                iprintln(trCOMMS, "#TX abandoned, bus busy > %d ms", hal_serial_rx_silence_ms());
-                return false; //We are not going to wait forever for the bus to be free
-            }
+            //Wait here for the bus to be free again (should not be more than 15ms)
         }
         
         {   //NO PRINT SECTION START            
@@ -524,8 +533,6 @@ bool dev_comms_transmit_now(void)
             //We need to enable RS485 RX while we are doing this transmission, 
             //Will be disabled again once the transmission is done
             sys_output_write(output_RS485_DE, HIGH);
-            //RVN - TEST - I think we can the RE LOW, and just toggle DE when we want/need to
-            //sys_output_write(output_RS485_RE, LOW);
 
             hal_serial_write(STX);
             //We need to make sure our IRQ callback is processiong the received data/echo correctly. 
@@ -542,16 +549,19 @@ bool dev_comms_transmit_now(void)
                 }
                 hal_serial_write(tx_data);
             }
-            hal_serial_write(ETX);        
+            hal_serial_write(ETX);
             //Right, we've sent the message (well, actually we've only loaded it into 
             // the hal_serial tx buffer, but the transmission should have started already), 
-            // now we need to wait and check if we received it correctly (pleasures of half-duplex comms)
-            
+            // now we need to wait and check if we received it correctly (pleasures of half-duplex comms)\
+
             //Make sure the entire message is sent over RS485 before we disable the RS485 again
             hal_serial_flush(); 
 
             //We need to disable RS485 RX once the transmission is done, otherwise we will risk a collision on the bus with other nodes
             sys_output_write(output_RS485_DE, LOW);
+
+            hal_serial_write('\r'); //Just to make sure we have a clean line
+            hal_serial_write('\n'); //Just to make sure we have a clean line for our next printf message
         
             _comms.tx.retry_cnt++;
         } //NO PRINT SECTION END
@@ -561,11 +571,6 @@ bool dev_comms_transmit_now(void)
         // Lastly, if the bus is silent for a period, then everybody is waiting for everybody.
         do //
         {
-            if (hal_serial_rx_silence_ms() >= WAIT_BUS_SILENCE_MAX_MS) // NO ECHO and bus is stuck in some weird RX state (missed ETX?)
-            {
-                //iprintln(trCOMMS, "#Bus silent for %u ms", hal_serial_rx_silence_ms());
-                _rx_state = rx_listen; //Force the bus to go into listen mode
-            }
     
             if ((_rx_state == rx_listen) && (_tx_state == tx_echo_rx))// NO ECHO 
             {

@@ -45,12 +45,6 @@ functions
  */
 void hal_serial_init(void (*cb_rx_irq)(uint8_t));
 
-/*! Returns the amount of time since activity on the bus was detected.
- * Will max out on ~65 seconds (65,535 ms, to be exact)
- * @return The amount of time (in ms) since activity on the bus was detected.
- */
-uint16_t hal_serial_rx_silence_ms(void);
-
 /*! Flushes the serial port. Only returns once all TX 
  */
 void hal_serial_flush(void);

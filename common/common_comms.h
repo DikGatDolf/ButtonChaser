@@ -72,7 +72,7 @@ Macros
 // #define NAK     (0x15)
 
 #define RGB_BTN_MAX_NODES       (31)
-#define BUS_SILENCE_MIN_MS      (15)  /* 15 ms */
+#define BUS_SILENCE_MIN_MS      (5)  /* ms */
 /******************************************************************************
 Struct & Unions
 ******************************************************************************/

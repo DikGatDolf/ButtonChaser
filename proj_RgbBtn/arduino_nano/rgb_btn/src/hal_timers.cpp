@@ -37,7 +37,7 @@ local defines
  *******************************************************************************/
 #define TMR1_CNT_VAL        (F_CPU/1000/64)
 #define TMR1_TCNT_LOADVAL   (0xFFFF - TMR1_CNT_VAL + 1)
-#define MAX_CB_TMR_CNT      (4)
+#define MAX_CB_TMR_CNT      (5)
 
 /*******************************************************************************
 local variables
