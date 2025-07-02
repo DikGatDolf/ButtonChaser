@@ -56,6 +56,8 @@ typedef struct Stopwatch_ms_t
 {
 	uint32_t tick_start;   // 1ms ~ 49 days.
 	bool running;
+    uint32_t max_time;
+    bool max_time_reached;
 } Stopwatch_ms_t;
 
 /******************************************************************************
@@ -131,6 +133,11 @@ bool sys_poll_tmr_enabled(Timer_ms_t *t);
 bool sys_poll_tmr_is_running(Timer_ms_t *t);
 
 /** returns the current time according to the ms_tmr module
+ * @returns the number of milliseconds since it has been initialised
+*/
+uint64_t sys_poll_tmr_ms(void);
+
+/** returns the current time according to the ms_tmr module
  * @returns the number of seconds since it has been initialised
 */
 uint64_t sys_poll_tmr_seconds(void);
@@ -138,7 +145,7 @@ uint64_t sys_poll_tmr_seconds(void);
 /** Starts a stopwatch (passed as a pointer)
  * @param sw a pointer to a static Stopwatch_ms_t
 */
-void sys_stopwatch_ms_start(Stopwatch_ms_t* sw);
+void sys_stopwatch_ms_start(Stopwatch_ms_t* sw, uint32_t max_time);
 
 /*! returns the elapsed time in ms, without stopping or resetting the stopwatch
  * @param sw a pointer to a static Stopwatch_ms_t

@@ -189,7 +189,6 @@ void _bus_silence_expiry(void);
 
 //char * _comms_rx_error_msg(int err_data);
 int8_t _comms_check_rx_msg(int *_data);
-bool _dev_comms_verify_addr(uint8_t addr);
 
 bool _dev_comms_rx_handler_add_data_check_overflow(uint8_t rx_data);
 unsigned int  _dev_comms_response_add_console_resp(uint8_t * data, uint8_t data_len);
@@ -252,27 +251,6 @@ bool _dev_comms_rx_handler_add_data_check_overflow(uint8_t rx_data)
     ((uint8_t *)&_comms.rx.msg)[_comms.rx.length] = rx_data;
     _comms.rx.length++;
 
-    return true;
-}
-
-bool _dev_comms_verify_addr(uint8_t addr)
-{
-    if (addr == ADDR_MASTER)
-        return false; //Cannot set the address to that of the master
-
-    if (addr == ADDR_BROADCAST)
-        return false; //Cannot set the address to that of the broadcast
-    
-    // if (addr == COMMS_ADDR_SLAVE_DEFAULT)
-    //     return false; //Cannot set the address to that of the default slave address
-
-    //Check if the address is already in use
-    for (uint8_t i = 0; i < _comms.blacklist.cnt; i++)
-    {
-        if (_comms.blacklist.addr[i] == addr) //iprintln(trCOMMS, "#Address %d is blacklisted", addr);
-            return false;
-    }
-    
     return true;
 }
 
@@ -391,7 +369,7 @@ unsigned int  _dev_comms_response_add_console_resp(uint8_t * data, uint8_t data_
         //Let's send what we have so far, and then start a new message?
         if (!dev_comms_transmit_now())
             iprintln(trALWAYS, "#Error sending interim console response msg");
-        dev_comms_response_append(cmd_wr_console_cont, btn_cmd_err_ok, NULL, 0);
+        dev_comms_response_append(cmd_wr_console_cont, resp_ok, NULL, 0);
     }
 
     return _dev_comms_response_add_data(data, data_len); //The number of bytes added
@@ -423,7 +401,7 @@ void dev_comms_init(void)
     _rx_state = rx_listen;
     _tx_state = tx_idle;
 
-    memset(&_comms.blacklist, 0, sizeof(dev_comms_blacklist_t));
+    dev_comms_blacklist_clear();
     
     //Start with a random sequence number (to help detect bus collisions in the case of 2 nodes with the same address)
     _comms.tx.seq = (uint8_t)sys_random(0, ADDR_BROADCAST);
@@ -432,13 +410,11 @@ void dev_comms_init(void)
 
     //We have to implement the RS485 Driver and Receiver Enable pin for the  transceiver
     sys_set_io_mode(output_RS485_DE, OUTPUT);
-    sys_set_io_mode(output_RS485_RE, OUTPUT);
-    sys_output_write(output_RS485_RE, LOW);
 
     console_init(hal_serial_write, hal_serial_flush);
 
     //Generate a new random (and potentially, only temporary) address
-    _comms.addr = dev_comms_addr_new();
+    dev_comms_addr_new();
     _comms.init_done = true;
 
     //sys_set_io_mode(output_Debug, OUTPUT);
@@ -552,7 +528,7 @@ bool dev_comms_transmit_now(void)
             hal_serial_write(ETX);
             //Right, we've sent the message (well, actually we've only loaded it into 
             // the hal_serial tx buffer, but the transmission should have started already), 
-            // now we need to wait and check if we received it correctly (pleasures of half-duplex comms)\
+            // now we need to wait and check if we received it correctly (pleasures of half-duplex comms)
 
             //Make sure the entire message is sent over RS485 before we disable the RS485 again
             hal_serial_flush(); 
@@ -572,18 +548,25 @@ bool dev_comms_transmit_now(void)
         do //
         {
     
-            if ((_rx_state == rx_listen) && (_tx_state == tx_echo_rx))// NO ECHO 
+            if (_tx_state == tx_idle) // ECHO RECEIVED - All good, baby!
+                return true; //we are done here
+
+            if (_rx_state == rx_listen)
             {
-                //iprintln(trCOMMS, "#No ECHO Rx'd");
-                //iprintln(trCOMMS, "#TX Err - %d bytes (seq %d)", _comms.tx.data_length + sizeof(comms_msg_hdr_t) + sizeof(uint8_t), _comms.tx.msg.hdr.id);
-                //console_print_ram(trCOMMS, (uint8_t *)&_comms.tx.msg, 0, _comms.tx.data_length + sizeof(comms_msg_hdr_t) + sizeof(uint8_t));
-                //iprintln(trCOMMS, "#Last RX - %d bytes (seq %d)", _comms.rx.length, _comms.rx.msg.hdr.id);
-                //console_print_ram(trCOMMS, (uint8_t *)&_comms.rx.msg, 0, _comms.rx.length);
+                iprintln(trCOMMS, "#Bus Collision");
+                iprintln(trCOMMS, "#TX Err - %d bytes (seq %d)", _comms.tx.data_length + sizeof(comms_msg_hdr_t) + sizeof(uint8_t), _comms.tx.msg.hdr.id);
+                console_print_ram(trCOMMS, (uint8_t *)&_comms.tx.msg, 0, _comms.tx.data_length + sizeof(comms_msg_hdr_t) + sizeof(uint8_t));
+                iprintln(trCOMMS, "#Last RX - %d bytes (seq %d)", _comms.rx.length, _comms.rx.msg.hdr.id);
+                console_print_ram(trCOMMS, (uint8_t *)&_comms.rx.msg, 0, _comms.rx.length);
+                break; //from do-while loop
+            }
+
+            if (_tx_state == tx_echo_rx)
+            {
+                iprintln(trCOMMS, "#No ECHO Rx'd");
                 break; //from do-while loop
             }
             
-            if (_tx_state == tx_idle) // ECHO RECEIVED - All good, baby!
-                return true; //we are done here
 
         }while (_tx_state == tx_echo_rx); //Wait for the echo to be received
     
@@ -607,18 +590,9 @@ uint8_t dev_comms_addr_get(void)
     return _comms.addr;
 }
 
-bool dev_comms_addr_set(uint8_t addr)
+void dev_comms_addr_set(uint8_t addr)
 {
-    //Is the provided address valid?
-    if (_dev_comms_verify_addr(addr))
-    {
-        //All good.... let's rather use this one.
-        _comms.addr = addr;
-        iprintln(trCOMMS, "#Address Set: 0x%02X", _comms.addr);
-        return true;
-    }
-    iprintln(trCOMMS, "#Invalid Address: 0x%02X (Keeping 0x%02X)", addr, _comms.addr);
-    return false;
+    _comms.addr = addr;
 }
 
 void dev_comms_blacklist_add(uint8_t new_addr)
@@ -644,6 +618,32 @@ void dev_comms_blacklist_add(uint8_t new_addr)
     iprintln(trCOMMS, "#Blacklist - Add 0x%02X (%d)", new_addr, _comms.blacklist.cnt);
 }
 
+void dev_comms_blacklist_clear(void)
+{
+    memset(&_comms.blacklist, 0, sizeof(dev_comms_blacklist_t));
+}
+
+bool dev_comms_verify_addr(uint8_t addr)
+{
+    if (addr == ADDR_MASTER)
+        return false; //Cannot set the address to that of the master
+
+    if (addr == ADDR_BROADCAST)
+        return false; //Cannot set the address to that of the broadcast
+    
+    // if (addr == COMMS_ADDR_SLAVE_DEFAULT)
+    //     return false; //Cannot set the address to that of the default slave address
+
+    //Check if the address is already in use
+    for (uint8_t i = 0; i < _comms.blacklist.cnt; i++)
+    {
+        if (_comms.blacklist.addr[i] == addr) //iprintln(trCOMMS, "#Address %d is blacklisted", addr);
+            return false;
+    }
+    
+    return true;
+}
+
 uint8_t dev_comms_addr_new(void)
 {
     uint8_t new_addr;
@@ -651,10 +651,12 @@ uint8_t dev_comms_addr_new(void)
 
     do
     {
-        //We will be stuck here until we get a valid address
+        //We will be stuck here until we get a valid address.... 
+        //our blacklist only has 31 possible values, so we still have a 
+        //  1-(33/256) = ~87.1% chance of getting a valid address
         new_addr = (uint8_t)sys_random(ADDR_SLAVE_MIN, ADDR_SLAVE_MAX);
         retries++;
-    }while (!_dev_comms_verify_addr(new_addr));
+    }while (!dev_comms_verify_addr(new_addr));
 
     iprintln(trCOMMS, "#New Address: 0x%02X (%d runs)", new_addr, retries);
 
@@ -676,7 +678,7 @@ int8_t dev_comms_rx_msg_available(uint8_t * _src, uint8_t * _dst, uint8_t * _dat
 
     if (ret_val < 0)
     {
-        iprintln(trCOMMS, "#RX Error: %ds (%d bytes)", ret_val, /*_comms_rx_error_msg(ret_val, err_data), */ _comms.rx.length);
+        iprintln(trCOMMS, "#RX Error: %d (%d bytes)", ret_val, /*_comms_rx_error_msg(ret_val, err_data), */ _comms.rx.length);
         iprintln(trCOMMS, "#Data: ");
         console_print_ram(trCOMMS, &_comms.rx.msg, (unsigned long)&_comms.rx.msg, sizeof(comms_msg_t));
         memset(&_comms.rx.msg, 0, sizeof(comms_msg_t));

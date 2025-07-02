@@ -56,10 +56,10 @@ This (slave) device  is responsible for:
 typedef enum registration_state_e
 {
     no_init,
-    un_reg,         //We've not been registered yet
-    roll_call,      //We are in the process of responding to a roll-call
-    waiting,        //We are waiting on a registration from the master
-    idle,           //We have been registered with the master (got a bit-mask address)
+    un_reg,         //1Hz blink - We've not been registered yet
+    roll_call,      //10 Hz blink - We are in the process of responding to a roll-call
+    waiting,        //2.5 Hz blink - We are waiting on a registration from the master
+    idle,           //dbg led off - We have been registered with the master (got a bit-mask address)
 }registration_state_t;
 
 /*******************************************************************************
@@ -95,7 +95,8 @@ void button_press(void);
 void button_down(void);
 //void button_release(void);
 
-//void tmr_debug(void);
+void dbg_led(dbg_blink_state_t state);
+void tmr_debug_led(void);
 
  //Menu Commands (without any owners)
 #ifdef MAIN_DEBUG
@@ -196,6 +197,8 @@ unsigned long reaction_time_ms;
 
 uint8_t system_flags = flag_unreg; //The state of the button (pressed or not pressed)
 
+uint8_t dbg_led_state = 0; //0 = off, 1 = on, 2 = blinking fast, 3 = blinking slow
+bool dbg_led_output; //The output state for the debug LED pin
 /*******************************************************************************
  Functions
  *******************************************************************************/
@@ -212,6 +215,14 @@ void setup() {
     console_add_menu("main", _main_menu_items, ARRAY_SIZE(_main_menu_items), "Main Menu");
 
     dev_nvstore_init();
+
+    //If this is the first run of this firmware, we need to save the comms address
+    if (!dev_nvstore_new_data_available())
+    {
+        uint8_t current_addr = dev_comms_addr_get();
+        iprintln(trMAIN, "#1st run detected. Saving address: 0x%02X", current_addr);
+        dev_nvstore_write(&current_addr, sizeof(uint8_t));                
+    }
    
     dev_rgb_start(output_Led_Red, output_Led_Green, output_Led_Blue);
 
@@ -228,8 +239,13 @@ void setup() {
 
     address_update();
 
+    sys_set_io_mode(output_DEBUG_LED, OUTPUT);
+    sys_output_write(output_DEBUG_LED, LOW);
+    sys_cb_tmr_start(&tmr_debug_led, 5000lu);
+
     reg_state = un_reg; //We are not registered yet
     system_flags |= flag_unreg;
+    dbg_led(dbg_led_blink_500ms); //Start blinking the debug LED at 200ms intervals
 
     //This can only be set by the master device
     my_mask_index = -1;
@@ -239,13 +255,45 @@ void setup() {
 
     //sys_poll_tmr_stop(&debug_tmr);
     // _tmr_expired = false;
-    // sys_cb_tmr_start(&tmr_debug, 5000lu);
 }
 
-// void tmr_debug() 
-// {
-//     _tmr_expired = true;
-// }
+void dbg_led(dbg_blink_state_t state)
+{
+    if (dbg_led_state == state)
+        return; //No change, so do nothing
+
+    sys_cb_tmr_stop(tmr_debug_led);
+    dbg_led_output = ((state == dbg_led_off)? LOW : HIGH);
+    sys_output_write(output_DEBUG_LED, dbg_led_output);
+    dbg_led_state = state;
+
+    switch (state)
+    {
+        case dbg_led_off:
+        case dbg_led_on:
+            break;
+        case dbg_led_blink_50ms:
+            sys_cb_tmr_start(tmr_debug_led, 50lu, true);
+            break;
+        case dbg_led_blink_200ms:
+            sys_cb_tmr_start(tmr_debug_led, 200lu, true);
+            break;
+        case dbg_led_blink_500ms:
+            sys_cb_tmr_start(tmr_debug_led, 500lu, true);
+            break;
+        default:
+            //Do nothing
+            break;
+    }
+}
+
+void tmr_debug_led() 
+{
+    //IMPORTANT: DO NOT CALL THIS FUNCTION DIRECTLY FROM ANYWHERE ELSE!
+    // This function is called from the timer ISR, so it must be quick and not block!
+    dbg_led_output = !(dbg_led_output);
+    sys_output_write(output_DEBUG_LED, dbg_led_output);
+}
 
 void loop() {
 
@@ -374,25 +422,32 @@ void address_update(void)
 
     //Read the address from the NV store
     dev_nvstore_read(&stored_addr, sizeof(uint8_t));
+    //We probably need to make sure that we are not reading an invalid address from the NV store
+    if (dev_comms_verify_addr(stored_addr) == false)
+    {
+        iprintln(trCOMMS, "#Invalid address read from NV Store: 0x%02X", stored_addr);
+        //Write the current address back to the NV store and restart
+        dev_nvstore_write(&current_addr, sizeof(uint8_t)); 
+        while (1)
+        {    
+            resetFunc();
+        }
+        return; //We cannot use this address, so we will not change the current address
+    }
 
     //Check if the address in the NV store is different from the one we are using
     if (stored_addr == current_addr)
         return; //No change
 
-    //iprintln(trALWAYS, "#New Address read from NV Store: 0x%02X (old: 0x%02X)", stored_addr, current_addr);
+    dev_comms_addr_set(stored_addr);
+    iprintln(trCOMMS, "#Address set from NV Store: 0x%02X -> 0x%02X", current_addr, dev_comms_addr_get());
     //Reset the comms address to that which we got from the NVstore
-    if (dev_comms_addr_set(stored_addr))
-        return; //All good, we have a new address
-
-    //Not sure why this one failed, but let's just reset the address to the valid address already in use by the device
-    dev_nvstore_write(&current_addr, sizeof(uint8_t));                
-    //Should raise the flag to get it reset for the next cycle
-    
 }
 
 void msg_process(void)
 {
     uint8_t _u8_val = 0;
+    uint16_t _u16_val = 0;
     uint32_t _u32_val = 0;
     uint8_t _cnt = 0;
     bool accept_msg = false; //We start off NOT accepting broadcast messages (yet)
@@ -401,34 +456,55 @@ void msg_process(void)
    
     //If anything requires sending, now is the time to do it
     if (reg_state == roll_call)
-    {
         send_roll_call_response();
-        return; //This is all we do in this state
-    }
+        //Fall through to ensure we read the other nodes' responses to populate our blacklist
 
-    //HAve we received anything?
+    //Have we received anything?
     msg.len = dev_comms_rx_msg_available(&msg.src, &msg.dst, msg.data);
     if (msg.len == 0)
         return; //Nothing to process
 
     msg.rd_index = 0; //Set the read pointer to the start of the data array
 
-    //We are accepting direct messages IF we are WAITING or IDLE
-    if ((msg.src == ADDR_MASTER) && (msg.dst == _myAddr) && (reg_state >= waiting))
-        accept_msg = true;
-
     //Have we received anything?
     while (read_msg_data((uint8_t *)&_cmd, 1) > 0)
     {
         //Check for a roll-call first
         if (rollcall_msg_handler(_cmd, msg.src, msg.dst))
-            return; //Handled the roll-call message already
+            return; //Handled the roll-call message already (or ignored it)
 
+        if (msg.src != ADDR_MASTER)
+            return;//   //Going forward, we only care about messages from the master device
+
+        //We are accepting direct messages IF we are WAITING or IDLE
+        if (msg.dst == _myAddr) 
+        {
+            accept_msg =  (reg_state >= waiting)? true : false;
+        }
+        
+        //If we are not accepting messages, we need to check if this is a broadcast message
+        if (msg.dst == ADDR_BROADCAST)
+        {
+            //Even for broadcast msgs there are limits... e.g. no information can be "READ", and no console commands can be executed
+            if (_cmd > cmd_new_add)
+            {
+                iprintln(trALWAYS, "#Error: Invalid broadcast msg (0x%02X)", _cmd);
+                return; //We cannot process this message... and since it is a broadcast, we don't want to respond
+            }
+        }
+
+        //If the accept_msg flag is still false (i.e a message  NOT for our address) after processing the 1st command in the message, then we can stop processing the rest of the message
+        if ((!accept_msg) && ((_cnt > 0) || (_cmd != cmd_bcast_address_mask)))
+        {
+            //Not really an error....
+            //iprintln(trALWAYS, "#Error: Msg not intended for us (0x%02X)", msg.dst);
+            return;
+        }
+        
         // if (reg_state != idle)
         //     continue; //We are not in the idle state, so we don't care about anything else
         
-        if ((!accept_msg) && ((_cnt > 0) || (_cmd != cmd_bcast_address_mask)))
-            return; // No point in processing the rest of the message if we are not accepting it
+        iprintln(trALWAYS, "#Parsing: 0x%02X for 0x%02X", _cmd, msg.dst);
 
         switch (_cmd)
         {
@@ -438,8 +514,7 @@ void msg_process(void)
                 {
                     iprint(trALWAYS, "#BCST 0x%08X & 0x%08X : ", BIT_POS(my_mask_index), _u32_val);
                     //We need to check if the broadcast message applies to us or not
-                    if (is_bcast_msg_for_me(_u32_val))                    
-                        accept_msg = true;                        
+                    accept_msg = is_bcast_msg_for_me(_u32_val)? true : false;
 
                     iprintln(trALWAYS, "%s", accept_msg? "YES" : "NO");
                 }
@@ -454,14 +529,16 @@ void msg_process(void)
                 {
                     if (((int8_t)_u8_val < 0) || ((int8_t)_u8_val > RGB_BTN_MAX_NODES))
                     {
-                        iprintln(trALWAYS, "#Invalid index (%d)", _u8_val);
-                        dev_comms_response_append(_cmd, btn_cmd_err_range, &_u8_val, 1);
+                        iprintln(trALWAYS, "#Invalid index (%d > %d)", _u8_val, RGB_BTN_MAX_NODES);
+                        _u16_val = (0x00FF & RGB_BTN_MAX_NODES) | (_u8_val << 8);
+                        dev_comms_response_append(_cmd, resp_err_range, (uint8_t *)&_u16_val, sizeof(uint16_t));
                         break; // from switch... continue with the next command
                     }
                     my_mask_index = (int8_t)_u8_val; //Set the address bit mask for this device
                     iprintln(trALWAYS, "#State: IDLE (Index: %d)", my_mask_index);
                     reg_state = idle; //We are now in the "idle" state
-                    dev_comms_response_append(_cmd, btn_cmd_err_ok, NULL, 0);
+                    dbg_led(dbg_led_off); //Turn off the debug LED blinking
+                    dev_comms_response_append(_cmd, resp_ok, NULL, 0);
                     // sys_poll_tmr_start(&debug_tmr, 1000lu, true);
                 }
                 //else //read failure already handled in read_cmd_payload()
@@ -480,7 +557,7 @@ void msg_process(void)
                     if (_cmd == cmd_set_rgb_0)
                         dev_rgb_set_colour(colour[0].rgb);
                     blink_resume(); //resume blinking if we are changing LED colours
-                    dev_comms_response_append(_cmd, btn_cmd_err_ok, NULL, 0);
+                    dev_comms_response_append(_cmd, resp_ok, NULL, 0);
                 }
                 //else //read failure already handled in read_cmd_payload()
                 break;
@@ -493,7 +570,7 @@ void msg_process(void)
                     blink_stop(); //Stop blinking if we are measuring the reaction time
                     if (_u32_val > 0) //Only restart the timer if the period is > 0
                         blink_start(_u32_val); //Start blinking at the specified intervals
-                    dev_comms_response_append(_cmd, btn_cmd_err_ok, NULL, 0);
+                    dev_comms_response_append(_cmd, resp_ok, NULL, 0);
                 }
                 break;
             }   
@@ -505,7 +582,7 @@ void msg_process(void)
                 system_flags |= flag_active;
                 reaction_time_ms = 0lu;
                 sys_stopwatch_ms_start(&reaction_time_sw);
-                dev_comms_response_append(_cmd, btn_cmd_err_ok, NULL, 0);
+                dev_comms_response_append(_cmd, resp_ok, NULL, 0);
                 break;
             }
             
@@ -514,13 +591,32 @@ void msg_process(void)
                 //The master is assigning a new address to us, so we need to set it
                 if (read_cmd_payload(_cmd, (uint8_t *)&_u8_val, sizeof(uint8_t)))
                 {
-                    if (dev_comms_addr_set(_u8_val))
+#if (DEV_COMMS_DEBUG == 1)
+                    //Special case: 0xFF is used to indicate that the master wants us to reset our address
+                    if ((_u8_val == 0xFF) && (msg.dst == ADDR_BROADCAST))
                     {
+                        //This is a broadcast message that does not get a response
+                        //Start by resetting the blacklist of addresses
+                        dev_comms_blacklist_clear();
+                        _u8_val = dev_comms_addr_new();
                         dev_nvstore_write(&_u8_val, sizeof(uint8_t)); //Save the new address to the NV store
-                        dev_comms_response_append(_cmd, btn_cmd_err_ok, NULL, 0);
+                        //Reset right now
+                        iprintln(trALWAYS, "#Resetting device (new address: 0x%02X)", _u8_val);
+                        console_flush(); //Flush the console output before resetting
+                        resetFunc(); //This will reset the device and re-initialise the comms
                     }
-                    else
-                        dev_comms_response_append(_cmd, btn_cmd_err_range, NULL, 0);
+#endif
+                    if (!dev_comms_verify_addr(_u8_val))
+                    {
+                        iprintln(trALWAYS, "#Invalid address (%d)", _u8_val);
+                        _u16_val = (0x00FF & dev_comms_addr_get() ) | (_u8_val << 8);
+                        dev_comms_response_append(_cmd, resp_err_range, (uint8_t *)&_u16_val, sizeof(uint16_t));
+                        break;
+                    }
+                    dev_nvstore_write(&_u8_val, sizeof(uint8_t)); //Save the new address to the NV store
+                    dev_comms_response_append(_cmd, resp_ok, NULL, 0);
+                    //This response will still be sent using the old address... it will be updated in the next loop iteration
+                    iprintln(trALWAYS, "#New Address set from Master: 0x%02X", _u8_val);
                 }
                 //else //read failure already handled in read_cmd_payload()
                 break;
@@ -531,14 +627,14 @@ void msg_process(void)
             case cmd_get_rgb_2:
             {
                 _u32_val = colour[_cmd-cmd_get_rgb_0].rgb;
-                dev_comms_response_append(_cmd, btn_cmd_err_ok, (uint8_t*)&_u32_val, (3*sizeof(uint8_t)));
+                dev_comms_response_append(_cmd, resp_ok, (uint8_t*)&_u32_val, (3*sizeof(uint8_t)));
                 break;
             }
 
             case cmd_get_blink:
             {
                 _u32_val = blink_period_ms; //Get the period of the timer
-                dev_comms_response_append(_cmd, btn_cmd_err_ok, (uint8_t*)&_u32_val, sizeof(uint32_t));
+                dev_comms_response_append(_cmd, resp_ok, (uint8_t*)&_u32_val, sizeof(uint32_t));
                 break;
             }
 
@@ -546,7 +642,7 @@ void msg_process(void)
             {
                 //We're not even bothering with reading a payload....
                 _u32_val = reaction_time_ms;
-                dev_comms_response_append(_cmd, btn_cmd_err_ok, (uint8_t*)&_u32_val, sizeof(uint32_t));
+                dev_comms_response_append(_cmd, resp_ok, (uint8_t*)&_u32_val, sizeof(uint32_t));
                 break;
             }
             
@@ -554,7 +650,31 @@ void msg_process(void)
             {
                 //We're not even bothering with reading a payload....
                 //read_cmd_payload(_cmd, NULL);   // No data to read
-                dev_comms_response_append(_cmd, btn_cmd_err_ok, (uint8_t*)&system_flags, sizeof(uint8_t));
+                dev_comms_response_append(_cmd, resp_ok, (uint8_t*)&system_flags, sizeof(uint8_t));
+                break;
+            }
+
+            case cmd_set_dbg_led:
+            {
+                if (read_cmd_payload(_cmd, (uint8_t*)&_u8_val, sizeof(uint8_t)))
+                {
+                    if (_u8_val >= dbg_led_state_limit)
+                    {
+                        iprintln(trALWAYS, "#Invalid index (%d > %d)", _u8_val, RGB_BTN_MAX_NODES);
+                        _u16_val = (0x00FF & (dbg_led_state_limit - 1)) | (_u8_val << 8);
+                        dev_comms_response_append(_cmd, resp_err_range, (uint8_t *)&_u16_val, sizeof(uint16_t));
+                        break;
+                    }
+                    dbg_led((dbg_blink_state_t)_u8_val); //Set the debug LED state
+                    dev_comms_response_append(_cmd, resp_ok, NULL, 0);
+                }
+                //else //read failure already handled in read_cmd_payload()
+                break;
+            }
+
+            case cmd_get_dbg_led:
+            {
+                dev_comms_response_append(_cmd, resp_ok, (uint8_t*)&dbg_led_state, sizeof(uint8_t));
                 break;
             }
             
@@ -572,23 +692,23 @@ void msg_process(void)
                         //iprintln(trALWAYS, "#Console: \"%s\"", _data);
                         //Maybe wise to turn OFF all COMMS and HAL_SERIAL traces while this is happening?
                         console_enable_alt_output_stream(dev_comms_response_add_byte);
-                        dev_comms_response_append(cmd_wr_console_cont, btn_cmd_err_ok, NULL, 0);
+                        dev_comms_response_append(cmd_wr_console_cont, resp_ok, NULL, 0);
                         console_read_byte('\n');
-                        console_service(); //This *should* pipe the output to the alternate stream and reset it back to stdouot once it is done
+                        console_service(); //This *should* pipe the output to the alternate stream and reset it back to stdout once it is done
                         if (!dev_comms_transmit_now()) //Send the response message now
                             iprintln(trALWAYS, "#Error sending console response msg");
-                        dev_comms_response_append(cmd_wr_console_done, btn_cmd_err_ok, NULL, 0);
+                        dev_comms_response_append(cmd_wr_console_done, resp_ok, NULL, 0);
                     }
                 }
                 //else //read failure already handled in read_cmd_payload()
                 break;
             }
-            
-            // case cmd_roll_call:             //Already handled in rollcall_msg_handler()
+
+            // case cmd_roll_call_all:             //Already handled in rollcall_msg_handler()
             default:
             {
                 //Unkown/unhandled command.... return error (NAK?) to master
-                dev_comms_response_append(_cmd, btn_cmd_err_unknown_cmd, NULL, 0);
+                dev_comms_response_append(_cmd, resp_err_unknown_cmd, NULL, 0);
                 break;
             }
         }
@@ -630,7 +750,7 @@ bool read_cmd_payload(uint8_t cmd, uint8_t * dst, uint8_t len)
     if (read_msg_data(dst, len) != len)
     {
         iprintln(trALWAYS, "#Error reading %d bytes for cmd 0x%02X", len, cmd);
-        dev_comms_response_append((master_command_t)cmd, btn_cmd_err_payload_len, &len, 1);
+        dev_comms_response_append((master_command_t)cmd, resp_err_payload_len, &len, 1);
         return false;
     }
     return true;//dev_comms_read_payload(dst, len);
@@ -638,8 +758,9 @@ bool read_cmd_payload(uint8_t cmd, uint8_t * dst, uint8_t len)
 
 void send_roll_call_response(void)
 {
-    if (reg_state != roll_call)
-        return; //We are not in the roll-call state, so we don't need to send a response
+    //function is only called in roll_call state, so this is not neeeded
+    // if (reg_state != roll_call)
+    //     return; //We are not in the roll-call state, so we don't need to send a response
 
     if (sys_stopwatch_ms_lap(&roll_call_sw) < roll_call_time_ms)// && (roll_call_sw.running == true))
         return; //Not yet, so wait a bit longer
@@ -653,24 +774,26 @@ void send_roll_call_response(void)
     if(!dev_comms_tx_ready()) //Start the response message
     {
         //Could NOT send it now.... errors/bus is busy... we'll try again in a bit (between 2 and 50 ms)
-        roll_call_time_ms = sys_random(2, 50);
+        roll_call_time_ms = sys_random(BUS_SILENCE_MIN_MS, BUS_SILENCE_MIN_MS*10);
         //RVN - TODO - This is a bit of a thumbsuck time period.... maybe come back to this later?
         sys_stopwatch_ms_start(&roll_call_sw, 0); //Restart the stopwatch for the rollcall response
         iprintln(trALWAYS, "#ROLL-CALL - wait some more (%u ms)", (uint8_t)roll_call_time_ms);
         return;
     }
 
-    dev_comms_response_append(cmd_roll_call, btn_cmd_err_ok, &my_version, 1, true);
+    dev_comms_response_append(cmd_roll_call_all, resp_ok, &my_version, 1, true);
     if (dev_comms_transmit_now()) //Send the response message now
     {
         //Now we wait for the master to register us
         reg_state = waiting; //We are now in the "waiting for registration" state
         iprintln(trALWAYS, "#State: WAIT");
+        dbg_led(dbg_led_blink_200ms); //Start blinking the debug LED at 200ms intervals
     }
     else
     {
         iprintln(trALWAYS, "#Error sending roll-call response");
         reg_state = un_reg; //RVN - TODO - we need to go back to the state we were in before the roll-call started (no necessarily un_reg)
+        dbg_led(dbg_led_blink_500ms); //Start blinking the debug LED at 500ms intervals
     }
 }
 
@@ -703,33 +826,119 @@ void state_machine_handler(void)
 
 bool rollcall_msg_handler(uint8_t _cmd, uint8_t _src, uint8_t _dst)
 {
-    if (_cmd == cmd_roll_call)
-    {
-        //Was this a roll-call message from the master device?
-        if ((_src == ADDR_MASTER) && (_dst == ADDR_BROADCAST))
-        {    
-            //New ROLL-CALL command from the master, so we need to start the roll-call response timer again
-            //RVN - TODO - Narrow the response window down a bit.
-            roll_call_time_ms = (1+((uint32_t)dev_comms_addr_get())) * 10;
-            //Means we will respond to the roll-call command between 20 and 2550 ms later
-            iprintln(trALWAYS, "#ROLL-CALL - Answer in %lu ms", roll_call_time_ms);
-            sys_stopwatch_ms_start(&roll_call_sw, 0); //Start the stopwatch for the roll-call response
-            reg_state = roll_call; //We are in the process of responding to a roll-call
+    if ((_cmd != cmd_roll_call_all) && (_cmd != cmd_roll_call_unreg))
+        return false; //Not a roll-call message, so we don't care about it
+
+    //Was this a roll-call message from the master device?
+    if ((_src == ADDR_MASTER) && (_dst == ADDR_BROADCAST))
+    {    
+        // If we are registered and this was meant for unregistered devices, we do NOT respond
+        if ((reg_state == idle) && (_cmd == cmd_roll_call_unreg))
+        {
+            iprintln(trALWAYS, "#UNREG ROLL-CALL Ignored (already registered)");
+            return true; //Handled the roll-call message already (ignored it)
         }
 
-        // or was this a roll-call response from another device?
-        if ((_src != ADDR_MASTER) && (_dst == ADDR_MASTER))
-        {
-            //ROLL-CALL response from another node, so we blacklist its address...
-            dev_comms_blacklist_add(_src);
-    
-            //... and generate a new address for ourselves if there is a conflict
-            if (_src == dev_comms_addr_get())
-                dev_comms_addr_new();            
-        }
-        return true; //Handled the roll-call message already 
+        if (_cmd == cmd_roll_call_all) //Clear the blacklist of addresses, as we are starting a new roll-call
+            dev_comms_blacklist_clear();
+        
+        //New ROLL-CALL command from the master, so we need to start the roll-call response timer (again?)
+        //The random time is based on our address, so that we don't all respond at the same time
+        //A random jitter is added between 0 and 255ms to try to eliminate/reduce the probability of bus 
+        //  collisions between nodes with the same addresses.
+        //Means we will respond to the roll-call command between 10 and 2795 ms later
+        roll_call_time_ms = (((uint32_t)dev_comms_addr_get() * 2 * BUS_SILENCE_MIN_MS)) + sys_random(0, 0xFF);
+
+        /*With a maximum of 31 nodes on the bus, and a randomly generated address between 1 and 254, the 
+           probability of a collision between two devices is ~31.4%
+          
+          See https://en.wikipedia.org/wiki/Birthday_problem#Generalizations for more on this.
+
+          We add another randomly generated time jitter (0 to 255ms) to the response time (Address × 10 ms) to 
+           reduce the probability of collisions further.
+
+          We are not really concerned about collisions between devices with DIFFERENT addresses, 
+           as these will be detected by the device and then just retried at a later (randomly generated) time
+         Our concern is collisions between devices with the SAME address, which will NOT be detected by the devices or the master.
+
+          With a 173.6 µs minimum safe spacing (twice the byte length @ 115200 baud), we can now estimate timing-based collisions with more precision. 
+            Here's a breakdown for both scenarios:
+
+            ===== 1 - Probability of a Collision Between ANY Two Nodes =====
+            Each node's response time is:
+            T = (Address × 10 ms) + jitter
+
+            Where:
+            - Address ∈ [1, 254]
+            - Jitter ∈ [0, 255 ms], uniformly distributed in 1 ms increments
+            - Response time spread per address: [A×10 ms, A×10 ms + 255 ms]
+            So every node's response is in a 256 ms-wide window, shifted by 10 ms per address.
+            Now let’s get concrete:
+            There are 31 nodes, so you have:
+            - 465 unique node pairs = C(31, 2)
+            Assuming all response times are uniformly random across a domain of [10 ms, 2540 ms + 255 ms] ≈ [10 ms, 2795 ms], we discretize this into 173.6 µs bins:
+            # of bins ≈ (2795 ms − 10 ms) / 0.1736 ms ≈ 16,047 bins
+
+            Each response lands uniformly into one of these bins. So the probability that a second node lands in the same bin as the first is:
+            P(pairwise collision) ≈ 1 / 16,047
+
+            With 465 pairs:
+            P(any collision) ≈ 1 − (1 − 1/16,047)^465 ≈ 2.82%
+
+
+            So:
+            - P(any bus timing collision) ≈ 2.8%
+
+            ===== 2 - Probability of a Collision from Nodes with the SAME Address AND SAME Jitter =====
+            As before, we combine:
+            - P(same address) — for 31 random draws from 254 values: ≈ 31.4%
+            - P(same jitter) — uniform 0–255 → 1/256
+            - P(timing overlap) — they will definitely land in the same 173.6 µs bin if they have the same base time and jitter
+            So, collision probability for a specific address-duplicate pair:
+            P = P(same address) × P(same jitter) ≈ 0.314 × 1/256 ≈ 0.123%
+
+
+            But not every node pair collides on address — only a small subset does. 
+            We could refine this more with the expected number of duplicate-address pairs, but even with 31 nodes:
+            - You’re likely to have ~1 pair with a shared address (on average),
+            - So P(collision due to same address + same jitter) ≈ 0.1–0.2%
+            This is a very low probability, and it’s acceptable for our use case.        
+
+            TL;DR
+            +------------------------------------------------------------+-------------+
+            | Event Type                                                 | Estimated   |
+            |                                                            | Probability | 
+            +------------------------------------------------------------+-------------+
+            | Any two nodes overlap in response timing (≤173.6 µs apart) |     ~2.8%   | 
+            | Two nodes overlap due to same address and same jitter      | ~0.1–0.2%   | 
+            +------------------------------------------------------------+-------------+
+
+            This is only appliccable to Rollcall responses.... once registered, the devices 
+             will be either addressed individually by the master (if requiring responses) or a 
+             broadcast to all devices will be sent (requiring no responses).
+        */
+
+        iprintln(trALWAYS, "#ROLL-CALL - Answer in %lu ms", roll_call_time_ms);
+        sys_stopwatch_ms_start(&roll_call_sw, 0); //Start the stopwatch for the roll-call response
+        reg_state = roll_call; //We are in the process of responding to a roll-call
+        dbg_led(dbg_led_blink_50ms); //Start blinking the debug LED at 50ms intervals
     }
-    return false;
+
+    // or was this a roll-call response from another device?
+    if ((_src != ADDR_MASTER) && (_dst == ADDR_MASTER))
+    {
+        //ROLL-CALL response from another node, so we blacklist its address...
+        dev_comms_blacklist_add(_src);
+
+        //... and generate a new address for ourselves if there is a conflict and we have not responded with our address yet
+        if ((reg_state != waiting) && (reg_state != idle) && (_src == dev_comms_addr_get()))
+        {
+            uint8_t new_addr = dev_comms_addr_new();
+            iprintln(trALWAYS, "#Address conflict detected in roll-call 0x%02X -> 0x%02X", _src, new_addr);
+            dev_nvstore_write(&new_addr, sizeof(uint8_t)); //Save the new address to the NV store
+        }
+    }
+    return true; //Handled the roll-call message already 
 }
 
 bool is_bcast_msg_for_me(uint32_t bit_mask)

@@ -1083,6 +1083,14 @@ bool console_print_tag(const char * fmt, const char * tag)
     //Remember, the format string is in PROGMEM
     if (pgm_read_byte(fmt) == '#')
     {
+        uint32_t t_now = millis();
+        for (uint32_t div = 10000000; div >= 1; div /= 10)
+        {
+            uint8_t digit = (t_now / div) % 10;
+            serialputc(digit + '0', NULL);
+            t_now %= div;
+        }
+        serialputc(' ', NULL);
         serialputc('[', NULL);
         for (int i = 0; tag[i]; i++)
             serialputc(tag[i], NULL);

@@ -79,15 +79,16 @@ Struct & Unions
 
 typedef enum command_e
 {/* command id                  #      Description                        MOSI Payload  Response (MISO) Payload */
-    cmd_roll_call           = 0x00, /* Requests a Slave Roll-call          none             none                */
-
-    cmd_set_bitmask_index   = 0x01, /* Sets a slave address bit            1 byte           none                */
+    cmd_roll_call_all       = 0x00, /* Requests a Slave Roll-call - ALL    none             none                
+                                        recipients should respond to this */
+    cmd_roll_call_unreg     = 0x01, /* Requests a Slave Roll-call - ONLY   none             none                
+                                        unregistered recipients should 
+                                        respond to this */
 
     cmd_bcast_address_mask  = 0x02, /* Indicates the indices of            uint32_t         none
                                          intended recipients of the 
                                          broadcast message
-                                        This should be the 1st cmd in 
-                                        any broadcast message               */
+                                        IMPORTANT: This should be the 1st cmd in any broadcast message (dst == 0xFF)*/
 
 
     cmd_set_rgb_0           = 0x10, /* Set the primary LED colour          24 bits          none                */
@@ -95,9 +96,14 @@ typedef enum command_e
     cmd_set_rgb_2           = 0x12, /* Set the 3rd LED colour              24 bits          none                */
     cmd_set_blink           = 0x13, /* Set the blinking interval           uint32_t         none                */
     cmd_start_sw            = 0x14, /* Starts the button stopwatch         none             none                */
+    //Skip 0x15, which corresponds to the "get Flags" command
+    cmd_set_dbg_led         = 0x16, /* Set the debug LED state             1 byte           none                */
+
+    cmd_set_bitmask_index   = 0x1E, /* Registers a slave by assigning it   1 byte           none                
+                                        a slot (address bit 0 to 31) */
 
     cmd_new_add             = 0x1F, /* Sets a new device address - MUST    1 byte             none                
-                                        be the LAST cmd in a direct message */
+                                        IMPORTANT: This must be the LAST cmd in any message                     */
 
     cmd_get_rgb_0           = 0x20, /* Get the primary LED colour          none             24 bits             */
     cmd_get_rgb_1           = 0x21, /* Get the secondary LED colour        none             24 bits             */
@@ -107,8 +113,8 @@ typedef enum command_e
                                         reaction time sw                    */
     cmd_get_flags           = 0x25, /* Requests the system flags           none             1 bytes             */
 
-                                        
-                                        
+    cmd_get_dbg_led         = 0x26, /* Get the debug LED state             none             1 byte              */
+
     /* This command cannot be "packed" along with other commands as the entire payload will be used*/
     cmd_wr_console_cont     = 0x40, /* Write to the slave device console   buffer           none
                                         1st byte in data is the length 
@@ -120,14 +126,17 @@ typedef enum command_e
                                         to the slave console */  
 
     cmd_debug_0             = 0x80, /* Dummy command. just fills the data buffer */
+
+    cmd_none                = 0xFF, /* Placeholder */
 }master_command_t;
 
 typedef enum response_e
 {
-    btn_cmd_err_ok                  = 0x00, /* The command was successful*/
-    btn_cmd_err_payload_len         = 0x01, /* The command payload did not contain sufficient data for the command - followed by length byte*/
-    btn_cmd_err_range               = 0x02, /* The payload contained a value outside of the acceptable range - followed by a value byte*/
-    btn_cmd_err_unknown_cmd         = 0x03, /* The command was not recognised - followed by the command byte*/
+    resp_ok                 = 0x00, /* The command was successful*/
+    resp_err_payload_len    = 0x01, /* The command payload did not contain sufficient data for the command - followed by length byte*/
+    resp_err_range          = 0x02, /* The payload contained a value outside of the acceptable range - followed by a value byte*/
+    resp_err_unknown_cmd    = 0x03, /* The command was not recognised - followed by the command byte*/
+    resp_err_none           = 0xFF, /* Placeholder */
 }response_code_t;
 
 enum system_flags_e
@@ -141,6 +150,17 @@ enum system_flags_e
     flag_unreg       = BIT_POS(6),
     flag_reserved    = BIT_POS(7),
 };
+
+typedef enum dbg_blink_state_e
+{
+    dbg_led_off         = 0,
+    dbg_led_on          = 1,
+    dbg_led_blink_50ms  = 2,
+    dbg_led_blink_200ms = 3,
+    dbg_led_blink_500ms = 4,
+    dbg_led_state_limit = 5,
+}dbg_blink_state_t;
+
 /******************************************************************************
 Global (public) variables
 ******************************************************************************/

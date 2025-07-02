@@ -97,7 +97,7 @@ local defines and constants
 local structure
  *******************************************************************************/
 typedef struct {
-    rmt_bytes_encoder_config_t enc_cfg;     //RVN - bytes_encoder_config
+    rmt_bytes_encoder_config_t enc_cfg;     //bytes_encoder_config
     const char col_order[5]; /* 4 bytes (max) + null terminator. Also determines the number of bytes per led.
                         e.g.    "rgb" - 3 bytes per led, ordered Red, Green, Blue
                                 "grbw" - 4 bytes per led, ordered Green, Red, Blue, White
@@ -198,7 +198,7 @@ static led_strip_t dbg_led = {
     .chan = NULL,                                       /* Set to NULL, will be assigned at initialisation */
     .chan_config = {                                    /* RMT TX Chan Config */
         .clk_src = RMT_CLK_SRC_DEFAULT,                 /* select source clock */
-        .gpio_num = pinDebugRGBLED,                     /*< GPIO number used by RMT TX channel. Set to -1 if unused */
+        .gpio_num = GPIO_NUM_8,                     /*< GPIO number used by RMT TX channel. Set to -1 if unused */
         .mem_block_symbols = SOC_RMT_MEM_WORDS_PER_CHANNEL, /* DO NOT CHANGE THIS */
         .resolution_hz = RMT_LED_STRIP_RESOLUTION_HZ,
         .trans_queue_depth = 4,                         /* set the number of transactions that can be pending in the background*/
@@ -462,7 +462,7 @@ void drv_rgb_led_strip_deinit(void)
     }
 
     _total_leds_cnt = 0;
-    iprintln(trBTN, "#Driver de-initialised");
+    iprintln(trCOMMS, "#Driver de-initialised");
 }
 
 static rmt_transmit_config_t rmt_tx_config = {

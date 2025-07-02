@@ -204,27 +204,45 @@ bool sys_poll_tmr_is_running(Timer_ms_t *t)
 	return false;
 }
 
+uint64_t sys_poll_tmr_ms(void)
+{
+  return (_sys_poll_1_ms_ticker);
+}
+
 uint64_t sys_poll_tmr_seconds(void)
 {
   return (_sys_poll_1_ms_ticker/1000);
 }
 
-void sys_stopwatch_ms_start(Stopwatch_ms_t* sw)
+void sys_stopwatch_ms_start(Stopwatch_ms_t* sw, uint32_t max_time)
 {
     sw->tick_start = _sys_poll_1_ms_ticker;
+    sw->max_time = max_time;
     sw->running = true;
+    sw->max_time_reached = false;
 }
 
 uint32_t sys_stopwatch_ms_lap(Stopwatch_ms_t* sw)
 {
     uint32_t elapsed = 0;
+    uint32_t now = _sys_poll_1_ms_ticker;
 
     if (sw->running)
     {
-        if (_sys_poll_1_ms_ticker > sw->tick_start)
-            elapsed = _sys_poll_1_ms_ticker - sw->tick_start;
-        else //Assume we have wrapped (around half a billion years)
-            elapsed = (UINT32_MAX - sw->tick_start) + _sys_poll_1_ms_ticker;
+        if (now >= sw->tick_start)
+            elapsed = now - sw->tick_start;
+        else //Assume we have wrapped (~49 days ofr uint32_t)
+            elapsed = (UINT32_MAX - sw->tick_start) + now;
+
+        //Do we have a max time set?
+        if (sw->max_time > 0)
+        {
+            if (elapsed >= sw->max_time)
+                sw->max_time_reached = true;
+
+            if (sw->max_time_reached)
+                return sw->max_time;
+        }
     }
     
     return elapsed;
@@ -233,7 +251,7 @@ uint32_t sys_stopwatch_ms_lap(Stopwatch_ms_t* sw)
 uint32_t sys_stopwatch_ms_reset(Stopwatch_ms_t* sw)
 {
     uint32_t elapsed = sys_stopwatch_ms_lap(sw);
-    sys_stopwatch_ms_start(sw);
+    sys_stopwatch_ms_start(sw, sw->max_time);
     return elapsed;
 }
 

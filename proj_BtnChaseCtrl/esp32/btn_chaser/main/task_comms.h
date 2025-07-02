@@ -1,12 +1,12 @@
 /*****************************************************************************
 
-drv_rgb_btn.h
+task_comms.h
 
-Include file for drv_rgb_btn.c
+Include file for task_comms.c
 
 ******************************************************************************/
-#ifndef __drv_rgb_btn_H__
-#define __drv_rgb_btn_H__
+#ifndef __task_comms_H__
+#define __task_comms_H__
 
 #ifdef __cplusplus
 extern "C" {
@@ -14,6 +14,7 @@ extern "C" {
 /******************************************************************************
 includes
 ******************************************************************************/
+#include "defines.h"
 #include "sys_utils.h"
 #include "../../../../common/common_comms.h"
 
@@ -44,30 +45,46 @@ Global (public) function definitions
 
 /*! \brief Initialise the RGB Button driver
  */
-void drv_rgb_btn_init(void);
-
-/*! \brief De-initialise the RGB Button driver
- */
-void drv_rgb_btn_deinit(void);
-
-/*! \brief Probe the RGB Button device to see if it is present on the bus
- */
-esp_err_t drv_rgb_btn_probe(uint8_t id_mask);
+void * comms_init_task(void);
 
 /*! \brief Transmit data to the RGB Button device
  */
-esp_err_t drv_rgb_btn_tx(uint8_t *tx_data, size_t tx_size);
+esp_err_t task_comms_tx(uint8_t *tx_data, size_t tx_size);
 
-/*! \brief Transmit and receive data to/from the RGB Button device
- */
-esp_err_t drv_rgb_btn_txrx(uint8_t *tx_data, size_t tx_size, uint8_t *rx_data, size_t rx_size);
+bool comms_msg_rx_read(comms_msg_t *msg, size_t *msg_size);
 
+bool comms_rollcall(bool all);
+
+void comms_node_msg_init(uint8_t node_addr);
+bool comms_node_msg_append(uint8_t node_addr, master_command_t cmd, uint8_t * data, uint8_t data_len, bool restart);
+
+bool comms_bcst_start(uint32_t exclude_bit_mask_addr);
+bool comms_bcst_append(uint8_t cmd, uint8_t * data, uint8_t data_len);
+
+bool comms_msg_tx_now(void);
+
+bool comms_bcst_set_rgb(uint8_t index, uint32_t rgb_col);
+bool comms_bcst_set_blink(uint32_t period_ms);
+
+// bool comms_node_register(uint8_t node_addr, uint8_t bit_mask_addr);
+// bool comms_node_new_addr(uint8_t node_addr, uint8_t new_addr);
+
+// bool comms_node_set_rgb(uint8_t node_addr, uint8_t index, uint32_t rgb_col);
+// bool comms_node_get_rgb(uint8_t node_addr, uint8_t index);
+
+// bool comms_node_set_blink(uint8_t node_addr, uint32_t period_ms);
+// bool comms_node_get_blink(uint8_t node_addr);
+
+// bool comms_node_start_sw(uint8_t node_addr);
+// bool comms_node_get_sw_time(uint8_t node_addr);
+
+// bool comms_node_get_flags(uint8_t node_addr);
 
 #ifdef __cplusplus
 }
 #endif
 
 #undef EXT
-#endif /* __drv_rgb_btn_H__ */
+#endif /* __task_comms_H__ */
 
 /****************************** END OF FILE **********************************/

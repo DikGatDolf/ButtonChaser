@@ -39,40 +39,26 @@ local variables
 Calculate the CRC for a null terminated string with a starting seed CRC value
 
  *******************************************************************************/
-uint8_t crc8_str(uint8_t crc_start, const char *str) {
-	//const char * data = str;
-	uint8_t crc = crc_start; //Start with the seed CRC.
-	while (*str)
-        crc = crc8(crc, *str++);
-	return crc;
-}
 
-/*******************************************************************************
-
-Calculate the CRC for an N number of bytes of a string with a starting seed CRC 
-value. If N is greater than the length of the string, the CRC will be calculated
-for the entire string.
-
- *******************************************************************************/
-uint8_t crc8_str_n(uint8_t crc_start, const uint8_t *data, size_t len) {
+uint8_t crc8_n(uint8_t crc_start, const uint8_t *data, size_t len) {
 	uint8_t crc = crc_start; //Start with a seed CRC.
-	while ((len--) && (*data))
-        crc = crc8(crc, *data++);
-
+	while (len--) {
+		uint8_t extract = *data++;
+		for (size_t i = 8; i; i--) {
+			uint8_t sum = (crc ^ extract) & 0x01;
+			crc >>= 1;
+			if (sum) {
+				crc ^= CRC_8_POLYNOMIAL;
+			}
+			extract >>= 1;
+		}
+	}
 	return crc;
 }
 
-/*******************************************************************************
-
-Calculate the CRC for a single bytes
-Why only a single byte CRC. Because a single byte will serve its purpose (of
-ensuring the integrity of the message) very well while still allowing us not
-to have to worry about byte-endianness
-
- *******************************************************************************/
 uint8_t crc8(uint8_t crc_start, uint8_t data) {
 	uint8_t crc = crc_start; //Start with a blank CRC.
-	for (uint8_t tempI = 8; tempI; tempI--) {
+    for (size_t i = 8; i; i--) {
 		uint8_t sum = (crc ^ data) & 0x01;
 		crc >>= 1;
 		if (sum) {

@@ -37,6 +37,7 @@ includes
 #include <strings.h>
 #include <stdint.h>
 #include "sys_utils.h"
+#include "sys_timers.h"
 #include "str_helper.h"
 #include "sys_task_utils.h"
 #include "freertos/FreeRTOS.h"
@@ -276,6 +277,7 @@ sPrintFlagItem print_trace_flag_name[]=
 		{"Application", trAPP,      "app"},
 		{"Console", 	trCONSOLE,  "con"},
         {"RGBLED",      trLED,      "led"},
+        {"RS-485 Comms",trCOMMS,    "com"},
 		/* Not Implemented yet {"", 				PRINT_TR_TBD},*/
 };
 
@@ -286,6 +288,7 @@ sPrintFlagActionItem print_trace_combos[]=
 		{"con", 	eTraceTOGGLE,   trCONSOLE,},
 		{"none", 	eTraceOFF,      trALL,    },
         {"rgb",     eTraceTOGGLE,   trLED,    },
+        {"comms",   eTraceTOGGLE,   trCOMMS,  },
 };
 
 ConsoleMenuItem_t _console_menu_items[] =
@@ -299,7 +302,7 @@ ConsoleMenuItem_t _console_menu_items[] =
 
 static DeviceConsole_t _console = {
     .menu_grp_list.cnt = 0,
-	.tracemask = trALL,//trCONSOLE|trAPP|trLED|trBTN,
+	.tracemask = trALL&(~trCOMMS),//trCONSOLE|trAPP|trLED|trCOMMS,
     .rx.cnt = 0,
     .task = {
         .init_done = false,
@@ -329,10 +332,9 @@ void _console_main_func(void * pvParameters)
 
     //Wait until the initialisation is done
     while (!_console.task.init_done)
-        xTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(CONSOLE_READ_INTERVAL_MS));
+        xTaskDelayUntil(&xLastWakeTime, 1);//pdMS_TO_TICKS(CONSOLE_READ_INTERVAL_MS));
 
     iprintln(trLED|trALWAYS, "#Task Started (%d). Running @ %d Hz", 0, (1000/CONSOLE_READ_INTERVAL_MS));
-    
 
 	while (1)
   	{
@@ -1065,7 +1067,7 @@ void * console_init_task(void)
 	// must exist for the lifetime of the task, so in this case is declared static.  If it was just an
 	// an automatic stack variable it might no longer exist, or at least have been corrupted, by the time
 	// the new task attempts to access it.
-	if (xTaskCreate( _console_main_func, PRINTF_TAG, _console.task.stack_depth, _console.task.parameter_to_pass, tskIDLE_PRIORITY, &_console.task.handle ) != pdPASS)
+	if (xTaskCreate( _console_main_func, PRINTF_TAG, _console.task.stack_depth, _console.task.parameter_to_pass, 10, &_console.task.handle ) != pdPASS)
 	{
 		iprintln(trALWAYS, "#Unable to start %s Task!", PRINTF_TAG);
 		return NULL;
@@ -1246,7 +1248,7 @@ void console_print(uint8_t traceflags, const char * tag, const char *fmt, ...)
 	//A line starts with the tag if the format string starts with "#"
 	if (fmt[0] == '#')
 	{
-		printf("[%s]", tag);
+		printf("%08llu [%s]", (uint64_t)sys_poll_tmr_ms(), tag);
 		fmt++; // Now skip the '#'
 	}
 
@@ -1259,7 +1261,7 @@ void console_printline(uint8_t traceflags, const char * tag, const char *fmt, ..
 {
     console_print(traceflags, tag, fmt);
 	//Ends with a newline.
-	printf("\n");
+    console_print(traceflags, tag, "\n");
 }
 
 

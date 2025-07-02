@@ -263,7 +263,7 @@ void _led_main_func(void * pvParameters)
 
     //Wait until the initialisation is done
     while (!_rgb_led.task.init_done)
-        xTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(LED_UPDATE_INTERVAL_MS));
+        xTaskDelayUntil(&xLastWakeTime, 1);//pdMS_TO_TICKS(LED_UPDATE_INTERVAL_MS));
 
     iprintln(trLED|trALWAYS, "#Task Started (%d). Running @ %d Hz", _rgb_led.cnt, (1000/LED_UPDATE_INTERVAL_MS));
 
@@ -1149,7 +1149,7 @@ void * rgb_led_init_task(void)
 	// must exist for the lifetime of the task, so in this case is declared static.  If it was just an
 	// an automatic stack variable it might no longer exist, or at least have been corrupted, by the time
 	// the new task attempts to access it.
-	if (xTaskCreate( _led_main_func, PRINTF_TAG, _rgb_led.task.stack_depth, _rgb_led.task.parameter_to_pass, 10, &_rgb_led.task.handle ) != pdPASS)
+	if (xTaskCreate( _led_main_func, PRINTF_TAG, _rgb_led.task.stack_depth, _rgb_led.task.parameter_to_pass, 1, &_rgb_led.task.handle ) != pdPASS)
 	{
 		iprintln(trALWAYS, "#Unable to start %s Task!", PRINTF_TAG);
 		return NULL;

@@ -27,13 +27,13 @@ const char BUILD_TIME_AND_DATE[] = {__TIME__ " " __DATE__}; /* Used in our start
 #define btnChasePin_TX0     (1)
 
 #define output_RS485_DE     (3)
-#define output_RS485_RE     (4)
+#define output_DEBUG_LED    (13)
 
 #define input_Button        (2)     /* Source for INT0 */
 
-#define output_Led_Red      (13)
-#define output_Led_Green    (14)
-#define output_Led_Blue     (15)
+#define output_Led_Blue     (14)
+#define output_Led_Red      (15)
+#define output_Led_Green    (16)
 
 #define input_ADC           (20)
 
@@ -56,6 +56,8 @@ const char BUILD_TIME_AND_DATE[] = {__TIME__ " " __DATE__}; /* Used in our start
 	#define MAIN_DEBUG
 #endif
 
+#define DEV_COMMS_DEBUG       (1)
+
 /* Suppresses a bunch of debug prints and console functionality for the RGB LED driver:
     Usage: RAM: 60 bytes, Flash: 2084 bytes */
 #define DEV_RGB_DEBUG       (0)
@@ -66,7 +68,7 @@ const char BUILD_TIME_AND_DATE[] = {__TIME__ " " __DATE__}; /* Used in our start
 
 /* Suppresses a bunch of debug prints and console functionality for the NVStore driver:
     Usage: RAM: 134 bytes, Flash: 3,112 bytes */
-#define DEV_NVSTORE_DEBUG       (0)
+#define DEV_NVSTORE_DEBUG       (1)
 
 #ifdef __cplusplus
 }

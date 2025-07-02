@@ -515,7 +515,6 @@ void dev_nvstore_init(void)
 #if (DEV_NVSTORE_DEBUG == 1)
         iprintln(trNVSTORE, "#(%lu ms) Block: %d/%d (v%d), Wear: %s%%", lap, _nvstore.current.last_rd, NVSTORE_BLOCK_CNT, _nvstore.rd_block.hdr.version, float2str(buff, ((float)_nvstore.current.wr_cnt * 100.0f) / (float)NVSTORE_WR_CNT_MAX, 2, 16));
 #endif /* DEV_NVSTORE_DEBUG */
-        _nvstore.new_data = true;
     }
 #if (DEV_NVSTORE_DEBUG == 1)
     else
