@@ -56,6 +56,74 @@ bool sys_tmr_init_ok = false;
 /*******************************************************************************
 local functions
  *******************************************************************************/
+// the prescaler is set so that timer0 ticks every 64 clock cycles, and the
+// the overflow handler is called every 256 ticks.
+#define MICROSECONDS_PER_TIMER0_OVERFLOW (clockCyclesToMicroseconds(64 * 256))
+
+// the whole number of milliseconds per timer0 overflow
+#define MILLIS_INC (MICROSECONDS_PER_TIMER0_OVERFLOW / 1000)
+
+// the fractional number of milliseconds per timer0 overflow. we shift right
+// by three to fit these numbers into a byte. (for the clock speeds we care
+// about - 8 and 16 MHz - this doesn't lose precision.)
+#define FRACT_INC ((MICROSECONDS_PER_TIMER0_OVERFLOW % 1000) >> 3)
+#define FRACT_MAX (1000 >> 3)
+
+volatile unsigned long timer0_overflow_count = 0;
+volatile unsigned long timer0_millis = 0;
+//static unsigned char timer0_fract = 0;
+
+volatile float millis_correction = 1.0f; // Default: normal rate
+bool correction_enabled = false;
+
+#define BASE_MILLIS_INC (MICROSECONDS_PER_TIMER0_OVERFLOW / 1000.0)
+#define BASE_FRACT_INC ((MICROSECONDS_PER_TIMER0_OVERFLOW % 1000) >> 3)
+
+#if defined(TIM0_OVF_vect)
+ISR(TIM0_OVF_vect)
+#else
+ISR(TIMER0_OVF_vect)
+#endif
+{
+	// // copy these to local variables so they can be stored in registers
+	// // (volatile variables must be read from memory on every access)
+	// unsigned long m = timer0_millis;
+	// unsigned char f = timer0_fract;
+
+	// m += MILLIS_INC;
+	// f += FRACT_INC;
+	// if (f >= FRACT_MAX) {
+	// 	f -= FRACT_MAX;
+	// 	m += 1;
+	// }
+
+	// timer0_fract = f;
+	// timer0_millis = m;
+	// timer0_overflow_count++;
+
+    static float fract_buffer = 0.0f;
+
+    unsigned long m = timer0_millis;
+
+    // Apply correction
+    float adjusted_millis_inc = BASE_MILLIS_INC * millis_correction;
+    float adjusted_fract_inc = BASE_FRACT_INC * millis_correction;
+
+    fract_buffer += adjusted_fract_inc;
+    m += (unsigned long)adjusted_millis_inc;
+
+    if (fract_buffer >= FRACT_MAX) {
+        fract_buffer -= FRACT_MAX;
+        m += 1;
+    }
+
+    timer0_millis = m;
+    timer0_overflow_count++;
+
+
+
+}
+
 ISR(TIMER1_OVF_vect)
 {
     //Load the timer with the value to start counting from (0x00)
@@ -81,6 +149,23 @@ ISR(TIMER1_OVF_vect)
 }
 
 /*******************************************************************************
+Global overridden functions
+ *******************************************************************************/
+unsigned long sys_millis()
+{
+	unsigned long m;
+	uint8_t oldSREG = SREG;
+
+	// disable interrupts while we read timer0_millis or we might get an
+	// inconsistent value (e.g. in the middle of a write to timer0_millis)
+	cli();
+	m = timer0_millis;
+	SREG = oldSREG;
+
+	return m;    
+}
+
+/*******************************************************************************
 Global/Public functions
  *******************************************************************************/
 void sys_tmr_init(void)
@@ -88,24 +173,34 @@ void sys_tmr_init(void)
     if (sys_tmr_init_ok)
         return; //Already initialized
 
-    //The poll timer and stopwatch makes use of the millis() function (to 
+    //The poll timer and stopwatch makes use of the sys_millis() function (to 
     // determine the time elapsed), which in turn makes use of the timer0.
+
+#if 0
+	// on the ATmega168, timer 0 is also used for fast hardware pwm
+	// (using phase-correct PWM would mean that timer 0 overflowed half as often
+	// resulting in different sys_millis() behavior on the ATmega8 and ATmega168)
+	sbi(TCCR0A, WGM01);
+	sbi(TCCR0A, WGM00);
+	// set timer 0 prescale factor to 64
+	// this combination is for the standard 168/328/1280/2560
+	sbi(TCCR0B, CS01);
+	sbi(TCCR0B, CS00);
+	// enable timer 0 overflow interrupt
+	sbi(TIMSK0, TOIE0);
+#endif
+    sys_time_correction_factor_reset(); //Reset the time correction factor
 
     //We are going to repurpose timer1 for our own use, so we need to 
     // reconfigure it
-
-
 	// Stop the timer 1
 	cbi(TIMSK1, TOIE1);
-	
     //Set the timer 1 to normal mode (no PWM, no CTC, no fast PWM)
 	cbi(TCCR1A, WGM11);
 	cbi(TCCR1A, WGM10);
-
 	//Set timer 1 prescale factor to 64
 	sbi(TCCR1B, CS11);
 	sbi(TCCR1B, CS10);
-
     //Load the timer with the value to start counting from (0x00)
     ATOMIC_BLOCK(ATOMIC_RESTORESTATE) 
     {
@@ -127,6 +222,34 @@ void sys_tmr_init(void)
 
     sys_tmr_init_ok = true; //Set the timer as initialized
 }
+
+void sys_time_correction_factor_set(float correction)
+{
+    //Make sure this next step is not (haha) interrupted
+	cbi(TIMSK0, TOIE0);     //Disable the timer 0 overflow interrupt
+    if (correction_enabled)
+        millis_correction *= correction;
+    else
+        millis_correction = correction;
+    //RVN - TODO:To reduce jitter, consider exponentially smoothing the correction over time:
+    //millis_correction = millis_correction * 0.95 + correction * 0.05;
+	sbi(TIMSK0, TOIE0);     // enable timer 0 overflow interrupt
+    correction_enabled = true; //Set the correction enabled flag
+}
+
+void sys_time_correction_factor_reset(void)
+{
+	cbi(TIMSK0, TOIE0);     //Disable the timer 0 overflow interrupt
+    millis_correction = 1.0f; //Reset to normal (uncorrected) rate
+	sbi(TIMSK0, TOIE0);     // enable timer 0 overflow interrupt
+    correction_enabled = false; //Reset the correction enabled flag
+}
+
+float sys_time_correction_factor(void)
+{
+    return millis_correction;
+}
+
 
 bool sys_cb_tmr_start(void (*cb_tmr_exp)(void), unsigned long interval, bool reload)
 {
@@ -192,7 +315,7 @@ void sys_cb_tmr_stop(void (*cb_tmr_exp)(void))
 
 void sys_poll_tmr_start(timer_ms_t *t, unsigned long interval, bool auto_reload)
 {
-    t->started = millis();
+    t->started = sys_millis();
     t->enabled = false;
     t->ms_expire = t->started + interval;
     t->ms_period = interval;
@@ -205,7 +328,7 @@ bool sys_poll_tmr_reset(timer_ms_t *t)
 {
     if (t->ms_period > 0)
     {
-        t->started = millis();
+        t->started = sys_millis();
         t->enabled = false;
         t->ms_expire = t->started + t->ms_period;
         t->expired = false;
@@ -223,7 +346,7 @@ void sys_poll_tmr_stop(timer_ms_t *t)
 
 bool sys_poll_tmr_expired(timer_ms_t *t)
 {
-    uint64_t now_ms = millis();
+    uint64_t now_ms = sys_millis();
     uint64_t overflow = 0;
 
     //Is the timer enabled?
@@ -268,19 +391,19 @@ bool sys_poll_tmr_enabled(timer_ms_t *t)
 bool sys_poll_tmr_is_running(timer_ms_t *t)
 {
     if (t->enabled) //Is the timer enabled?
-        return (millis() < t->ms_expire)? true : false;
+        return (sys_millis() < t->ms_expire)? true : false;
 
     return false;
 }
 
 uint64_t sys_poll_tmr_seconds(void)
 {
-  return (millis()/1000);
+  return (sys_millis()/1000);
 }
 
 void sys_stopwatch_ms_start(stopwatch_ms_t* sw, unsigned long max_time)
 {
-    sw->tick_start = millis();
+    sw->tick_start = sys_millis();
     sw->max_time = max_time;
     sw->running = true;
     sw->max_time_reached = false;
@@ -292,7 +415,7 @@ unsigned long sys_stopwatch_ms_lap(stopwatch_ms_t* sw)
     unsigned long now = 0;
     // ATOMIC_BLOCK(ATOMIC_RESTORESTATE) 
     // {
-        now = millis();
+        now = sys_millis();
     // }
 
     if (sw->running)

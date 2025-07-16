@@ -519,7 +519,7 @@ void dev_nvstore_init(void)
 #if (DEV_NVSTORE_DEBUG == 1)
     else
     {
-        iprintln(trNVSTORE, "#(%lu ms) No valid block found", lap);
+        iprintln(trNVSTORE, "#(%lu ms) No valid block", lap);
     }
 #endif /* DEV_NVSTORE_DEBUG */
 
@@ -545,7 +545,7 @@ bool dev_nvstore_read(uint8_t * data, uint8_t len)
     if (_nvstore.current.last_rd >= NVSTORE_BLOCK_CNT)
     {
 #if (DEV_NVSTORE_DEBUG == 1)
-        iprintln(trNVSTORE, "#No valid block exists in NV Store");
+        iprintln(trNVSTORE, "#No valid block");
 #endif /* DEV_NVSTORE_DEBUG */
         return false;
     }
@@ -576,7 +576,7 @@ bool dev_nvstore_write(uint8_t * data, uint8_t len)
     if (len > NVSTORE_BLOCK_DATA_SIZE)
     {
 #if (DEV_NVSTORE_DEBUG == 1)
-        iprintln(trNVSTORE, "#Data too large to fit in a block (%d > %d)", len, NVSTORE_BLOCK_DATA_SIZE);
+        iprintln(trNVSTORE, "#Data too big (%d > %d)", len, NVSTORE_BLOCK_DATA_SIZE);
 #endif /* DEV_NVSTORE_DEBUG */
         return false;
     }
@@ -593,12 +593,12 @@ bool dev_nvstore_write(uint8_t * data, uint8_t len)
     calc_crc = _nvstore_read_block((uint8_t *)&_tmp_block, wr_block_nr);
     if (calc_crc != 0)
     {
-        iprintln(trNVSTORE, "#CRC ERR - block %d - 0x%02X (Expected: 0x00)", wr_block_nr, _tmp_block.crc);
+        iprintln(trNVSTORE, "#CRC ERR - block %d - 0x%02X (Exp: 0x00)", wr_block_nr, _tmp_block.crc);
         return false;
     }
     if (_tmp_block.hdr.wr_cnt != (_nvstore.current.wr_cnt + 1))
     {
-        iprintln(trNVSTORE, "#WR Cnt ERR - block %d - %06lu (Expected: %06lu)", wr_block_nr, _tmp_block.hdr.wr_cnt, _nvstore.current.wr_cnt + 1);
+        iprintln(trNVSTORE, "#WR Cnt ERR - block %d - %06lu (Exp: %06lu)", wr_block_nr, _tmp_block.hdr.wr_cnt, _nvstore.current.wr_cnt + 1);
         return false;
     }
     //Only check the length of data that was written

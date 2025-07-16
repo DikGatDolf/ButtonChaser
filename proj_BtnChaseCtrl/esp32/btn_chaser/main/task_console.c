@@ -278,6 +278,8 @@ sPrintFlagItem print_trace_flag_name[]=
 		{"Console", 	trCONSOLE,  "con"},
         {"RGBLED",      trLED,      "led"},
         {"RS-485 Comms",trCOMMS,    "com"},
+        {"Nodes",       trNODE,     "node"},
+        {"Game",        trGAME,     "game"},
 		/* Not Implemented yet {"", 				PRINT_TR_TBD},*/
 };
 
@@ -288,7 +290,9 @@ sPrintFlagActionItem print_trace_combos[]=
 		{"con", 	eTraceTOGGLE,   trCONSOLE,},
 		{"none", 	eTraceOFF,      trALL,    },
         {"rgb",     eTraceTOGGLE,   trLED,    },
-        {"comms",   eTraceTOGGLE,   trCOMMS,  },
+        {"comms",   eTraceTOGGLE,   trCOMMS|trNODE,  },
+        {"node",    eTraceTOGGLE,   trNODE,   },
+        {"game",    eTraceTOGGLE,   trGAME,   },
 };
 
 ConsoleMenuItem_t _console_menu_items[] =
@@ -341,9 +345,9 @@ void _console_main_func(void * pvParameters)
         TickType_t xLastWakeTime = xTaskGetTickCount();
 
         //Wait at least 100ms before checking again
-        xTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(CONSOLE_READ_INTERVAL_MS)); 
-
     	_console_service();
+
+        xTaskDelayUntil(&xLastWakeTime, MAX(1, pdMS_TO_TICKS(CONSOLE_READ_INTERVAL_MS))); 
 	    
 		/* Inspect our own high water mark on entering the task. */
     	_console.task.stack_unused = uxTaskGetStackHighWaterMark2( NULL );

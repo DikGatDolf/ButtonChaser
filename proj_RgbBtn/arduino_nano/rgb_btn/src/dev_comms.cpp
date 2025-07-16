@@ -191,7 +191,9 @@ void _bus_silence_expiry(void);
 int8_t _comms_check_rx_msg(int *_data);
 
 bool _dev_comms_rx_handler_add_data_check_overflow(uint8_t rx_data);
+#if REMOTE_CONSOLE_SUPPORTED == 1    
 unsigned int  _dev_comms_response_add_console_resp(uint8_t * data, uint8_t data_len);
+#endif /* REMOTE_CONSOLE_SUPPORTED */
 unsigned int _dev_comms_response_add_data(uint8_t * data, uint8_t data_len);
 void _dev_comms_response_start(void);
 
@@ -355,6 +357,7 @@ unsigned int _dev_comms_response_add_data(uint8_t * data, uint8_t data_len)
     return data_len;
 }
 
+#if REMOTE_CONSOLE_SUPPORTED == 1    
 unsigned int  _dev_comms_response_add_console_resp(uint8_t * data, uint8_t data_len)
 {
     // We cannot send a message if we are not ready to send now, otherwise we will overwrite data being sent
@@ -368,12 +371,13 @@ unsigned int  _dev_comms_response_add_console_resp(uint8_t * data, uint8_t data_
     {
         //Let's send what we have so far, and then start a new message?
         if (!dev_comms_transmit_now())
-            iprintln(trALWAYS, "#Error sending interim console response msg");
+            iprintln(trALWAYS, "!Sending interim console response msg");
         dev_comms_response_append(cmd_wr_console_cont, resp_ok, NULL, 0);
     }
 
     return _dev_comms_response_add_data(data, data_len); //The number of bytes added
 }
+#endif /* REMOTE_CONSOLE_SUPPORTED */
 
 void _dev_comms_response_start(void)
 {
@@ -420,7 +424,8 @@ void dev_comms_init(void)
     //sys_set_io_mode(output_Debug, OUTPUT);
     sys_cb_tmr_start(&_bus_silence_expiry, BUS_SILENCE_MIN_MS);
 
-    iprintln(trCOMMS, "#Initialised - Payload size: %d/%d (Seq # %d)", sizeof(_comms.rx.msg.data), sizeof(comms_msg_t), _comms.tx.seq);
+    //iprintln(trCOMMS, "#Initialised - Payload size: %d/%d (Seq # %d)", sizeof(_comms.rx.msg.data), sizeof(comms_msg_t), _comms.tx.seq);
+    iprintln(trCOMMS, "#Init %d/%d (Seq # %d)", sizeof(_comms.rx.msg.data), sizeof(comms_msg_t), _comms.tx.seq);
 }
 
 bool dev_comms_tx_ready(void)
@@ -435,6 +440,8 @@ unsigned int dev_comms_response_append(master_command_t cmd, response_code_t res
     if ((uint8_t)(data_len +2) > sizeof(_comms.tx.msg.data))
         return 0; //This is NEVER gonna fit!!!
 
+    //iprintln(trALWAYS, "#Responding to 0x%02X : 0x%02X (%d bytes)", cmd, resp_code, data_len);
+
     // We cannot send a message if we are not ready to send now, otherwise we will overwrite data being sent
     if ((_tx_state == tx_idle) || (restart))
         _dev_comms_response_start();
@@ -446,12 +453,13 @@ unsigned int dev_comms_response_append(master_command_t cmd, response_code_t res
 
     if ((uint8_t)(_comms.tx.data_length + data_len + 2) > sizeof(_comms.tx.msg.data))
     {
+        //iprintln(trALWAYS, "#TX interim msg");
         //Let's send what we have so far, and then start a new message?
         if (!dev_comms_transmit_now()) //Send the response message now
-            iprintln(trALWAYS, "#Error sending interim msg");
+            iprintln(trALWAYS, "!TX interim msg");
         //We need to "prime" the message first....
         _dev_comms_response_start();
-        //TODO - This needs to be tested!!!! (see _dev_comms_response_add_console_resp, where it HAS been tested)
+        //RVN - TODO - This needs to be tested!!!!
     }
 
     uint8_t _crc = _comms.tx.msg.data[_comms.tx.data_length];
@@ -465,10 +473,12 @@ unsigned int dev_comms_response_append(master_command_t cmd, response_code_t res
     return (2 + _dev_comms_response_add_data(data, data_len)); //The number of bytes added (+2 for the command and response code)
 }
 
+#if REMOTE_CONSOLE_SUPPORTED == 1    
 size_t dev_comms_response_add_byte(uint8_t data)
 {
     return (size_t) _dev_comms_response_add_console_resp(&data, 1);
 }
+#endif /* REMOTE_CONSOLE_SUPPORTED */
 
 bool dev_comms_transmit_now(void)
 {
@@ -678,8 +688,7 @@ int8_t dev_comms_rx_msg_available(uint8_t * _src, uint8_t * _dst, uint8_t * _dat
 
     if (ret_val < 0)
     {
-        iprintln(trCOMMS, "#RX Error: %d (%d bytes)", ret_val, /*_comms_rx_error_msg(ret_val, err_data), */ _comms.rx.length);
-        iprintln(trCOMMS, "#Data: ");
+        iprintln(trCOMMS, "#RX Error: %d (%d bytes):", ret_val, /*_comms_rx_error_msg(ret_val, err_data), */ _comms.rx.length);
         console_print_ram(trCOMMS, &_comms.rx.msg, (unsigned long)&_comms.rx.msg, sizeof(comms_msg_t));
         memset(&_comms.rx.msg, 0, sizeof(comms_msg_t));
     }
@@ -692,6 +701,9 @@ int8_t dev_comms_rx_msg_available(uint8_t * _src, uint8_t * _dst, uint8_t * _dat
         if ((_data != NULL) && (ret_val > 0))
             memcpy(_data, &_comms.rx.msg.data, ret_val);
     }
+
+    //iprintln(trCOMMS, "#RX %d bytes data", ret_val);
+    //console_print_ram(trCOMMS, &_comms.rx.msg, 0, _comms.rx.length);
 
     //Any data we had has been copied, our buffer is free for the next message to come in
     _msg_available = false;

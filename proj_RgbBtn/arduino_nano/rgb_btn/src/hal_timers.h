@@ -49,14 +49,32 @@ variables
 ******************************************************************************/
 
 /******************************************************************************
+Overridden Arduino functions
+******************************************************************************/
+unsigned long sys_millis();
+// unsigned long micros();
+// void delay(unsigned long ms);
+// void delayMicroseconds(unsigned int us);
+
+/******************************************************************************
 functions
 ******************************************************************************/
-
 /*! Initializes the timer module. This function must be called before any other
  *  timer functions. It sets up the timer interrupt and initializes the timer 
  *  structures.
  */
 void sys_tmr_init(void);
+
+/*! Sets the correction factor for the system time. This can be used to adjust 
+ *  the system time for clock drift or other timing issues.
+ * @param correction  The correction factor to apply to the system time. 
+ *                    A value of 1.0 means no correction, <1.0 means slower, 
+ *                    >1.0 means faster.
+ */
+void sys_time_correction_factor_set(float correction);
+void sys_time_correction_factor_reset(void);
+float sys_time_correction_factor(void);
+
 
 /*! Starts a timer with a callback function and an interval. This timer is 
  * self-destructive, i.e. it will be destroyed after it has expired.

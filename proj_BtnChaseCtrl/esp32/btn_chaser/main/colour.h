@@ -141,6 +141,13 @@ void hsv2rgb(uint32_t h, uint32_t s, uint32_t v, uint32_t *rgb);
  */
 void rgb2hsv(uint32_t rgb, uint32_t *h, uint32_t *s, uint32_t *v);
 
+/*! @brief Parses the arguments in the string and converts it to a 24-bit RGB value
+ * @param[out] colour_value The 24-bit RGB value if successful, otherwise unchanged
+ * @param[in] str The string containing the arguments to parse, either the name 
+ *  of the colour (see colour.c) an HSV formatted string
+ * @return ESP_OK if successful, otherwise an error code
+ */
+esp_err_t parse_str_to_colour(uint32_t * colour_value, const char * str);
 
 #undef EXT
 #endif /* __colour_H__ */

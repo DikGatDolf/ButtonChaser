@@ -54,6 +54,7 @@ includes
 
 #ifdef CONSOLE_ENABLED
 
+#include "../../../../common/common_comms.h"
 /*******************************************************************************
 local defines and constants
  *******************************************************************************/
@@ -150,7 +151,9 @@ typedef struct
     // int (*read)(void);
     void (*flush)(void);
     size_t (*write)(uint8_t);
+#if REMOTE_CONSOLE_SUPPORTED == 1    
     size_t (*alt_write)(uint8_t);
+#endif /* REMOTE_CONSOLE_SUPPORTED */
 } DeviceConsole_t;
 
 /*******************************************************************************
@@ -176,7 +179,7 @@ void _parse_args(char * arg_str);
 /*! Prints all the arguments on the stack, with relative index to the next item 
  * to pop
 */
-void _print_arg_stack(void);
+// void _print_arg_stack(void);
 
 /*! Finds a pointer to the specific command group (if it has been added to the list)
  * @param[in] _command The command string to search for
@@ -249,6 +252,8 @@ void console_print(uint8_t traceflags, const char * tag, const char *fmt, ...);
  */
 void console_printline(uint8_t traceflags, const char * tag, const char *fmt, ...);
 
+//void error_printline(const char * tag, const char *fmt, ...);
+
 /*! Prints the default action passed to the function
  * @param[in] def_act The default action to print
  */ 
@@ -295,15 +300,19 @@ Local (private) Functions
 extern "C" {
 	int serialputc(char c, FILE *fp)
   	{
+#if REMOTE_CONSOLE_SUPPORTED == 1    
         if (_console.alt_write)
             _console.alt_write(c);
         else if (_console.write)
         {          
+#endif /* REMOTE_CONSOLE_SUPPORTED */
             if(c == '\n')
                 _console.write('\r');//Serial.write('\r');
             return _console.write((int)c);//return Serial.write((int)c);
+#if REMOTE_CONSOLE_SUPPORTED == 1    
         }
         return 0;
+#endif /* REMOTE_CONSOLE_SUPPORTED */
 	}
 }
 
@@ -437,16 +446,16 @@ void _parse_args(char * arg_str)
     return;
 }
 
-void _print_arg_stack(void)
-{
-    for (int i = 0; i < dev_console_MAX_ARGS; i++)
-    {
-        if (_console.args.item[i])
-    		iprintln(trCONSOLE, "#%d: \"%s\" (%d)", i, _console.args.item[i], i - _console.args.pop_index);
-        else 
-            break;
-    }
-}
+// void _print_arg_stack(void)
+// {
+//     for (int i = 0; i < dev_console_MAX_ARGS; i++)
+//     {
+//         if (_console.args.item[i])
+//     		iprintln(trCONSOLE, "#%d: \"%s\" (%d)", i, _console.args.item[i], i - _console.args.pop_index);
+//         else 
+//             break;
+//     }
+// }
 
 int _count_menu_commands(char *_command)
 {
@@ -805,7 +814,9 @@ void console_init(size_t (*cb_write)(uint8_t), void (*cb_flush)(void))
     // _console.read = NULL;
     _console.flush = cb_flush;
     _console.write = cb_write;
+#if REMOTE_CONSOLE_SUPPORTED == 1    
     _console.alt_write = NULL;
+#endif /* REMOTE_CONSOLE_SUPPORTED */
 
     //Let's not re-initialise this task by accident
 	if (_console_init_done)
@@ -846,16 +857,20 @@ void console_service(void)
     cli();
     _console.rx.index = 0;
     _console.rx.line_end = 0;
+#if REMOTE_CONSOLE_SUPPORTED == 1    
     if (_console.alt_write)
         _console.alt_write = NULL;
+#endif /* REMOTE_CONSOLE_SUPPORTED */
     sei();
 }
 
+#if REMOTE_CONSOLE_SUPPORTED == 1    
 void console_enable_alt_output_stream(size_t (*alt_write_cb)(uint8_t))
 {
     if (alt_write_cb)
         _console.alt_write = alt_write_cb; //This is "turned off" again at the end of the console_service() function
 }
+#endif /* REMOTE_CONSOLE_SUPPORTED */
 
 void console_read_byte(uint8_t data_byte)
 {
@@ -1077,13 +1092,16 @@ bool console_arg_help_found(void)
     return (-1 == _console.args.help_index)? false : true;
 }
 
+const char errstr[] = "ERROR";
+
 bool console_print_tag(const char * fmt, const char * tag)
 {
 	//A line starts with the tag if the format string starts with "#"
     //Remember, the format string is in PROGMEM
-    if (pgm_read_byte(fmt) == '#')
+    char fmt_char = pgm_read_byte(fmt);
+    if ((fmt_char == '#') || (fmt_char == '!'))
     {
-        uint32_t t_now = millis();
+        uint32_t t_now = sys_millis();
         for (uint32_t div = 10000000; div >= 1; div /= 10)
         {
             uint8_t digit = (t_now / div) % 10;
@@ -1094,6 +1112,12 @@ bool console_print_tag(const char * fmt, const char * tag)
         serialputc('[', NULL);
         for (int i = 0; tag[i]; i++)
             serialputc(tag[i], NULL);
+        if (fmt_char == '!')
+        {        
+            serialputc(' ', NULL);
+            for (int i = 0; errstr[i]; i++)
+                serialputc(errstr[i], NULL);
+        }
         serialputc(']', NULL);
         return true;
     }
@@ -1103,9 +1127,14 @@ bool console_print_tag(const char * fmt, const char * tag)
 void console_print(uint8_t traceflags, const char * tag, const char * fmt, ...)
 {
     //This prevents anything other than console prints from being "streamed". Otherwise it may cause an infinite loop.
+#if REMOTE_CONSOLE_SUPPORTED == 1    
     if (((_console.alt_write) && ((trALWAYS & traceflags) == trNONE)) ||
         (((trALWAYS | _console.tracemask) & traceflags) == trNONE))
 		return;
+#else
+    if (((trALWAYS | _console.tracemask) & traceflags) == trNONE)
+		return;
+#endif /* REMOTE_CONSOLE_SUPPORTED */
 
 	//A line starts with the tag if the format string starts with "#"
     if (console_print_tag(fmt, tag))
@@ -1120,9 +1149,14 @@ void console_print(uint8_t traceflags, const char * tag, const char * fmt, ...)
 void console_printline(uint8_t traceflags, const char * tag, const char * fmt, ...)
 {
     //This prevents anything other than console prints from being "streamed". Otherwise it may cause an infinite loop.
+#if REMOTE_CONSOLE_SUPPORTED == 1    
     if (((_console.alt_write) && ((trALWAYS & traceflags) == trNONE)) ||
         (((trALWAYS | _console.tracemask) & traceflags) == trNONE))
 		return;
+#else
+    if (((trALWAYS | _console.tracemask) & traceflags) == trNONE)
+		return;
+#endif /* REMOTE_CONSOLE_SUPPORTED */
 
 	//A line starts with the tag if the format string starts with "#"
     if (console_print_tag(fmt, tag))
@@ -1135,6 +1169,22 @@ void console_printline(uint8_t traceflags, const char * tag, const char * fmt, .
 	//Ends with a newline.
     serialputc('\n', NULL);
 }
+
+// void error_printline(const char * tag, const char *fmt, ...)
+// {
+// 	//A line starts with the tag if the format string starts with "#"
+//     if (console_print_tag(fmt, tag))
+//         fmt++;
+//     for (int i = 0; errstr[i]; i++)
+//         serialputc(errstr[i], NULL);
+
+//     va_start(_console_ap, fmt);
+//     vfprintf_P(&_console_stdiostr, fmt, _console_ap);
+//     va_end(_console_ap);
+
+// 	//Ends with a newline.
+//     serialputc('\n', NULL);
+// }
 
 void console_print_ram(int Flags, void * Src, unsigned long Address, int Len)
 {

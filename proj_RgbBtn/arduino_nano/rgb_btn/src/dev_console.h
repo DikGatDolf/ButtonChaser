@@ -24,6 +24,7 @@ Macros
 #define EXT extern
 extern void console_printline(uint8_t traceflags, const char * tag, const char *fmt, ...);
 extern void console_print(uint8_t traceflags, const char * tag, const char *fmt, ...);
+//extern void error_printline(const char * tag, const char *fmt, ...);
 #endif /* __NOT_EXTERN__ */
 
 #define trMAIN		((uint8_t)BIT_POS(0))
@@ -54,8 +55,10 @@ The passed traceflags is compared with the system set trace print flag(s) to
  determine if the print can happen or not.
 ******************************************************************************/
 #ifdef CONSOLE_ENABLED
+//#define err_println(fmtstr, ...) error_printline(PRINTF_TAG, PSTR(fmtstr), ##__VA_ARGS__)
 #define iprintln(traceflags, fmtstr, ...) console_printline(traceflags, PRINTF_TAG, PSTR(fmtstr), ##__VA_ARGS__)
 #else
+#define err_println(fmtstr, ...) dummy_print_func()
 #define iprintln(traceflags, fmtstr, ...) dummy_print_func()
 #endif /* CONSOLE_ENABLED */
 /******************************************************************************

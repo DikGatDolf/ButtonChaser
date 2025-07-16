@@ -180,25 +180,6 @@ void _set_colour(led_addr_bit_index _index, uint32_t _rgb);
  */
 esp_err_t _handler_parse_address_str(uint32_t * addr_mask, const char * str);
 
-/*! @brief Parses the arguments in the string and converts it to a 24-bit RGB value
- * @param[out] colour_value The 24-bit RGB value if successful, otherwise unchanged
- * @param[in] str The string containing the arguments to parse, either the name 
- *  of the colour (see colour.c) an HSV formatted string
- * @return ESP_OK if successful, otherwise an error code
- */
-esp_err_t _handler_parse_colour(uint32_t * colour_value, const char * str);
-
-/*! @brief Parses the arguments in the string into H, S or V values
- * @param[in] str The string containing the arguments to parse (in the 
- *  format  "HSV:<H>[,<S>[,<V>]]")
- * @param[out] value The 24-bit RGB value if successful or an empty string 
- *  was received, otherwise unchanged
- * @param[in] limit The maximum value allowed for the element (H=360, S=V=100)
- * @param[in] type_str The type of element being parsed
- * @return ESP_OK if successful (or an empty string was received), otherwise an error code
- */
-esp_err_t _handler_parse_colour_hsv(char * str, uint32_t *value, uint32_t limit, const char * type_str);
-
 /*! @brief Common action handler for LED actions
  */
 void _led_handler_common_action(void);
@@ -274,7 +255,7 @@ void _led_main_func(void * pvParameters)
         
         _led_service();
 
-        xTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(LED_UPDATE_INTERVAL_MS));  //vTaskDelay(pdMS_TO_TICKS(EXAMPLE_CHASE_SPEED_MS));
+        xTaskDelayUntil(&xLastWakeTime, MAX(1, pdMS_TO_TICKS(LED_UPDATE_INTERVAL_MS)));  //vTaskDelay(pdMS_TO_TICKS(EXAMPLE_CHASE_SPEED_MS));
     
         /* Inspect our own high water mark on entering the task. */
     	_rgb_led.task.stack_unused = uxTaskGetStackHighWaterMark2( NULL );
@@ -590,83 +571,6 @@ esp_err_t _handler_parse_address_str(uint32_t * addr_mask, const char * str)
     return ESP_ERR_NOT_FOUND;
 }
 
-esp_err_t _handler_parse_colour(uint32_t * colour_value, const char * str)
-{
-    // uint32_t rgb_col_24bit;
-    uint32_t hue_value = HUE_MAX, sat_value = SAT_MAX, val_value = VAL_MAX;
-    const char * hue_str = NULL;
-    char * sat_str = NULL;
-    char * val_str = NULL;
-    esp_err_t err = ESP_OK;
-
-    //Righto, a colour can be in one of two valid formats:
-    // 1. NOT USED: A 6-character hexadecimal string (0xHHHHHH), e.g. "0x000001", "#0F0F0F", etc
-    // 2. A string containing any one of the assigned colour names, e.g. "Black", "wh", etc
-    // 3. A HSV string degrees provided as HSV:<h>[,<s>[,<v>]]"
-
-    if (str2rgb(colour_value, str) == ESP_OK)
-        return ESP_OK;
-
-    if (strncasecmp("HSV:", str, 4) == 0)
-    {
-        hue_str = str+4;
-        sat_str = strchr(hue_str, ',');
-        if (sat_str != NULL)
-        {
-            *sat_str = 0;
-            sat_str++;
-            val_str = strchr(sat_str, ',');
-            if (val_str != NULL)
-            {
-                *val_str = 0;
-                val_str++;
-            }
-        }
-        
-        err = _handler_parse_colour_hsv((char *)hue_str, &hue_value, HUE_MAX, "Hue");
-        if (err != ESP_OK)
-            return err;
-        err = _handler_parse_colour_hsv(sat_str, &sat_value, SAT_MAX, "Saturation %%");
-        if (err != ESP_OK)
-            return err;
-        err = _handler_parse_colour_hsv(val_str, &val_value, VAL_MAX, "Value %%");
-        if (err != ESP_OK)
-            return err;
-
-        hsv2rgb(hue_value, sat_value, val_value, colour_value);
-        return ESP_OK;
-    }
-
-    //Reaching this point means this is NOT a hex RGB colour or an HSV value
-    return ESP_ERR_NOT_FOUND;
-}
-
-esp_err_t _handler_parse_colour_hsv(char * str, uint32_t *value, uint32_t limit, const char * type_str)
-{
-    if (value == NULL)
-    {
-        iprintln(trALWAYS, "Invalid dst ptr passed (NULL) - %s", type_str);
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    //Special case: if no string pointer is passed, then we return OK, but change nothing.
-    if (str == NULL)
-        return ESP_OK;
-
-    if (str2uint32(value, str, 0))
-    {
-        if (*value < limit)
-            return ESP_OK;
-
-        //Value is over the limit
-        iprintln(trALWAYS, "Invalid %s value (%d > %d)", type_str, *value, limit);
-        return ESP_ERR_INVALID_ARG;
-    }
-    //Could not parse the string as a number
-    iprintln(trALWAYS, "Invalid %s value (\"%s\")", type_str, str);
-    return ESP_ERR_INVALID_ARG;
-}
-
 void _led_handler_common_action(void/*rgb_led_action_cmd action*/)
 {
     //These functions (_menu_handler....) are called from the console task, so they should 
@@ -722,7 +626,7 @@ void _led_handler_common_action(void/*rgb_led_action_cmd action*/)
         //Then we check for colour(s) - ON and BLINK
         if ((action == led_action_colour) || (action == led_action_blink))
         {
-            err = _handler_parse_colour(&parse_value, arg);
+            err = parse_str_to_colour(&parse_value, arg);
             if (err == ESP_OK)
             {
                 if (action == led_action_colour)
@@ -975,7 +879,7 @@ void _led_handler_col_list(void)
         // if (hex2u32(&rgb_col_24bit, str, 6))
         // {
         // }
-        err = _handler_parse_colour(&parse_value, arg);
+        err = parse_str_to_colour(&parse_value, arg);
         if (err == ESP_ERR_NOT_FOUND)
         {
             //No a parsable colour
@@ -1039,7 +943,7 @@ void _led_handler_col_list(void)
                 continue;   //Skip.... already handled
             if (!strcasecmp("hues", arg))
                 continue;   //Skip.... already handled
-            if (ESP_OK == _handler_parse_colour(&parse_value, arg))
+            if (ESP_OK == parse_str_to_colour(&parse_value, arg))
             {
                 iprint(trALWAYS, " % 8s -> 0x%06X", arg, parse_value);
                 const char *col_name = rgb2name(parse_value);

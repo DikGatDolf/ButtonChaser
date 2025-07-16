@@ -29,6 +29,8 @@ extern void console_print(uint8_t traceflags, const char * tag, const char *fmt,
 #define trCONSOLE	((uint8_t)BIT_POS(1))
 #define trLED		((uint8_t)BIT_POS(2))
 #define trCOMMS     ((uint8_t)BIT_POS(3))
+#define trNODE      ((uint8_t)BIT_POS(4))
+#define trGAME      ((uint8_t)BIT_POS(5))
 
 #define trALWAYS	((uint8_t)BIT_POS(7))
 

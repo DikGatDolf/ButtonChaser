@@ -73,17 +73,18 @@ Macros
 
 #define RGB_BTN_MAX_NODES       (31)
 #define BUS_SILENCE_MIN_MS      (5)  /* ms */
+
+#define REMOTE_CONSOLE_SUPPORTED (0) /* Enables/disables the remote console (which is still untested). Currently this equates to 650 bytes Flash and 2 bytes RAM */
+
 /******************************************************************************
 Struct & Unions
 ******************************************************************************/
 
 typedef enum command_e
 {/* command id                  #      Description                        MOSI Payload  Response (MISO) Payload */
-    cmd_roll_call_all       = 0x00, /* Requests a Slave Roll-call - ALL    none             none                
-                                        recipients should respond to this */
-    cmd_roll_call_unreg     = 0x01, /* Requests a Slave Roll-call - ONLY   none             none                
-                                        unregistered recipients should 
-                                        respond to this */
+    cmd_none                = 0x00, /* Placeholder (RVN - ping?)           none             none */
+    
+    cmd_roll_call           = 0x01, /* Requests a Slave Roll-call          1 byte          none                */
 
     cmd_bcast_address_mask  = 0x02, /* Indicates the indices of            uint32_t         none
                                          intended recipients of the 
@@ -95,26 +96,37 @@ typedef enum command_e
     cmd_set_rgb_1           = 0x11, /* Set the secondary LED colour        24 bits          none                */
     cmd_set_rgb_2           = 0x12, /* Set the 3rd LED colour              24 bits          none                */
     cmd_set_blink           = 0x13, /* Set the blinking interval           uint32_t         none                */
-    cmd_start_sw            = 0x14, /* Starts the button stopwatch         none             none                */
+    cmd_set_switch          = 0x14, /* Starts the button stopwatch         1 byte           none                */
     //Skip 0x15, which corresponds to the "get Flags" command
     cmd_set_dbg_led         = 0x16, /* Set the debug LED state             1 byte           none                */
+    cmd_set_time            = 0x17, /* Set the system time                 uint32_t         none                */
 
-    cmd_set_bitmask_index   = 0x1E, /* Registers a slave by assigning it   1 byte           none                
+    cmd_set_sync            = 0x18, /* Start/end the time sync process     uint32_t         none                */
+   
+    /* ############# END OF BROADCAST'able COMMANDS!! #############
+        ALL commands values higher than "cmd_set_bitmask_index" can ONLY be sent directly to a node */                                        
+
+    cmd_set_bitmask_index   = 0x30, /* Registers a slave by assigning it   1 byte           none                
                                         a slot (address bit 0 to 31) */
 
-    cmd_new_add             = 0x1F, /* Sets a new device address - MUST    1 byte             none                
+
+    cmd_new_add             = 0x31, /* Sets a new device address - MUST    1 byte             none                
                                         IMPORTANT: This must be the LAST cmd in any message                     */
 
-    cmd_get_rgb_0           = 0x20, /* Get the primary LED colour          none             24 bits             */
-    cmd_get_rgb_1           = 0x21, /* Get the secondary LED colour        none             24 bits             */
-    cmd_get_rgb_2           = 0x22, /* Get the 3rd LED colour              none             24 bits             */
-    cmd_get_blink           = 0x23, /* Get the blinking interval           none             uint32_t            */
-    cmd_get_sw_time         = 0x24, /* Requests the elapsed time of the    none             4 bytes             
-                                        reaction time sw                    */
-    cmd_get_flags           = 0x25, /* Requests the system flags           none             1 bytes             */
+    cmd_get_rgb_0           = 0x40, /* Get the primary LED colour          none             24 bits             */
+    cmd_get_rgb_1           = 0x41, /* Get the secondary LED colour        none             24 bits             */
+    cmd_get_rgb_2           = 0x42, /* Get the 3rd LED colour              none             24 bits             */
+    cmd_get_blink           = 0x43, /* Get the blinking interval           none             uint32_t            */
+    cmd_get_reaction        = 0x44, /* Requests the button reaction time   none             4 bytes             */
+    cmd_get_flags           = 0x45, /* Requests the system flags           none             1 bytes             */
 
-    cmd_get_dbg_led         = 0x26, /* Get the debug LED state             none             1 byte              */
+    cmd_get_dbg_led         = 0x46, /* Get the debug LED state             none             1 byte              */
 
+    cmd_get_time            = 0x47, /* Requests the system runtime         none             4 bytes             */
+
+    cmd_get_sync            = 0x48, /* Requests the time sync value        none             uint32_t            */
+
+#if REMOTE_CONSOLE_SUPPORTED == 1    
     /* This command cannot be "packed" along with other commands as the entire payload will be used*/
     cmd_wr_console_cont     = 0x40, /* Write to the slave device console   buffer           none
                                         1st byte in data is the length 
@@ -124,18 +136,18 @@ typedef enum command_e
                                         device console. 1st byte in data                    multi-packet response 
                                         is the length of the data to send 
                                         to the slave console */  
+#endif /* REMOTE_CONSOLE_SUPPORTED */
 
     cmd_debug_0             = 0x80, /* Dummy command. just fills the data buffer */
-
-    cmd_none                = 0xFF, /* Placeholder */
 }master_command_t;
 
 typedef enum response_e
 {
     resp_ok                 = 0x00, /* The command was successful*/
-    resp_err_payload_len    = 0x01, /* The command payload did not contain sufficient data for the command - followed by length byte*/
-    resp_err_range          = 0x02, /* The payload contained a value outside of the acceptable range - followed by a value byte*/
-    resp_err_unknown_cmd    = 0x03, /* The command was not recognised - followed by the command byte*/
+    resp_err_payload_len    = 0x01, /* The command did not contain sufficient data - payload[1] = {# of bytes attempted to read}*/
+    resp_err_range          = 0x02, /* The command was out of range - payload[2] =  {<RX value>, <threshold value>} */
+    resp_err_unknown_cmd    = 0x03, /* The command was not recognised - no payload */
+    resp_err_reject_cmd     = 0x04, /* The command was illegal at this time, and promptly rejected - payload[1] = identifying*/
     resp_err_none           = 0xFF, /* Placeholder */
 }response_code_t;
 
@@ -144,11 +156,11 @@ enum system_flags_e
     flag_s_press     = BIT_POS(0),
     flag_l_press     = BIT_POS(1),
     flag_d_press     = BIT_POS(2),
-    flag_active      = BIT_POS(3),
+    flag_activated   = BIT_POS(3),
     flag_deactivated = BIT_POS(4),
-    flag_blinking    = BIT_POS(5),
-    flag_unreg       = BIT_POS(6),
-    flag_reserved    = BIT_POS(7),
+    flag_sw_stopped  = BIT_POS(5),
+    flag_blinking    = BIT_POS(6),
+    flag_unreg       = BIT_POS(7),
 };
 
 typedef enum dbg_blink_state_e
@@ -160,6 +172,18 @@ typedef enum dbg_blink_state_e
     dbg_led_blink_500ms = 4,
     dbg_led_state_limit = 5,
 }dbg_blink_state_t;
+
+typedef struct
+{
+    uint32_t            rgb_colour[3]; // The 3 RGB colours of the LED 
+    uint32_t            blink_ms; // The blink period (0 if inactive)
+    dbg_blink_state_t   dbg_led_state; // The debug LED state
+    uint32_t            reaction_ms; // The reaction time (ms)
+    uint32_t            time_ms; // The current time (ms)
+    uint8_t             flags; // The system flags
+    float               time_factor; // The time factor (used for the time correction)
+    bool                sw_active; // Is the button stopwatch active?
+}button_t;
 
 /******************************************************************************
 Global (public) variables
@@ -180,8 +204,6 @@ typedef struct {
     uint8_t crc;    // Not necisarely the last byte of the message, byte we should allow for it
 }comms_msg_t;
 #pragma pack(pop)
-
-//STATIC_ASSERT(((sizeof(comms_msg_hdr_t)+sizeof(uint8_t)) < RGB_BTN_MSG_MAX_LEN), "rgb_btn_msg_hdr_t is too big");
 
 #ifdef __cplusplus
 }

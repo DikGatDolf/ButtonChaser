@@ -125,24 +125,6 @@ typedef struct {
     comms_rx_state_t state;
 }comms_rx_msg_t;
 
-typedef enum e_comms_msg_tx_state
-{
-    tx_idle,            // Waiting for a message to send
-    tx_wait_for_echo,   // We are busy transmitting, checking for the rx'd echo
-}comms_tx_state_t;
-
-typedef struct {
-    comms_msg_t msg;
-//  uint8_t buff[(RGB_BTN_MSG_MAX_LEN*2)+2];    //Absolute worst case scenario
-#if USE_BUILTIN_RS485_UART == 0    
-    uint8_t retry_cnt;
-#endif    
-    uint8_t seq;
-    size_t data_length;
-    bool msg_busy;
-    comms_tx_state_t state;
-}comms_tx_msg_t;
-
 typedef struct {
     comms_msg_t msg;
     size_t msg_size;
@@ -209,7 +191,7 @@ comms_t _comms = {
 static esp_timer_create_args_t _bus_silence_tmr_args = {
     .callback = _bus_silence_expired,
     //.dispatch_method;   //!< Call the callback from task or from ISR
-    .name = "1ms_Ticker",
+    .name = "bus_silence_tmr",  //!< Name of the timer, used for debugging
     //bool skip_unhandled_events;     //!< Skip unhandled events for periodic timers
 };
 
@@ -220,7 +202,8 @@ const int comms_uart_buffer_size = (1024);//(RGB_BTN_MSG_MAX_LEN);// + 2; //Abso
 
 comms_rx_msg_t _rx = {0};
 
-comms_tx_msg_t _tx = {0};
+//comms_tx_msg_t _tx = {0};
+uint8_t _tx_seq = 0; //Sequence number for the next message to be sent
 
 /*******************************************************************************
  Local (private) Functions
@@ -279,7 +262,7 @@ void _comms_main_func(void * pvParameters)
         uart_event_t rx_event;
 
         // Have we received something?
-        vTaskDelay(1); //Wait for 1 tick
+        vTaskDelay(1); //Wait for 1 tick (10ms?) - Max priority, max speed
 
         //Did we receive something on the RS485 bus?
         if (xQueueReceive(_comms.rs485.rx_queue, (void *)&rx_event, 0) == pdTRUE)//1))//portMAX_DELAY))// pdMS_TO_TICKS(COMMS_READ_INTERVAL_MS) /*(TickType_t)portMAX_DELAY*/) )
@@ -406,6 +389,7 @@ void _tx_msg_handler(comms_msg_queue_item_t *tx_q_msg)
     iprintln(trCOMMS, "#TX: %d bytes (%d), attempt %d", tx_q_msg->msg_size, tx_q_msg->msg.hdr.id, _tx.retry_cnt);
 #else
     iprintln(trCOMMS, "#TX: %d bytes (%d)", tx_q_msg->msg_size, tx_q_msg->msg.hdr.id);
+    console_print_memory(trCOMMS, (uint8_t *)&tx_q_msg->msg, 0, tx_q_msg->msg_size);
 #endif
 
     //wait here for the bus to go silent!
@@ -512,13 +496,13 @@ bool _rx_data_process(uint8_t rx_data)
     return return_value;
 }
 
-bool _tx_now(void)
+bool _tx_now(comms_tx_msg_t * tx_msg)
 {
     comms_msg_queue_item_t _tx_msg_q_item = {0};
     Stopwatch_ms_t _sw = {0};
     uint32_t _elapsed_ms = 0;
 
-    if ((_tx.data_length == 0) || (!_tx.msg_busy))
+    if ((tx_msg->data_length == 0) || (!tx_msg->msg_busy))
         return true; //Nothing to send, but the user might as well think all is well
 
     //If the transmit queue is not empty, we cannot send a new message
@@ -536,215 +520,25 @@ bool _tx_now(void)
         vTaskDelay(max(1, pdMS_TO_TICKS(BUS_SILENCE_MIN_MS))); //Wait for 1 bus silence period or 1 tick (whichever is longer)
     }
 
-    _tx_msg_q_item.msg_size = (sizeof(comms_msg_hdr_t) + _tx.data_length + sizeof(uint8_t));
-    memcpy((uint8_t *)&_tx_msg_q_item.msg, (uint8_t *)&_tx.msg, _tx_msg_q_item.msg_size); //Copy the message to the buffer
+    tx_msg->msg.hdr.id = _tx_seq++; //Set the message ID to the current sequence number
+    //This gets incremented every time we send a message, even on retries
+    
+    //Now we calculate the CRC over the message header and the data
+    tx_msg->msg.data[tx_msg->data_length] = crc8_n(0, ((uint8_t *)&tx_msg->msg), sizeof(comms_msg_hdr_t) + tx_msg->data_length); //Calculate the CRC for the newly added data in the message
 
-    //We increment the sequence number, regardless if this message is successfully sent or not.
-    _tx.seq++;
+    _tx_msg_q_item.msg_size = (sizeof(comms_msg_hdr_t) + tx_msg->data_length + sizeof(uint8_t));
+    memcpy((uint8_t *)&_tx_msg_q_item.msg, (uint8_t *)&tx_msg->msg, _tx_msg_q_item.msg_size); //Copy the message to the buffer
+
 
     //Send the message to the queue
     xQueueSend(_comms.rs485.tx_msg_queue, (void *)&_tx_msg_q_item, 0); 
 
     //Clear the counters and flags indicating that we are busy with a message
-    _tx.data_length = 0;
-    _tx.msg_busy = false; 
+    tx_msg->data_length = 0;
+    tx_msg->msg_busy = false; 
 
     return true; //Message was queued successfully
 }
-
-void comms_node_msg_init(uint8_t node_addr)
-{
-    _tx.data_length = 0;//sizeof(comms_msg_hdr_t);         //Reset to the beginning of the data
-    _tx.msg_busy = true; //We are busy building a message
-
-    _tx.msg.hdr.version = RGB_BTN_MSG_VERSION;  //Superfluous, but just in case
-    _tx.msg.hdr.id = _tx.seq;                   //Should have incremented after the last transmission
-    _tx.msg.hdr.src = ADDR_MASTER;              //Our Address (might have changed since our last message)
-    _tx.msg.hdr.dst = node_addr;                //We only ever talk to the master!!!!!
-    _tx.msg.data[0] = crc8_n(0, ((uint8_t *)&_tx.msg), sizeof(comms_msg_hdr_t));
-}
-
-bool comms_node_msg_append(uint8_t node_addr, master_command_t cmd, uint8_t * data, uint8_t data_len, bool restart)
-{
-    // We cannot send a message if we are not ready to send now, otherwise we will overwrite data being sent
-    if ((!_tx.msg_busy) || (restart))
-        comms_node_msg_init(node_addr); //We are NOT busy building a message (or restarting a new one)
-
-    if ((_tx.msg_busy) && (node_addr != _tx.msg.hdr.dst))
-    {
-        iprintln(trCOMMS, "#ERROR: Node addr (0x%02X) different than msg init (0x%02X). Cmd = 0x%02X", node_addr, _tx.msg.hdr.dst, cmd);
-        return false; //We are not busy building a message, so we cannot add anything to it
-    }
-
-    //We *know* we will be adding at least 2 bytes (cmd and crc)
-    if ((uint8_t)(_tx.data_length + data_len + 2) > sizeof(_tx.msg.data))
-    {
-        iprintln(trCOMMS, "#ERROR: Not enough space for cmd 0x%02X, len = %d (dst: 0x%02X, available space = %d)", cmd, data_len, node_addr, (sizeof(_tx.msg.data) - _tx.data_length));
-        return false; //This is NEVER gonna fit!!!
-    }
-    
-    //The master should not bother with "breaking" the message up into smaller chunks. 
-    // Currently the system does not support fragmented messages to the nodes
-    
-    size_t _len = _tx.data_length;
-    uint8_t _crc = _tx.msg.data[_tx.data_length];
-
-    _tx.msg.data[_tx.data_length++] = cmd;
-    if ((data) && (data_len > 0))
-    {
-        memcpy(&_tx.msg.data[_tx.data_length], data, data_len);
-        //Now we increment the datalenth
-        _tx.data_length += data_len; // for the payload
-    }
-    _tx.msg.data[_tx.data_length] = crc8_n(_crc, &_tx.msg.data[_len], _tx.data_length); //Calculate the CRC for the newly added data in the message
-
-    return true;
-}
-
-bool comms_bcst_append(uint8_t cmd, uint8_t * data, uint8_t data_len)
-{
-    //Must be preceeded by a comms_bcst_start() command
-    if ((_tx.data_length == 0) ||                       /* There should at least be a cmd_bcast_address_mask in the data */ 
-        (_tx.msg.hdr.dst != ADDR_BROADCAST) ||          /* Destination MUST be broadcast address */
-        (_tx.msg.data[0] != cmd_bcast_address_mask))    /* 1st cmd in the data array should be cmd_bcast_address_mask */
-    {
-        iprintln(trCOMMS, "#BCST message NOT initialised (len = %d, dst = 0x%02X, 1st cmd = 0x%02X)", _tx.data_length, _tx.msg.hdr.dst, _tx.msg.data[0]);
-        return false;
-    }
-
-    return comms_node_msg_append(ADDR_BROADCAST, cmd, data, data_len, false);
-}
-
-bool comms_msg_rx_read(comms_msg_t *msg, size_t *msg_size)
-{
-    comms_msg_queue_item_t rx_q_msg;
-    if(xQueueReceive(_comms.rs485.rx_msg_queue, &rx_q_msg, 0) == pdTRUE)
-    {
-        if (msg != NULL)
-            memcpy(msg, &rx_q_msg.msg, rx_q_msg.msg_size);
-
-        if (msg_size != NULL)
-            *msg_size = rx_q_msg.msg_size;
-
-        return true; //Message was read successfully
-    }
-    return false; //No message was available to read
-}
-
-bool comms_rollcall(bool all)
-{
-    if (comms_node_msg_append(ADDR_BROADCAST, (all)? cmd_roll_call_all : cmd_roll_call_unreg, NULL, 0, true))
-    {
-        //This is all that is needed... this command can be sent immediately
-        if (_tx_now())
-            return true;
-    }
-    return false;
-}
-
-bool comms_bcst_start(uint32_t exclude_bit_mask_addr)
-{
-    //We will (likely?) be sending this command to all nodes, EXCEPT (maybe) the 
-    // active one so we need to start a new message with all but the specified node bit set
-    uint32_t cmd_bcast_address_mask = 0xFFFFFFFF ^ exclude_bit_mask_addr; //All_nodes XOR excluded_node
-    return comms_node_msg_append(ADDR_BROADCAST, cmd_bcast_address_mask, (uint8_t *)&cmd_bcast_address_mask, sizeof(uint32_t), true);
-}
-
-bool comms_msg_tx_now(void)
-{
-    //We are not busy building a message, so we cannot send anything
-    if (!_tx.msg_busy)
-    {
-        iprintln(trCOMMS, "#ERROR: No message to send");
-        return false;
-    }
-
-    //This is all that is needed... this command can be sent immediately
-    return _tx_now();
-}
-
-bool comms_bcst_set_rgb(uint8_t index, uint32_t rgb_col)
-{
-    if (index > 2)
-    {
-        iprintln(trCOMMS, "#Invalid RGB index (%d)", index);
-        return false;
-    }
-    return comms_bcst_append(cmd_set_rgb_0 + index, (uint8_t *)&rgb_col, (3*sizeof(uint8_t)));
-}
-
-bool comms_bcst_set_blink(uint32_t period_ms)
-{
-    return comms_bcst_append(cmd_set_blink, (uint8_t *)&period_ms, sizeof(uint32_t));
-}
-
-// bool comms_node_register(uint8_t node_addr, uint8_t bit_mask_addr)
-// {
-//     if ((node_addr == ADDR_BROADCAST)  || (node_addr == ADDR_MASTER))
-//     {
-//         iprintln(trCOMMS, "#Invalid node address, 0x%02X, for cmd 0x%02X (%s)", node_addr, cmd_set_bitmask_index, (node_addr == ADDR_BROADCAST) ? "BROADCAST" : "MASTER");
-//         return false;
-//     }
-//     if (bit_mask_addr > RGB_BTN_MAX_NODES)
-//     {
-//         iprintln(trCOMMS, "#Invalid register slot (%d > %d) for node 0x%02X", bit_mask_addr, RGB_BTN_MAX_NODES, node_addr);
-//         return false;
-//     }
-//     return comms_node_msg_append(node_addr, cmd_set_bitmask_index, &bit_mask_addr, sizeof(uint8_t), true);
-// }
-
-// bool comms_node_new_addr(uint8_t node_addr, uint8_t new_addr)
-// {
-//     if ((new_addr == ADDR_BROADCAST)  || (new_addr == ADDR_MASTER) || (new_addr == node_addr))
-//     {
-//         iprintln(trCOMMS, "#Invalid new address for 0x%02X (%s), for cmd 0x%02X", node_addr, (new_addr == ADDR_BROADCAST) ? "BROADCAST" : (new_addr == ADDR_MASTER) ? "MASTER" : "SAME", cmd_new_add);
-//         return false;
-//     }
-//     //Maybe not a good idea to allow the new address to be the same as the old one?
-//     return comms_node_msg_append(node_addr, cmd_new_add, NULL, 0, false);
-// }
-
-// bool comms_node_set_rgb(uint8_t node_addr, uint8_t index, uint32_t rgb_col)
-// {
-//     if (index > 2)
-//     {
-//         iprintln(trCOMMS, "#Invalid RGB index (%d)", index);
-//         return false;
-//     }
-//     return comms_node_msg_append(node_addr, cmd_set_rgb_0 + index, (uint8_t *)&rgb_col, (3*sizeof(uint8_t)), false);
-// }
-// bool comms_node_get_rgb(uint8_t node_addr, uint8_t index)
-// {
-//     if (index > 2)
-//     {
-//         iprintln(trCOMMS, "#Invalid RGB index (%d)", index);
-//         return false;
-//     }
-//     return comms_node_msg_append(node_addr, cmd_get_rgb_0 + index, NULL, 0, false);
-// }
-
-// bool comms_node_set_blink(uint8_t node_addr, uint32_t period_ms)
-// {
-//     return comms_node_msg_append(node_addr, cmd_set_blink, (uint8_t *)&period_ms, sizeof(uint32_t), false);
-// }
-// bool comms_node_get_blink(uint8_t node_addr)
-// {
-//     return comms_node_msg_append(node_addr, cmd_get_blink, NULL, 0, false);
-// }
-
-// bool comms_node_start_sw(uint8_t node_addr)
-// {
-//     return comms_node_msg_append(node_addr, cmd_start_sw, NULL, 0, false);
-// }
-// bool comms_node_get_sw_time(uint8_t node_addr)
-// {
-//     return comms_node_msg_append(node_addr, cmd_get_sw_time, NULL, 0, false);
-// }
-
-// bool comms_node_get_flags(uint8_t node_addr)
-// {
-//     return comms_node_msg_append(node_addr, cmd_get_flags, NULL, 0, false);
-// }
 
 /*******************************************************************************
  Global (public) Functions
@@ -807,6 +601,79 @@ esp_err_t task_comms_tx(uint8_t *tx_data, size_t tx_size)
 
     //RVN - TODO - We need to wake the task up from here....
     return ESP_OK;
+}
+
+bool comms_msg_rx_read(comms_msg_t *msg, size_t *msg_size)
+{
+    comms_msg_queue_item_t rx_q_msg;
+    if(xQueueReceive(_comms.rs485.rx_msg_queue, &rx_q_msg, 0) == pdTRUE)
+    {
+        if (msg != NULL)
+            memcpy(msg, &rx_q_msg.msg, rx_q_msg.msg_size);
+
+        if (msg_size != NULL)
+            *msg_size = rx_q_msg.msg_size;
+
+        return true; //Message was read successfully
+    }
+    return false; //No message was available to read
+}
+
+void comms_tx_msg_init(comms_tx_msg_t * tx_msg, uint8_t node_addr)
+{
+    memset(tx_msg, 0, sizeof(comms_tx_msg_t)); //Clear the message structure
+    tx_msg->data_length = 0;//sizeof(comms_msg_hdr_t);         //Reset to the beginning of the data
+    tx_msg->msg_busy = true; //We are busy building a message
+
+    tx_msg->msg.hdr.version = RGB_BTN_MSG_VERSION;  //Superfluous, but just in case
+    tx_msg->msg.hdr.src = ADDR_MASTER;              //Our Address (might have changed since our last message)
+    tx_msg->msg.hdr.dst = node_addr;                //We only ever talk to the master!!!!!
+}
+
+bool comms_tx_msg_append(comms_tx_msg_t * tx_msg, uint8_t node_addr, master_command_t cmd, uint8_t * data, uint8_t data_len, bool restart)
+{
+    // We cannot send a message if we are not ready to send now, otherwise we will overwrite data being sent
+    if ((!tx_msg->msg_busy) || (restart))
+        comms_tx_msg_init(tx_msg, node_addr); //We are NOT busy building a message (or restarting a new one)
+
+    if ((tx_msg->msg_busy) && (node_addr != tx_msg->msg.hdr.dst))
+    {
+        iprintln(trCOMMS, "#ERROR: Node addr (0x%02X) different than msg init (0x%02X). Cmd = 0x%02X", node_addr, tx_msg->msg.hdr.dst, cmd);
+        return false; //We are not busy building a message, so we cannot add anything to it
+    }
+
+    //We *know* we will be adding at least 2 bytes (cmd and crc)
+    if ((uint8_t)(tx_msg->data_length + data_len + 2) > sizeof(tx_msg->msg.data))
+    {
+        iprintln(trCOMMS, "#ERROR: Not enough space for cmd 0x%02X, len = %d (dst: 0x%02X, available space = %d)", cmd, data_len, node_addr, (sizeof(tx_msg->msg.data) - tx_msg->data_length));
+        return false; //This is NEVER gonna fit!!!
+    }
+    
+    //The master should not bother with "breaking" the message up into smaller chunks. 
+    // Currently the system does not support fragmented messages to the nodes
+    
+    tx_msg->msg.data[tx_msg->data_length++] = cmd;
+    if ((data) && (data_len > 0))
+    {
+        memcpy(&tx_msg->msg.data[tx_msg->data_length], data, data_len);
+        //Now we increment the datalenth
+        tx_msg->data_length += data_len; // for the payload
+    }
+
+    return true;
+}
+
+bool comms_tx_msg_send(comms_tx_msg_t * tx_msg)
+{
+    //We are not busy building a message, so we cannot send anything
+    if (!tx_msg->msg_busy)
+    {
+        iprintln(trCOMMS, "#ERROR: No message to send");
+        return false;
+    }
+
+    //This is all that is needed... this command can be sent immediately
+    return _tx_now(tx_msg);
 }
 
 #undef PRINTF_TAG

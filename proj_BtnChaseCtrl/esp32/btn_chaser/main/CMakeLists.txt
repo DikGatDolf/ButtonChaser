@@ -1,4 +1,5 @@
-idf_component_register(SRCS "button_chase_main.c" 
+idf_component_register(SRCS "game_demo.c" "task_game.c" "game_random_chase.c" "button_chase_main.c" 
+                            "nodes.c"
                             "sys_task_utils.c" 
                             "str_helper.c" 
                             "template.c" 

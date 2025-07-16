@@ -48,6 +48,7 @@ const char BUILD_TIME_AND_DATE[] = {__TIME__ " " __DATE__}; /* Used in our start
 
 #define REDUCE_CODESIZE     1
 
+#define DEBUG_LED_ACTIONS   (0)
 /* The "MAIN_DEBUG" define includes/excludes various methods and functions which
  * only have a purpose for debugging. A decision had to be made to conserve
  * codespace and these are the guys who fell under the axe.
@@ -56,7 +57,7 @@ const char BUILD_TIME_AND_DATE[] = {__TIME__ " " __DATE__}; /* Used in our start
 	#define MAIN_DEBUG
 #endif
 
-#define DEV_COMMS_DEBUG       (1)
+#define DEV_COMMS_DEBUG       (0)
 
 /* Suppresses a bunch of debug prints and console functionality for the RGB LED driver:
     Usage: RAM: 60 bytes, Flash: 2084 bytes */

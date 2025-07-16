@@ -47,7 +47,9 @@ bool dev_comms_verify_addr(uint8_t addr);
 
 unsigned int dev_comms_response_append(master_command_t cmd, response_code_t resp_code, uint8_t * data, uint8_t data_len, bool restart = false);
 
+#if REMOTE_CONSOLE_SUPPORTED == 1    
 size_t dev_comms_response_add_byte(uint8_t data);
+#endif /* REMOTE_CONSOLE_SUPPORTED */
 
 bool dev_comms_transmit_now(void);
 
