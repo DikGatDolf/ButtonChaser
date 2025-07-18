@@ -109,6 +109,8 @@ Transmission State Machine:
 
 #include "dev_console.h"
 
+#include "../../../../common/common_comms.h"
+
 #define __NOT_EXTERN__
 #include "dev_comms.h"
 #undef __NOT_EXTERN__
@@ -440,6 +442,9 @@ unsigned int dev_comms_response_append(master_command_t cmd, response_code_t res
     if ((uint8_t)(data_len +2) > sizeof(_comms.tx.msg.data))
         return 0; //This is NEVER gonna fit!!!
 
+    //Indicates we are not supposed to answer
+    if (data_len == 0xff)
+        return 0; //Nothing to do
     //iprintln(trALWAYS, "#Responding to 0x%02X : 0x%02X (%d bytes)", cmd, resp_code, data_len);
 
     // We cannot send a message if we are not ready to send now, otherwise we will overwrite data being sent

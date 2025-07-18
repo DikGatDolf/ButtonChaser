@@ -58,6 +58,7 @@ local functions
  *******************************************************************************/
 // the prescaler is set so that timer0 ticks every 64 clock cycles, and the
 // the overflow handler is called every 256 ticks.
+#if CLOCK_CORRECTION_ENABLED == 1
 #define MICROSECONDS_PER_TIMER0_OVERFLOW (clockCyclesToMicroseconds(64 * 256))
 
 // the whole number of milliseconds per timer0 overflow
@@ -79,11 +80,7 @@ bool correction_enabled = false;
 #define BASE_MILLIS_INC (MICROSECONDS_PER_TIMER0_OVERFLOW / 1000.0)
 #define BASE_FRACT_INC ((MICROSECONDS_PER_TIMER0_OVERFLOW % 1000) >> 3)
 
-#if defined(TIM0_OVF_vect)
-ISR(TIM0_OVF_vect)
-#else
 ISR(TIMER0_OVF_vect)
-#endif
 {
 	// // copy these to local variables so they can be stored in registers
 	// // (volatile variables must be read from memory on every access)
@@ -119,10 +116,8 @@ ISR(TIMER0_OVF_vect)
 
     timer0_millis = m;
     timer0_overflow_count++;
-
-
-
 }
+#endif /* CLOCK_CORRECTION_ENABLED */
 
 ISR(TIMER1_OVF_vect)
 {
@@ -151,6 +146,7 @@ ISR(TIMER1_OVF_vect)
 /*******************************************************************************
 Global overridden functions
  *******************************************************************************/
+#if CLOCK_CORRECTION_ENABLED == 1
 unsigned long sys_millis()
 {
 	unsigned long m;
@@ -164,6 +160,7 @@ unsigned long sys_millis()
 
 	return m;    
 }
+#endif /* CLOCK_CORRECTION_ENABLED */
 
 /*******************************************************************************
 Global/Public functions
@@ -189,7 +186,9 @@ void sys_tmr_init(void)
 	// enable timer 0 overflow interrupt
 	sbi(TIMSK0, TOIE0);
 #endif
+#if CLOCK_CORRECTION_ENABLED == 1
     sys_time_correction_factor_reset(); //Reset the time correction factor
+#endif /* CLOCK_CORRECTION_ENABLED */
 
     //We are going to repurpose timer1 for our own use, so we need to 
     // reconfigure it
@@ -223,6 +222,7 @@ void sys_tmr_init(void)
     sys_tmr_init_ok = true; //Set the timer as initialized
 }
 
+#if CLOCK_CORRECTION_ENABLED == 1
 void sys_time_correction_factor_set(float correction)
 {
     //Make sure this next step is not (haha) interrupted
@@ -249,7 +249,7 @@ float sys_time_correction_factor(void)
 {
     return millis_correction;
 }
-
+#endif /* CLOCK_CORRECTION_ENABLED */
 
 bool sys_cb_tmr_start(void (*cb_tmr_exp)(void), unsigned long interval, bool reload)
 {
@@ -315,7 +315,11 @@ void sys_cb_tmr_stop(void (*cb_tmr_exp)(void))
 
 void sys_poll_tmr_start(timer_ms_t *t, unsigned long interval, bool auto_reload)
 {
+#if CLOCK_CORRECTION_ENABLED == 1
     t->started = sys_millis();
+#else
+    t->started = millis();
+#endif /* CLOCK_CORRECTION_ENABLED */
     t->enabled = false;
     t->ms_expire = t->started + interval;
     t->ms_period = interval;
@@ -328,7 +332,11 @@ bool sys_poll_tmr_reset(timer_ms_t *t)
 {
     if (t->ms_period > 0)
     {
+#if CLOCK_CORRECTION_ENABLED == 1
         t->started = sys_millis();
+#else
+        t->started = millis();        
+#endif /* CLOCK_CORRECTION_ENABLED */
         t->enabled = false;
         t->ms_expire = t->started + t->ms_period;
         t->expired = false;
@@ -343,10 +351,13 @@ void sys_poll_tmr_stop(timer_ms_t *t)
     //t->reload_mode = false;
 }
 
-
 bool sys_poll_tmr_expired(timer_ms_t *t)
 {
+#if CLOCK_CORRECTION_ENABLED == 1
     uint64_t now_ms = sys_millis();
+#else
+    uint64_t now_ms = millis();
+#endif /* CLOCK_CORRECTION_ENABLED */
     uint64_t overflow = 0;
 
     //Is the timer enabled?
@@ -390,20 +401,33 @@ bool sys_poll_tmr_enabled(timer_ms_t *t)
 
 bool sys_poll_tmr_is_running(timer_ms_t *t)
 {
+#if CLOCK_CORRECTION_ENABLED == 1
     if (t->enabled) //Is the timer enabled?
         return (sys_millis() < t->ms_expire)? true : false;
+#else
+    if (t->enabled) //Is the timer enabled?
+        return (millis() < t->ms_expire)? true : false;
+#endif /* CLOCK_CORRECTION_ENABLED */
 
     return false;
 }
 
 uint64_t sys_poll_tmr_seconds(void)
 {
+#if CLOCK_CORRECTION_ENABLED == 1
   return (sys_millis()/1000);
+#else
+  return (millis()/1000);
+#endif /* CLOCK_CORRECTION_ENABLED */
 }
 
 void sys_stopwatch_ms_start(stopwatch_ms_t* sw, unsigned long max_time)
 {
+#if CLOCK_CORRECTION_ENABLED == 1
     sw->tick_start = sys_millis();
+#else
+    sw->tick_start = millis();
+#endif /* CLOCK_CORRECTION_ENABLED */
     sw->max_time = max_time;
     sw->running = true;
     sw->max_time_reached = false;
@@ -415,7 +439,11 @@ unsigned long sys_stopwatch_ms_lap(stopwatch_ms_t* sw)
     unsigned long now = 0;
     // ATOMIC_BLOCK(ATOMIC_RESTORESTATE) 
     // {
+#if CLOCK_CORRECTION_ENABLED == 1
         now = sys_millis();
+#else
+        now = millis();
+#endif /* CLOCK_CORRECTION_ENABLED */
     // }
 
     if (sw->running)

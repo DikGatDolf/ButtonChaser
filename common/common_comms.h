@@ -32,7 +32,7 @@ extern "C" {
 includes
 ******************************************************************************/
 #include <stdint.h>
-// #include <assert.h>
+#include "common_defines.h"
 
 /******************************************************************************
 definitions
@@ -76,6 +76,10 @@ Macros
 
 #define REMOTE_CONSOLE_SUPPORTED (0) /* Enables/disables the remote console (which is still untested). Currently this equates to 650 bytes Flash and 2 bytes RAM */
 
+#define CMD_TYPE_BROADCAST  0x01
+#define CMD_TYPE_DIRECT     0x02
+#define CMD_TYPE_RESTRICTED 0x04
+
 /******************************************************************************
 Struct & Unions
 ******************************************************************************/
@@ -101,7 +105,9 @@ typedef enum command_e
     cmd_set_dbg_led         = 0x16, /* Set the debug LED state             1 byte           none                */
     cmd_set_time            = 0x17, /* Set the system time                 uint32_t         none                */
 
+#if CLOCK_CORRECTION_ENABLED == 1
     cmd_set_sync            = 0x18, /* Start/end the time sync process     uint32_t         none                */
+#endif /* CLOCK_CORRECTION_ENABLED */
    
     /* ############# END OF BROADCAST'able COMMANDS!! #############
         ALL commands values higher than "cmd_set_bitmask_index" can ONLY be sent directly to a node */                                        
@@ -124,7 +130,10 @@ typedef enum command_e
 
     cmd_get_time            = 0x47, /* Requests the system runtime         none             4 bytes             */
 
+#if CLOCK_CORRECTION_ENABLED == 1
     cmd_get_sync            = 0x48, /* Requests the time sync value        none             uint32_t            */
+#endif /* CLOCK_CORRECTION_ENABLED */
+    cmd_get_version         = 0x49, /* Requests the fw veresion            none             uint32_t            */
 
 #if REMOTE_CONSOLE_SUPPORTED == 1    
     /* This command cannot be "packed" along with other commands as the entire payload will be used*/
@@ -166,15 +175,15 @@ enum system_flags_e
 typedef enum dbg_blink_state_e
 {
     dbg_led_off         = 0,
-    dbg_led_on          = 1,
-    dbg_led_blink_50ms  = 2,
-    dbg_led_blink_200ms = 3,
-    dbg_led_blink_500ms = 4,
-    dbg_led_state_limit = 5,
+    dbg_led_blink_50ms  = 5,
+    dbg_led_blink_200ms = 20,
+    dbg_led_blink_500ms = 50,
+    dbg_led_on          = 0xff, /* This is the "on" state, not a blink state */
 }dbg_blink_state_t;
 
 typedef struct
 {
+    uint32_t            version; // The address of the node (0x00 to 0x7F)
     uint32_t            rgb_colour[3]; // The 3 RGB colours of the LED 
     uint32_t            blink_ms; // The blink period (0 if inactive)
     dbg_blink_state_t   dbg_led_state; // The debug LED state
@@ -204,6 +213,49 @@ typedef struct {
     uint8_t crc;    // Not necisarely the last byte of the message, byte we should allow for it
 }comms_msg_t;
 #pragma pack(pop)
+
+typedef struct command_s
+{
+    master_command_t cmd; /* The command ID */
+    uint8_t miso_sz;      /* The size of the payload MOSI */
+    uint8_t mosi_sz;      /* The size of the payload MISO */
+    uint8_t access_flags; /* A mask indicating how this command can be accessed */
+}command_payload_size_t;
+
+#ifdef __NOT_EXTERN__
+const command_payload_size_t cmd_table[] = 
+{
+ /* Command ID                 MOSI Payload                                  MISO Payload                             */
+    {cmd_roll_call,           sizeof(uint8_t)   /* All or only Unreg     */, 0                   /* Nothing           */, CMD_TYPE_BROADCAST                   | CMD_TYPE_RESTRICTED},
+    {cmd_bcast_address_mask,  sizeof(uint32_t)  /* Destination Mask      */, 0                   /* Nothing           */, CMD_TYPE_BROADCAST                   | CMD_TYPE_RESTRICTED},
+    {cmd_set_rgb_0,           3*sizeof(uint8_t) /* RGB colour Code       */, 0                   /* Nothing           */, CMD_TYPE_BROADCAST | CMD_TYPE_DIRECT},
+    {cmd_set_rgb_1,           3*sizeof(uint8_t) /* RGB colour Code       */, 0                   /* Nothing           */, CMD_TYPE_BROADCAST | CMD_TYPE_DIRECT},
+    {cmd_set_rgb_2,           3*sizeof(uint8_t) /* RGB colour Code       */, 0                   /* Nothing           */, CMD_TYPE_BROADCAST | CMD_TYPE_DIRECT},
+    {cmd_set_blink,           sizeof(uint32_t)  /* Blink Rate (ms)       */, 0                   /* Nothing           */, CMD_TYPE_BROADCAST | CMD_TYPE_DIRECT},
+    {cmd_set_switch,          sizeof(uint8_t)   /* Switch State (on/off) */, 0                   /* Nothing           */, CMD_TYPE_BROADCAST | CMD_TYPE_DIRECT},
+    {cmd_set_dbg_led,         sizeof(uint8_t)   /* Debug LED State       */, 0                   /* Nothing           */, CMD_TYPE_BROADCAST | CMD_TYPE_DIRECT},
+    {cmd_set_time,            sizeof(uint32_t)  /* New Time in ms        */, 0                   /* Nothing           */, CMD_TYPE_BROADCAST | CMD_TYPE_DIRECT},
+#if CLOCK_CORRECTION_ENABLED == 1
+    {cmd_set_sync,            sizeof(uint32_t)  /* ms Elapsed on Master  */, 0                   /* Nothing           */, CMD_TYPE_BROADCAST | CMD_TYPE_DIRECT},
+#endif /* CLOCK_CORRECTION_ENABLED */
+    {cmd_set_bitmask_index,   sizeof(uint8_t)   /* Registration Slot     */, 0                   /* Nothing           */, CMD_TYPE_BROADCAST                  },
+    {cmd_new_add,             sizeof(uint8_t)   /* New Address           */, 0                   /* Nothing           */,                      CMD_TYPE_DIRECT | CMD_TYPE_RESTRICTED},
+    {cmd_get_rgb_0,           0                 /* Nothing               */, 3*sizeof(uint8_t)   /* RGB Colour Code   */,                      CMD_TYPE_DIRECT},
+    {cmd_get_rgb_1,           0                 /* Nothing               */, 3*sizeof(uint8_t)   /* RGB Colour Code   */,                      CMD_TYPE_DIRECT},
+    {cmd_get_rgb_2,           0                 /* Nothing               */, 3*sizeof(uint8_t)   /* RGB Colour Code   */,                      CMD_TYPE_DIRECT},
+    {cmd_get_blink,           0                 /* Nothing               */, sizeof(uint32_t)    /* Blink Rate (ms)   */,                      CMD_TYPE_DIRECT},
+    {cmd_get_reaction,        0                 /* Nothing               */, sizeof(uint32_t)    /* React Time (ms)   */,                      CMD_TYPE_DIRECT},
+    {cmd_get_flags,           0                 /* Nothing               */, sizeof(uint8_t)     /* State Flags       */,                      CMD_TYPE_DIRECT},
+    {cmd_get_dbg_led,         0                 /* Nothing               */, sizeof(uint8_t)     /* Debug LED state   */,                      CMD_TYPE_DIRECT},
+    {cmd_get_time,            0                 /* Nothing               */, sizeof(uint32_t)    /* Runtime (ms)      */,                      CMD_TYPE_DIRECT},
+#if CLOCK_CORRECTION_ENABLED == 1
+    {cmd_get_sync,            0                 /* Nothing               */, sizeof(float)       /* correction factor */,                      CMD_TYPE_DIRECT},
+#endif /* CLOCK_CORRECTION_ENABLED */
+    {cmd_get_version,         0                 /* Nothing               */, sizeof(uint32_t)    /* Version           */,                      CMD_TYPE_DIRECT},
+};
+#else
+extern const command_payload_size_t cmd_table[];
+#endif /* __NOT_EXTERN__ */
 
 #ifdef __cplusplus
 }

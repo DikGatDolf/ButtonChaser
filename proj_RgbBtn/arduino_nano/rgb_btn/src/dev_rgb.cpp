@@ -204,11 +204,16 @@ void _set_adjusted_duty_cycle(led_colour_type col)
     if (col >= rgbMAX)
         return;
     
-    _rgb.colour[col].pwm.adjust = pgm_read_byte(&CIE_LIGHTNESS_TO_PWM_LUT_256_IN_8BIT_OUT[_rgb.colour[col].pwm.target]);
+    //We should probably stop the interrupt from reading this value while we are changing it
+    ATOMIC_BLOCK(ATOMIC_RESTORESTATE) 
+    {
+        _rgb.colour[col].pwm.adjust = pgm_read_byte(&CIE_LIGHTNESS_TO_PWM_LUT_256_IN_8BIT_OUT[_rgb.colour[col].pwm.target]);
+        
+        //The switch ON time for each LED has already been staggered through the PWM cycle. 
+        //We just need to set the switch OFF time from there
+        _rgb.colour[col].pwm._off = _rgb.colour[col].pwm._on + _rgb.colour[col].pwm.adjust;
+    }
     
-    //The switch ON time for each LED has already been staggered through the PWM cycle. 
-    //We just need to set the switch OFF time from there
-    _rgb.colour[col].pwm._off = _rgb.colour[col].pwm._on + _rgb.colour[col].pwm.adjust;
     // If the OFF time is at 255, move it to 0 since we are wrapping around at 255 already
     if (_rgb.colour[col].pwm._off >= PWM_MAX_VALUE)
         _rgb.colour[col].pwm._off = 0;

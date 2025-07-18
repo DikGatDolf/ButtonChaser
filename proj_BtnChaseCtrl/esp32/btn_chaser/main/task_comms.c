@@ -36,6 +36,7 @@ includes
 #include "esp_timer.h"
 
 #include "driver/gpio.h"
+#include "../../../../common/common_comms.h"
 
 #define __NOT_EXTERN__
 #include "task_comms.h"
@@ -317,7 +318,7 @@ void _rx_msg_handler(uart_event_t *rx_event)
     {
         case UART_DATA:
             // Data received
-            iprintln(trCOMMS, "#Data received: (%d bytes)", rx_event->size);
+            //iprintln(trCOMMS, "#Data received: (%d bytes)", rx_event->size);
             for (int i = 0; i < rx_event->size; i++)
             {
                 uint8_t data = 0;
@@ -341,8 +342,8 @@ void _rx_msg_handler(uart_event_t *rx_event)
                     else //CRC is good, Version is Good, Sync # is good - I guess we are done?
                     {
                         comms_msg_queue_item_t _rx_msg_q_item = {0};
-                        // iprintln(trCOMMS, "#RX Msg: ");
-                        // console_print_memory(trCOMMS, (uint8_t *)&_rx.msg, 0, _rx.length);
+                        iprintln(trCOMMS, "#RX Msg: ");
+                        console_print_memory(trCOMMS, (uint8_t *)&_rx.msg, 0, _rx.length);
                         memcpy(&_rx_msg_q_item.msg, &_rx.msg, _rx.length); //Copy the message to the queue item
                         _rx_msg_q_item.msg_size = _rx.length; //Set the message size
                         //This message can be passed up the queue to the application

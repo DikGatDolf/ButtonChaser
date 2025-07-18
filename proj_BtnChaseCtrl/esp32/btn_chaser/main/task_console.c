@@ -875,7 +875,6 @@ void _console_handler_dump(void)
 
     uint32_t tmp_addr = memDumpAddr;
     uint32_t tmp_len = memDumpLen;
-    bool is_ram_not_flash = true;//(memStart == RAMSTART);
     bool help_reqested = false;
 
 	while (console_arg_cnt() > 0)

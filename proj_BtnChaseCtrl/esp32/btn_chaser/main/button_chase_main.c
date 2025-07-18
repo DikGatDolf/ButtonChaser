@@ -49,6 +49,9 @@ includes
 #include "sys_utils.h"
 #include "sys_timers.h"
 #include "sys_task_utils.h"
+
+#include "../../../../common/common_comms.h"
+
 #ifdef CONSOLE_ENABLED
   #include "task_console.h"
 #endif
@@ -87,17 +90,15 @@ typedef enum master_state_e
 
 typedef struct
 {
-    const char *name;           // The name of the node
-    master_command_t wr_cmd;   // The command to be sent
-    master_command_t rd_cmd;   // The command to be sent
-    int cmd_len;
-    uint8_t type;
-//    int rsp_len;
+    master_command_t cmd;   // The command to be sent
+    const char *name_1;     // A name for the parameter
+    const char *name_2;     // A name for the parameter
+    const char *name_3;     // A name for the parameter
+    bool allow_bcst;
 }command_t;
 /*******************************************************************************
  Local function prototypes
  *******************************************************************************/
-bool _str_to_msg_cmd(const char * cmd, uint8_t type, master_command_t * wr_cmd, master_command_t * rd_cmd, int * arg_len);
 bool str_to_broadcast_cmd(const char * cmd_str, master_command_t * cmd, int * arg_len);
 bool str_to_node_get_cmd(const char * cmd_str, master_command_t * rd_cmd);
 bool str_to_node_set_cmd(const char * cmd_str, master_command_t * wr_cmd, int * arg_len);
@@ -137,20 +138,30 @@ ConsoleMenuItem_t _task_main_menu_items[] =
     {"reset",   _sys_handler_reset,   "Perform a system reset"},
 };
 
-const command_t command_table[] = {
-    {"rc",    cmd_roll_call,          cmd_none,        sizeof(uint8_t),     0                                    },
-    {"mask",  cmd_bcast_address_mask, cmd_none,        sizeof(uint32_t),    0                                    },
-    {"rgb0",  cmd_set_rgb_0,          cmd_get_rgb_0,   (3*sizeof(uint8_t)), CMD_TYPE_BROADCAST | CMD_TYPE_DIRECT },
-    {"rgb1",  cmd_set_rgb_1,          cmd_get_rgb_1,   (3*sizeof(uint8_t)), CMD_TYPE_BROADCAST | CMD_TYPE_DIRECT },
-    {"rgb2",  cmd_set_rgb_2,          cmd_get_rgb_2,   (3*sizeof(uint8_t)), CMD_TYPE_BROADCAST | CMD_TYPE_DIRECT },
-    {"blink", cmd_set_blink,          cmd_get_blink,   sizeof(uint32_t),    CMD_TYPE_BROADCAST | CMD_TYPE_DIRECT },
-    {"switch",cmd_set_switch,         cmd_get_reaction,sizeof(uint8_t),                          CMD_TYPE_DIRECT },
-    {"flags", cmd_none,               cmd_get_flags,   0,                                        CMD_TYPE_DIRECT },
-    {"dbg",   cmd_set_dbg_led,        cmd_get_dbg_led, sizeof(uint8_t),     CMD_TYPE_BROADCAST | CMD_TYPE_DIRECT },
-    {"time",  cmd_set_time,           cmd_get_time,    sizeof(uint32_t),    CMD_TYPE_BROADCAST | CMD_TYPE_DIRECT },
-    {"sync",  cmd_set_sync,           cmd_get_sync,    sizeof(uint32_t),    CMD_TYPE_BROADCAST | CMD_TYPE_DIRECT },
-    {"reg",   cmd_set_bitmask_index,  cmd_none,        sizeof(uint8_t),     0                                    },
-    {"new",   cmd_new_add ,           cmd_none,        sizeof(uint8_t),                          0 /*CMD_TYPE_DIRECT*/ },
+const command_t get_cmd_table[] = {
+    {cmd_get_rgb_0,   "rgb0",    "l0",   "r0",  false},
+    {cmd_get_rgb_1,   "rgb1",    "l1",   "r1",  false},
+    {cmd_get_rgb_2,   "rgb2",    "l2",   "r2",  false},
+    {cmd_get_blink,   "blink",   "bl",   "b",   false},
+    {cmd_get_reaction,"react",   "sw",   "r",   false},
+    {cmd_get_flags,   "flags",   "fl",   "f",   false},
+    {cmd_get_dbg_led, "dbg",     "db",   "d",   false},
+    {cmd_get_time,    "time",    "cl",   "t",   false},
+    {cmd_get_sync,    "sync",    "cor",  "c",   false},
+    {cmd_get_version, "version", "ver",  "v",   false},
+};
+
+
+const command_t set_cmd_table[] = {
+    {cmd_set_rgb_0,          "rgb0",    "l0",   "r0",   true},
+    {cmd_set_rgb_1,          "rgb1",    "l1",   "r1",   true},
+    {cmd_set_rgb_2,          "rgb2",    "l2",   "r2",   true},
+    {cmd_set_blink,          "blink",   "bl",   "b",    true},
+    {cmd_set_switch,         "switch",  "act",  "a",    false},
+    {cmd_set_dbg_led,        "dbg",     "db",   "d",    true},
+    {cmd_set_time,           "time",    "cl",   "t",    true},
+    {cmd_set_sync,           "sync",    "sy",   "s",    true},
+//    {cmd_new_add,            "new",     "addr", "n",    },
 };
 /*******************************************************************************
  Functions
@@ -230,38 +241,17 @@ void app_main(void)
     esp_restart();
 }
 
-bool _str_to_msg_cmd(const char * cmd_str, uint8_t type, master_command_t * wr_cmd, master_command_t * rd_cmd, int * arg_len)
-{
-    for (int i = 0; i < ARRAY_SIZE(command_table); i++)
-    {
-        //Does the string match the command and the requested type?
-        if ((strcasecmp(cmd_str, command_table[i].name) == 0) && ((type & command_table[i].type) != 0))
-        {
-            if ((wr_cmd != NULL) && (command_table[i].wr_cmd != cmd_none)) //If the write command is not "none"
-                *wr_cmd = command_table[i].wr_cmd; //Return the command enum value
-            if ((arg_len != NULL) && (command_table[i].wr_cmd != cmd_none)) //If the write command is not "none"
-                *arg_len = command_table[i].cmd_len; //Return the MOSI data length for this command
-            if ((rd_cmd != NULL) && (command_table[i].rd_cmd != cmd_none)) //If the read command is not "none"
-                *rd_cmd = command_table[i].rd_cmd; //Return the read command enum value
-            return true;
-        }
-    }
-    return false; //Command not found
-}
-
 bool str_to_node_get_cmd(const char * cmd_str, master_command_t * rd_cmd)
 {
-    master_command_t _rd_cmd;
-
-    //We don't care about the argument length for READ commands, so we pass NULL
-    //We also don't care about the write command, so we pass NULL for that as well
-
-    if (_str_to_msg_cmd(cmd_str, CMD_TYPE_DIRECT, NULL, &_rd_cmd, NULL))
+    for (int i = 0; i < ARRAY_SIZE(get_cmd_table); i++)
     {
-        if (_rd_cmd != cmd_none) //If the command is not "none"
-        {
+        //Does the string match the command?
+        if ((!strcasecmp(cmd_str, get_cmd_table[i].name_1)) ||
+            (!strcasecmp(cmd_str, get_cmd_table[i].name_2)) ||
+            (!strcasecmp(cmd_str, get_cmd_table[i].name_3)))
+        {  
             if (rd_cmd != NULL)
-                *rd_cmd = _rd_cmd; //Return the read command enum value
+                *rd_cmd = get_cmd_table[i].cmd; //Return the read command enum value
             return true; //We can broadcast this command
         }
     }
@@ -270,19 +260,18 @@ bool str_to_node_get_cmd(const char * cmd_str, master_command_t * rd_cmd)
 
 bool str_to_node_set_cmd(const char * cmd_str, master_command_t * wr_cmd, int * arg_len)
 {
-    master_command_t _wr_cmd;
-    int _arg_len;
-
-    //We don't care about the read command, so we pass NULL
-
-    if (_str_to_msg_cmd(cmd_str, CMD_TYPE_DIRECT,&_wr_cmd, NULL, &_arg_len))
+    for (int i = 0; i < ARRAY_SIZE(set_cmd_table); i++)
     {
-        if (_wr_cmd != cmd_none) //If the command is not "none"
-        {
+        //Does the string match the command?
+        if ((!strcasecmp(cmd_str, set_cmd_table[i].name_1)) ||
+            (!strcasecmp(cmd_str, set_cmd_table[i].name_2)) ||
+            (!strcasecmp(cmd_str, set_cmd_table[i].name_3)))
+        {  
             if (wr_cmd != NULL)
-                *wr_cmd = _wr_cmd;
+                *wr_cmd = get_cmd_table[i].cmd; //Return the read command enum value
             if (arg_len != NULL)
-                *arg_len = _arg_len;
+                *arg_len = cmd_mosi_payload_size(get_cmd_table[i].cmd); //Return the MOSI data length for this command
+            
             return true; //We can broadcast this command
         }
     }
@@ -291,19 +280,25 @@ bool str_to_node_set_cmd(const char * cmd_str, master_command_t * wr_cmd, int * 
 
 bool str_to_broadcast_cmd(const char * cmd_str, master_command_t * cmd, int * arg_len)
 {
-    master_command_t _wr_cmd;
-    int _arg_len;
-
-    if (_str_to_msg_cmd(cmd_str, CMD_TYPE_BROADCAST, &_wr_cmd, NULL, &_arg_len))
+    for (int i = 0; i < ARRAY_SIZE(set_cmd_table); i++)
     {
-        if (cmd != NULL)
-            *cmd = _wr_cmd;
-        if (arg_len != NULL)
-            *arg_len = _arg_len;
-        return true; //These commands can be broadcasted
+        //Does the string match the command?
+        if ((!strcasecmp(cmd_str, set_cmd_table[i].name_1)) ||
+            (!strcasecmp(cmd_str, set_cmd_table[i].name_2)) ||
+            (!strcasecmp(cmd_str, set_cmd_table[i].name_3)))
+        {  
+            //Check if the command is allowed to be broadcast
+            if (!set_cmd_table[i].allow_bcst)
+                return false; //This command cannot be broadcast
+            if (cmd != NULL)
+                *cmd = get_cmd_table[i].cmd; //Return the read command enum value
+            if (arg_len != NULL)
+                *arg_len = cmd_mosi_payload_size(get_cmd_table[i].cmd); //Return the MOSI data length for this command
+            
+            return true; //We can broadcast this command
+        }
     }
-
-    return false; //Command not found
+    return false;
 }
 
 /*******************************************************************************
@@ -524,7 +519,7 @@ void _sys_handler_bcst(void)
             if ((cmd == cmd_set_rgb_0) || (cmd == cmd_set_rgb_1) || (cmd == cmd_set_rgb_2))
             {
                 //If it is a colour, it could be an RGB hex value, or a colour name
-                if ((!strcasecmp("off", arg)) || (!strcasecmp("0", arg)))
+                if (!strcasecmp("off", arg))
                 {
                     int rgb_led_index = (cmd - cmd_set_rgb_0); //0 for cmd_set_rgb_0, 1 for cmd_set_rgb_1, 2 for cmd_set_rgb_2
                     btn.rgb_colour[rgb_led_index] = (uint32_t)0; //Set the RGB colour for this LED
@@ -540,7 +535,7 @@ void _sys_handler_bcst(void)
             else if (cmd == cmd_set_blink)
             {
                 //If it is a blink period, we are expecting ONLY an integer value
-                if ((!strcasecmp("off", arg)) || (!strcasecmp("0", arg)))
+                if ((!strcasecmp("off", arg)) || (!strcasecmp("stop", arg)))
                 {
                     btn.blink_ms = 0; //Set the blink period to 0 (off)
                     temp_changes = 0x08; //Set the blink period
@@ -553,36 +548,23 @@ void _sys_handler_bcst(void)
             }
             else if (cmd == cmd_set_dbg_led)
             {
-                //for the debug LED we have predefined states relating to blink rates
-                // dbg_led_off         = 0,
-                // dbg_led_on          = 1,
-                // dbg_led_blink_50ms  = 2,
-                // dbg_led_blink_200ms = 3,
-                // dbg_led_blink_500ms = 4,
-                if ((!strcasecmp("off", arg)) || (!strcasecmp("0", arg)))
+                if (!strcasecmp("off", arg))
                 {
                     btn.dbg_led_state = dbg_led_off; //Set the debug LED state to OFF
                     temp_changes = 0x10; //Set the debug LED state to ON
                 }
-                else if ((!strcasecmp("on", arg)) || (!strcasecmp("1", arg)))
+                else if (!strcasecmp("on", arg))
                 {
                     btn.dbg_led_state = dbg_led_on; //Set the debug LED state to ON
                     temp_changes = 0x10; //Set the debug LED state to ON
                 }
-                else if ((!strcasecmp("fast", arg)) || (!strcasecmp("50", arg)))
+                else if (str2uint32(&value, arg, 0))
                 {
-                    btn.dbg_led_state = dbg_led_blink_50ms; //Set the debug LED state to FAST blink
-                    temp_changes = 0x10; //Set the debug LED state to ON
-                }
-                else if ((!strcasecmp("med", arg)) || (!strcasecmp("200", arg)))
-                {
-                    btn.dbg_led_state = dbg_led_blink_200ms; //Set the debug LED state to MED blink
-                    temp_changes = 0x10; //Set the debug LED state to ON
-                }
-                else if ((!strcasecmp("slow", arg)) || (!strcasecmp("500", arg)))
-                {
-                    btn.dbg_led_state = dbg_led_blink_500ms; //Set the debug LED state to SLOW blink
-                    temp_changes = 0x10; //Set the debug LED state to ON
+                    if (value <= UINT8_MAX)
+                    {
+                        btn.dbg_led_state = (uint8_t)value; //Set the blink period
+                        temp_changes = 0x10; //Set the debug LED state to ON
+                    }
                 }
             }
 
@@ -724,7 +706,7 @@ void _sys_handler_node_set(void)
             if ((cmd == cmd_set_rgb_0) || (cmd == cmd_set_rgb_1) || (cmd == cmd_set_rgb_2))
             {
                 //If it is a colour, it could be an RGB hex value, or a colour name
-                if ((!strcasecmp("off", arg)) || (!strcasecmp("0", arg)))
+                if (!strcasecmp("off", arg))
                 {
                     int rgb_led_index = (cmd - cmd_set_rgb_0); //0 for cmd_set_rgb_0, 1 for cmd_set_rgb_1, 2 for cmd_set_rgb_2
                     btn.rgb_colour[rgb_led_index] = (uint32_t)0; //Set the RGB colour for this LED
@@ -740,7 +722,7 @@ void _sys_handler_node_set(void)
             else if (cmd == cmd_set_blink)
             {
                 //If it is a blink period, we are expecting ONLY an integer value
-                if ((!strcasecmp("off", arg)) || (!strcasecmp("0", arg)))
+                if ((!strcasecmp("off", arg)) || (!strcasecmp("stop", arg)))
                 {
                     btn.blink_ms = 0; //Set the blink period to 0 (off)
                     temp_changes = 0x08; //Set the blink period
@@ -753,36 +735,23 @@ void _sys_handler_node_set(void)
             }
             else if (cmd == cmd_set_dbg_led)
             {
-                //for the debug LED we have predefined states relating to blink rates
-                // dbg_led_off         = 0,
-                // dbg_led_on          = 1,
-                // dbg_led_blink_50ms  = 2,
-                // dbg_led_blink_200ms = 3,
-                // dbg_led_blink_500ms = 4,
-                if ((!strcasecmp("off", arg)) || (!strcasecmp("0", arg)))
+                if (!strcasecmp("off", arg))
                 {
                     btn.dbg_led_state = dbg_led_off; //Set the debug LED state to OFF
                     temp_changes = 0x10; //Set the debug LED state to ON
                 }
-                else if ((!strcasecmp("on", arg)) || (!strcasecmp("1", arg)))
+                else if (!strcasecmp("on", arg))
                 {
                     btn.dbg_led_state = dbg_led_on; //Set the debug LED state to ON
                     temp_changes = 0x10; //Set the debug LED state to ON
                 }
-                else if ((!strcasecmp("fast", arg)) || (!strcasecmp("50", arg)))
+                else if (str2uint32(&value, arg, 0))
                 {
-                    btn.dbg_led_state = dbg_led_blink_50ms; //Set the debug LED state to FAST blink
-                    temp_changes = 0x10; //Set the debug LED state to ON
-                }
-                else if ((!strcasecmp("med", arg)) || (!strcasecmp("200", arg)))
-                {
-                    btn.dbg_led_state = dbg_led_blink_200ms; //Set the debug LED state to MED blink
-                    temp_changes = 0x10; //Set the debug LED state to ON
-                }
-                else if ((!strcasecmp("slow", arg)) || (!strcasecmp("500", arg)))
-                {
-                    btn.dbg_led_state = dbg_led_blink_500ms; //Set the debug LED state to SLOW blink
-                    temp_changes = 0x10; //Set the debug LED state to ON
+                    if (value <= UINT8_MAX)
+                    {
+                        btn.dbg_led_state = (uint8_t)value; //Set the blink period
+                        temp_changes = 0x10; //Set the debug LED state to ON
+                    }
                 }
             }
             else if (cmd == cmd_set_switch)
@@ -887,7 +856,7 @@ void _sys_handler_node_set(void)
     }
 }
 
-#define NODE_MAX_GET_CMDS 9 //Maximum number of GET commands we can request from a node
+#define NODE_MAX_GET_CMDS 10 //Maximum number of GET commands we can request from a node
 void _sys_handler_node_get(void)
 {
     //These functions (_menu_handler....) are called from the console task, so they should 
@@ -908,7 +877,8 @@ void _sys_handler_node_get(void)
                                      0x0020 = switch reaction time, 
                                      0x0040 = time, 
                                      0x0080 = state flags
-                                     0x0100 = correction factor */
+                                     0x0100 = correction factor 
+                                     0x0200 = Version */
 
     while (console_arg_cnt() > 0)
 	{
@@ -977,7 +947,11 @@ void _sys_handler_node_get(void)
             }
             else if (cmd == cmd_get_sync)
             {
-                temp_request = BIT_POS(8); //Get the node flags
+                temp_request = BIT_POS(8); //Get the correction factor
+            }
+            else if (cmd == cmd_get_version)
+            {
+                temp_request = BIT_POS(9); //Get the version number
             }
             else
             {
@@ -1000,7 +974,7 @@ void _sys_handler_node_get(void)
     {
         if (valid_node_get_cmds == 0)
         {
-            iprintln(trALWAYS, "No GET commands specified. Please specify at least one command to read from node %d", _node);
+            iprintln(trALWAYS, "No GET commands specified. Please specify at least one value to read");
             help_requested = true;
         }
         else
@@ -1025,6 +999,7 @@ void _sys_handler_node_get(void)
                     case 0x0040: msg_success = add_node_msg_get_time(_node); break;
                     case 0x0080: msg_success = add_node_msg_get_flags(_node); break;
                     case 0x0100: msg_success = add_node_msg_get_correction(_node); break;
+                    case 0x0200: msg_success = add_node_msg_get_version(_node); break;
                     default: msg_success = false; break; //Skip any other bits
                 }
 
@@ -1061,15 +1036,9 @@ void _sys_handler_node_get(void)
                             break;
                         case 0x0010:
                             iprint(trALWAYS,   "Debug LED:    ");
-                            switch (btn->dbg_led_state)
-                            {
-                                case dbg_led_off:         iprintln(trALWAYS, "OFF"); break;
-                                case dbg_led_on:          iprintln(trALWAYS, "ON"); break;
-                                case dbg_led_blink_50ms:  iprintln(trALWAYS, "FAST blink (50 ms)"); break;
-                                case dbg_led_blink_200ms: iprintln(trALWAYS, "MED blink (200 ms)"); break;
-                                case dbg_led_blink_500ms: iprintln(trALWAYS, "SLOW blink (500 ms)"); break;
-                                default:                  iprintln(trALWAYS, "UNKNOWN (%d)", btn->dbg_led_state); break;
-                            }
+                            if (btn->dbg_led_state == dbg_led_off)      iprintln(trALWAYS, "OFF");
+                            else if (btn->dbg_led_state == dbg_led_on)  iprintln(trALWAYS, "ON");
+                            else                                        iprintln(trALWAYS, "BLINK (%dms)", btn->dbg_led_state*10);
                             break;
                         case 0x0020:
                             iprintln(trALWAYS, "Reaction:     %u ms", btn->reaction_ms);
@@ -1108,6 +1077,13 @@ void _sys_handler_node_get(void)
                         case 0x0100: 
                             iprintln(trALWAYS,   "Time Factor:  %.6f", btn->time_factor);
                             break;
+                        case 0x0200: 
+                            iprintln(trALWAYS,   "Version:      %d.%d.%d.%d", 
+                                (btn->version & 0x000000FF), 
+                                (btn->version & 0x0000FF00) >> 8, 
+                                (btn->version & 0x00FF0000) >> 16,
+                                (btn->version & 0xFF000000) >> 24);
+                            break;
                         default: msg_success = false; break; //Skip any other bits
                     }
 
@@ -1127,7 +1103,7 @@ void _sys_handler_node_get(void)
         iprintln(trALWAYS, "");
         iprintln(trALWAYS, "Usage: \"get <#> <cmd 1> [<cmd 2> ... <cmd n>]\"");
         iprintln(trALWAYS, "    <#>:  Node slot number (0 to %d)", RGB_BTN_MAX_NODES);
-        iprintln(trALWAYS, "        IMPORTANT: this MUST be the first argument in the stream");
+        iprintln(trALWAYS, "      If ommitted, the command(s) will be sent to all nodes in sequence");
         iprintln(trALWAYS, "    get <cmd X>: any node get COMMAND");
         iprintln(trALWAYS, "      rgb0|rgb1|rgb2: get the RGB colour for the specific RGB LED");
         iprintln(trALWAYS, "      blink: get the blink period (ms) for the button");
@@ -1136,6 +1112,7 @@ void _sys_handler_node_get(void)
         iprintln(trALWAYS, "      dbg:   get the debug LED state");
         iprintln(trALWAYS, "      time:  get the current time (32-bit unsigned ms value)");
         iprintln(trALWAYS, "      sync:  get the node's time correction factor");
+        iprintln(trALWAYS, "      version: get the node's firmware version");
         iprintln(trALWAYS, "      all:   get all node parameters (rgb0-2, blink, dbg, sw, flags, time, sync)");
     }
 }

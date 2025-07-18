@@ -80,6 +80,15 @@ void game_demo_main(void)
     uint32_t hue = (HUE_MAX *_count/_total_cycles)%HUE_MAX;
     hsv2rgb(hue, SAT_MAX, VAL_MAX, &rgb);
 
+    // //Get the flags for each node
+    // for (int i = 0; i < nodes_get_count(); i++)
+    // {
+    //     if (nodes_get_type(i) == nodeTypeRGB)
+    //     {
+    //         rgb |= nodes_get_address_mask(i);
+    //     }
+    // }
+
     init_bcst_msg(NULL, 0);
     if (add_bcst_msg_set_rgb(0, rgb))
         bcst_msg_tx_now();

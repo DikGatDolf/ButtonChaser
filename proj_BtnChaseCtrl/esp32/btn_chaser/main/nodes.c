@@ -42,12 +42,15 @@ includes
   #include "task_console.h"
 #endif
 #include "task_rgb_led.h"
-#include "task_comms.h"
 #include "str_helper.h"
 
 #define __NOT_EXTERN__
+#include "../../../../common/common_comms.h"
 #include "nodes.h"
 #undef __NOT_EXTERN__
+
+#include "task_comms.h"
+
 /*******************************************************************************
 Macros and Constants
  *******************************************************************************/
@@ -93,7 +96,6 @@ typedef struct
 {
     uint8_t             address; // The address of the node
     uint8_t             seq; // The last sequence number received from the node
-    uint8_t             flags; // The status flags for the node
     slave_node_cmd_t    responses;//[NODE_CMD_CNT_MAX]; // The last NODE_CMD_CNT_MAX commands, and associated data and responses sent/received
     bool                active; // The node is active (stopwatch running, probably blinking... but most importantly, it should not get broadcast messages)
     button_t            btn; // The button data for this node
@@ -118,7 +120,7 @@ void _rollcall_handler(uint8_t addr);
 
 void _check_all_pending_node_responses(void);
 void _response_handler(int slot, master_command_t resp_cmd, response_code_t resp, uint8_t *resp_data, size_t resp_data_len);
-size_t _response_payload_size(master_command_t cmd, response_code_t resp, size_t data_len_remaining);
+size_t _miso_payload_size(master_command_t cmd, response_code_t resp, size_t data_len_remaining);
 int _responses_pending(int slot);
 bool _resend_unresponsive_cmds(int slot);
 master_command_t _next_expected_response(int slot);
@@ -302,7 +304,7 @@ void _rollcall_handler(uint8_t addr)
     iprintln(trNODE, "#No space for 0x%02X", addr);
 }
 
-size_t _response_payload_size(master_command_t cmd, response_code_t resp, size_t data_len_remaining)
+size_t _miso_payload_size(master_command_t cmd, response_code_t resp, size_t data_len_remaining)
 {
     if (resp == resp_err_range)
         return 2; //2 bytes payload
@@ -310,58 +312,19 @@ size_t _response_payload_size(master_command_t cmd, response_code_t resp, size_t
     if ((resp == resp_err_payload_len) || (resp == resp_err_reject_cmd))
         return 1; //1 byte payload
 
-    if ((resp == resp_err_unknown_cmd) || (data_len_remaining <= 2))
+    if ((resp == resp_err_unknown_cmd) || (data_len_remaining == 0))
         return 0; //Nothing 
 
-    switch (cmd)
+    //means the response is OK, so we need to return the payload size based on the command
+    for (int i = 0; i < ARRAY_SIZE(cmd_table); i++)
     {
-        case cmd_roll_call:
-        case cmd_set_bitmask_index:
-        case cmd_bcast_address_mask:
-        case cmd_set_rgb_0:
-        case cmd_set_rgb_1:
-        case cmd_set_rgb_2:
-        case cmd_set_blink:
-        case cmd_set_switch:
-        case cmd_set_dbg_led:
-        case cmd_set_time:
-        case cmd_new_add:
-#if REMOTE_CONSOLE_SUPPORTED == 1
-        case cmd_wr_console_cont:
-#endif /* REMOTE_CONSOLE_SUPPORTED */
-        case cmd_none:
-            return 0; //No payload exp
-            break;
-
-        case cmd_get_rgb_0:           
-        case cmd_get_rgb_1:           
-        case cmd_get_rgb_2:           
-            return 3 * sizeof(uint8_t);
-            break;
-        
-        case cmd_get_blink:
-        case cmd_get_reaction:
-        case cmd_get_time:
-            return sizeof(uint32_t); 
-            break;
-            
-        case cmd_get_sync:
-            return sizeof(float);
-            break;
-
-        case cmd_get_flags:
-        case cmd_get_dbg_led:
-            return sizeof(uint8_t); 
-            break;
-
-#if REMOTE_CONSOLE_SUPPORTED == 1    
-        case cmd_wr_console_done:
-#endif /* REMOTE_CONSOLE_SUPPORTED */
-        case cmd_debug_0:
-        default:
-            return data_len_remaining - 2; //the remainder of data in the message (minus the 2 bytes for the response code and command)
-            break;
+        if (cmd_table[i].cmd == cmd)
+        {
+            //Found the command, so return the payload size
+            return MIN(cmd_table[i].miso_sz, data_len_remaining);
+        }
     }
+    return data_len_remaining; //the remainder of data in the message (minus the 2 bytes for the response code and command)
 }
 
 void _deregister_node(int node)
@@ -417,9 +380,11 @@ void _response_handler(int slot, master_command_t resp_cmd, response_code_t resp
         //     _cmd = (master_command_t) msg->data[_data_idx++];
         // _resp = (response_code_t)msg->data[_data_idx++]; //The 2nd byte is the response code
         // _resp_data = &msg->data[_data_idx]; //The rest of the data is the response data
-        // _resp_data_len = _response_payload_size(_cmd, _resp, payload_len - _data_idx); //The rest of the payload is the data
+        // _resp_data_len = _miso_payload_size(_cmd, _resp, payload_len - _data_idx); //The rest of the payload is the data
 
-        //Does this node have cmds waiting on responses
+    //iprintln(trNODE, "#RX 0x%02X for \"%s\" from Node %d. %d bytes", resp, cmd_to_str(resp_cmd), slot, resp_data_len);
+
+    //Does this node have cmds waiting on responses
     if (!is_node_valid(slot)) //Check if the slot is valid and has a registered button
         return; //Skip this slot
 
@@ -446,7 +411,7 @@ void _response_handler(int slot, master_command_t resp_cmd, response_code_t resp
     if (resp != resp_ok)
     {
         //We got an error response, so we can handle it
-        iprintln(trNODE, "#Node %d (0x%02X) sent error response (0x%02X) for \"%s\"", slot, get_node_addr(slot), resp, cmd_to_str(resp_cmd));
+        //iprintln(trNODE, "#Node %d (0x%02X) sent error response (0x%02X) for \"%s\"", slot, get_node_addr(slot), resp, cmd_to_str(resp_cmd));
         if (resp_data_len > 0)
         {
             iprint(trNODE, "# Additional data: ");
@@ -473,12 +438,16 @@ void _response_handler(int slot, master_command_t resp_cmd, response_code_t resp
             case cmd_get_flags:     member_offset = offsetof(button_t, flags);              break;
             case cmd_get_dbg_led:   member_offset = offsetof(button_t, dbg_led_state);      break;
             case cmd_get_time:      member_offset = offsetof(button_t, time_ms);            break;
-            case cmd_get_sync:      member_offset = offsetof(button_t, time_factor);       break;
+            case cmd_get_sync:      member_offset = offsetof(button_t, time_factor);        break;
+            case cmd_get_version:   member_offset = offsetof(button_t, version);            break;
             default:
                 //We don't have any data to save for these commands
                 return; //Skip this response, we can't handle it
                 break;
         }
+        iprint(trNODE, "#RX OK for \"%s\" from Node %d. Data: [", cmd_to_str(resp_cmd), slot);
+        for (int i = 0; i < resp_data_len; i++) iprint(trNODE, "%s%02X ", (i > 0)? " ":"", resp_data[i]);
+        iprintln(trNODE, "]");
         //Update the button member with the new value
         memcpy(((uint8_t *)&node_list[slot].btn) + (size_t)member_offset, (void *)resp_data, resp_data_len);
         node_list[slot].last_update_time = sys_poll_tmr_ms(); //Update the last update time for this node
@@ -606,8 +575,6 @@ bool node_msg_tx_now(uint8_t node, uint64_t wait_for_timeout)
     //This function will block whichever task it is called from until the response is received or the timeout expires.
     //The responses are handled in the main APP task, so this should NOT be called from the APP task, as it will block the console task and not allow the APP task to process the responses.
 
-    //RVN - TODO - Can we handle the COMMS responses here????
-
     uint64_t expiry_time = sys_poll_tmr_ms() + wait_for_timeout;
 
     //iprintln(trALWAYS, "Waiting for response from 0x%02X (%d cmd%s)", node_list[node].address, node_list[node].responses.cnt, (node_list[node].responses.cnt > 1) ? "s" : "");
@@ -656,6 +623,16 @@ bool add_node_msg_new_addr(uint8_t node, uint8_t new_addr)
 
      return _add_cmd_to_node_msg(node, cmd_new_add, &new_addr, sizeof(uint8_t), true);
 }
+
+// bool is_direct_node_cmd(master_command_t cmd)
+// {
+//     //Check if the command can be broadcast
+//     for (int i = 0; i < ARRAY_SIZE(cmd_table); i++)
+//         if (cmd_table[i].cmd == cmd)//Found the command, so return true if it can be broadcast
+//             return ((cmd_table[i].access_flags & CMD_TYPE_DIRECT) == CMD_TYPE_DIRECT)? true : false;
+
+//     return false; //Command not found
+// }
 
 bool add_node_msg_set_rgb(uint8_t node, uint8_t index, uint32_t rgb_col)
 {
@@ -739,6 +716,25 @@ bool add_node_msg_get_correction(uint8_t node)
     return _add_cmd_to_node_msg(node, cmd_get_sync, NULL, 0, false);
 }
 
+bool add_node_msg_get_version(uint8_t node)
+{
+    return _add_cmd_to_node_msg(node, cmd_get_version, NULL, 0, false);
+}
+
+size_t cmd_mosi_payload_size(master_command_t cmd)
+{
+    //means the response is OK, so we need to return the payload size based on the command
+    for (int i = 0; i < ARRAY_SIZE(cmd_table); i++)
+    {
+        if (cmd_table[i].cmd == cmd)
+        {
+            //Found the command, so return the payload size
+            return cmd_table[i].mosi_sz;
+        }
+    }
+    return 0; //the remainder of data in the message (minus the 2 bytes for the response code and command)
+}
+
 const char * cmd_to_str(master_command_t cmd)
 {
     switch (cmd)
@@ -754,6 +750,7 @@ const char * cmd_to_str(master_command_t cmd)
         case cmd_set_switch:            return "set_switch";
         case cmd_set_dbg_led:           return "set_dbg_led";
         case cmd_set_time:              return "set_time";
+        case cmd_set_sync:              return "set_sync";
         case cmd_new_add:               return "new_add";
         case cmd_get_rgb_0:             return "get_rgb_0";
         case cmd_get_rgb_1:             return "get_rgb_1";
@@ -763,6 +760,8 @@ const char * cmd_to_str(master_command_t cmd)
         case cmd_get_flags:             return "get_flags";
         case cmd_get_dbg_led:           return "get_dbg_led";
         case cmd_get_time:              return "get_time";
+        case cmd_get_sync:              return "get_sync";
+        case cmd_get_version:           return "get_version";
 #if REMOTE_CONSOLE_SUPPORTED == 1    
         case cmd_wr_console_cont:       return "wr_console_cont";
         case cmd_wr_console_done:       return "wr_console_done";
@@ -771,6 +770,16 @@ const char * cmd_to_str(master_command_t cmd)
         default:                        return "unknown";
     }
 }
+
+// bool is_bcst_cmd(master_command_t cmd)
+// {
+//     //Check if the command can be broadcast
+//     for (int i = 0; i < ARRAY_SIZE(cmd_table); i++)
+//         if (cmd_table[i].cmd == cmd)//Found the command, so return true if it can be broadcast
+//             return ((cmd_table[i].access_flags & CMD_TYPE_BROADCAST) == CMD_TYPE_BROADCAST)? true : false;
+
+//     return false; //Command not found
+// }
 
 void init_bcst_msg(int * exclude_nodes, int exclude_count)
 {
@@ -981,12 +990,13 @@ void node_parse_rx_msg(void)
             _cmd = (master_command_t) rx_msg.data[_data_idx++];
             _resp = (response_code_t)rx_msg.data[_data_idx++]; //The 2nd byte is the response code
             _resp_data = &rx_msg.data[_data_idx]; //The rest of the data is the response data
-            _resp_data_len = _response_payload_size(_cmd, _resp, payload_len - _data_idx); //The rest of the payload is the data
+            _resp_data_len = _miso_payload_size(_cmd, _resp, payload_len - _data_idx); //The rest of the payload is the data
+            //iprintln(trNODE, "#%d bytes payload for \"%s\" (Resp: 0x%02X, Total: %d, Index: %d)", _resp_data_len, cmd_to_str(_cmd), _resp, payload_len, _data_idx);
             _data_idx += _resp_data_len; //Move the data index forward by the command data length
 
             //We are expecting response messages in only 2 instances:
             // 1) Rollcall responses
-            // 2) Responses to commands sent to an ACTIVE node
+            // 2) Responses to directed commands sent to a node
             if (_cmd == cmd_roll_call)
             {
                 _rollcall_handler(rx_msg.hdr.src); //Handle the roll-call response
@@ -996,6 +1006,7 @@ void node_parse_rx_msg(void)
             else
             {
                 int node_slot = -1;
+                //iprintln(trNODE, "#RX 0x%02X for \"%s\" from Node 0x%02X. %d bytes", _resp, cmd_to_str(_cmd), rx_msg.hdr.src, _resp_data_len);
                 if (_get_adress_node_index(rx_msg.hdr.src, &node_slot))
                     _response_handler(node_slot, _cmd, _resp, _resp_data, _resp_data_len);
                 else //Response to a command sent directly to a node, but we are not waiting for a response (unless we are in a rollcall stage?)?????

@@ -41,6 +41,7 @@ includes
 
 #include "defines.h"
 
+
 #include "sys_utils.h"
 #include "hal_timers.h"
 #include "dev_rgb.h"
@@ -1101,7 +1102,11 @@ bool console_print_tag(const char * fmt, const char * tag)
     char fmt_char = pgm_read_byte(fmt);
     if ((fmt_char == '#') || (fmt_char == '!'))
     {
+#if CLOCK_CORRECTION_ENABLED == 1
         uint32_t t_now = sys_millis();
+#else
+        uint32_t t_now = millis();
+#endif /* CLOCK_CORRECTION_ENABLED */
         for (uint32_t div = 10000000; div >= 1; div /= 10)
         {
             uint8_t digit = (t_now / div) % 10;

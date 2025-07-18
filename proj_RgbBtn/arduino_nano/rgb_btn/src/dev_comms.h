@@ -14,7 +14,6 @@ includes
 ******************************************************************************/
 #include "Arduino.h"
 #include "sys_utils.h"
-#include "../../../../common/common_comms.h"
 /******************************************************************************
 Macros
 ******************************************************************************/
@@ -45,7 +44,7 @@ void dev_comms_blacklist_clear(void);
 
 bool dev_comms_verify_addr(uint8_t addr);
 
-unsigned int dev_comms_response_append(master_command_t cmd, response_code_t resp_code, uint8_t * data, uint8_t data_len, bool restart = false);
+unsigned int dev_comms_response_append(master_command_t cmd, response_code_t resp_code, uint8_t * data = NULL, uint8_t data_len = 0, bool restart = false);
 
 #if REMOTE_CONSOLE_SUPPORTED == 1    
 size_t dev_comms_response_add_byte(uint8_t data);

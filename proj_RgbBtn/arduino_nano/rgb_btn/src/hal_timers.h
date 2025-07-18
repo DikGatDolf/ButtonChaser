@@ -13,6 +13,7 @@ Include file for hal_timers.c
 includes
 ******************************************************************************/
 #include "Arduino.h"
+#include "defines.h"
 
 /******************************************************************************
 definitions
@@ -49,14 +50,6 @@ variables
 ******************************************************************************/
 
 /******************************************************************************
-Overridden Arduino functions
-******************************************************************************/
-unsigned long sys_millis();
-// unsigned long micros();
-// void delay(unsigned long ms);
-// void delayMicroseconds(unsigned int us);
-
-/******************************************************************************
 functions
 ******************************************************************************/
 /*! Initializes the timer module. This function must be called before any other
@@ -64,6 +57,12 @@ functions
  *  structures.
  */
 void sys_tmr_init(void);
+
+#if CLOCK_CORRECTION_ENABLED == 1
+unsigned long sys_millis();
+// unsigned long micros();
+// void delay(unsigned long ms);
+// void delayMicroseconds(unsigned int us);
 
 /*! Sets the correction factor for the system time. This can be used to adjust 
  *  the system time for clock drift or other timing issues.
@@ -74,6 +73,7 @@ void sys_tmr_init(void);
 void sys_time_correction_factor_set(float correction);
 void sys_time_correction_factor_reset(void);
 float sys_time_correction_factor(void);
+#endif /* CLOCK_CORRECTION_ENABLED */
 
 
 /*! Starts a timer with a callback function and an interval. This timer is 

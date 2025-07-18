@@ -50,6 +50,7 @@ From Arduinos' HardwareSerial.cpp:
 #include "Arduino.h"
 
 #include "defines.h"
+
 #include "sys_utils.h"
 
 #define __NOT_EXTERN__

@@ -28,12 +28,14 @@ This (slave) device  is responsible for:
 //#include <SPI.h>
 #include "defines.h"
 
-//#include "devMotorControl.h"
-//#include "halAMT203.h"
-//#include "halTLC5615.h"
-//#include "paramCtrl.h"
+
 #include "sys_utils.h"
 #include "str_helper.h"
+
+#define __NOT_EXTERN__
+#include "../../../../common/common_comms.h"
+#undef __NOT_EXTERN__
+
 #include "hal_timers.h"
 #include "dev_rgb.h"
 #include "dev_comms.h"
@@ -43,7 +45,6 @@ This (slave) device  is responsible for:
 #ifdef CONSOLE_ENABLED
 #include "dev_console.h"
 #endif
-
 
 #ifdef PRINTF_TAG
 #undef PRINTF_TAG
@@ -81,10 +82,13 @@ void deactivate_button(uint8_t method);
 void address_update(void);
 
 void msg_process(void);
-bool rollcall_msg_handler(uint8_t _cmd, uint8_t _src, uint8_t _dst);
+bool rollcall_msg_handler(master_command_t _cmd, uint8_t _src, uint8_t _dst);
 void send_roll_call_response(void);
-bool read_cmd_payload(uint8_t cmd, uint8_t * dst, uint8_t len);
-uint8_t read_msg_data(uint8_t * dst, uint8_t len);
+bool read_cmd_payload(master_command_t cmd, uint8_t * dst);
+uint8_t read_msg_data(uint8_t * dst, uint8_t len = 1);
+uint8_t _cmd_rx_payload_size(master_command_t cmd);
+uint8_t _cmd_ok_tx_payload_size(master_command_t cmd);
+void _response_ok_append(master_command_t cmd, uint8_t * data = NULL);
 
 void state_machine_handler(void);
 void _rx_handler_state_un_reg(uint8_t _cmd);
@@ -107,11 +111,11 @@ void tmr_debug_led(void);
 void(*resetFunc)(void) = 0; //declare reset function at address 0
 #if REDUCE_CODESIZE==0
     void _sys_handler_time(void);
-#endif
+#endif  /* REDUCE_CODESIZE */
 void _sys_handler_reset(void);
 #if (DEV_RGB_DEBUG == 1)
 void _sys_handler_led(void);
-#endif
+#endif /* DEV_RGB_DEBUG */
 //bool menuVersion(void);
 /*! Displays the application version
  */
@@ -154,12 +158,10 @@ static console_menu_item_t _main_menu_items[] =
 #if REDUCE_CODESIZE==0
     {"time",     _sys_handler_time,   "Displays the uptime of the program" }
     {"crc",     _sys_handler_crc,       "CRC-8 calculator"},
-#endif /* REDUCE_CODESIZE */
     {"ram",     _sys_handler_dump_ram,  "Display RAM"},
     {"flash",   _sys_handler_dump_flash,"Display FLASH"},
-  #if REDUCE_CODESIZE==0
     {"version", _sys_handler_version,   "Displays app version"},
-  #endif /* REDUCE_CODESIZE */
+#endif /* REDUCE_CODESIZE */
 };
 #endif /* CONSOLE_ENABLED */
 #endif /* MAIN_DEBUG */
@@ -184,7 +186,7 @@ uint32_t roll_call_time_ms = 0; //The time we have to wait for the roll-call to 
 
 //bool response_msg_due = false;
 
-uint8_t my_version = PROJECT_VERSION;
+uint32_t my_version = PROJECT_VERSION; //The version of this device
 
 //uint8_t send_ack_nak = 0x00;
 
@@ -196,17 +198,18 @@ typedef struct {
     uint8_t rd_index;
 } rx_msg_t;
 
-rx_msg_t msg = {0};
+rx_msg_t rx_msg = {0};
 
 stopwatch_ms_t reaction_time_sw;
-unsigned long reaction_time_ms;
+uint32_t reaction_time_ms;
 
 uint8_t system_flags = flag_unreg; //The state of the button (pressed or not pressed)
 
-uint8_t dbg_led_state = 0; //0 = off, 1 = on, 2 = blinking fast, 3 = blinking slow
+uint8_t dbg_led_state = 0; //0 = off, 0xff = on, everything else is the blink rate in 10ms intervals (i.e. 1 = 10ms, 2 = 20ms, .... 253 = 2530ms, 254 = 2540ms)
 bool dbg_led_output; //The output state for the debug LED pin
 
 uint32_t time_ms_offset = 0lu; //The time offset for the system time (in ms)
+
 /*******************************************************************************
  Functions
  *******************************************************************************/
@@ -281,16 +284,10 @@ void dbg_led(dbg_blink_state_t state)
         case dbg_led_on:
             break;
         case dbg_led_blink_50ms:
-            sys_cb_tmr_start(tmr_debug_led, 50lu, true);
-            break;
         case dbg_led_blink_200ms:
-            sys_cb_tmr_start(tmr_debug_led, 200lu, true);
-            break;
         case dbg_led_blink_500ms:
-            sys_cb_tmr_start(tmr_debug_led, 500lu, true);
-            break;
         default:
-            //Do nothing
+            sys_cb_tmr_start(tmr_debug_led, state*10lu, true);
             break;
     }
 }
@@ -332,7 +329,7 @@ void loop() {
 void button_long_press(void)
 {
     system_flags |= flag_l_press;
-    iprintln(trMAIN, "#Btn: Long Press");
+    //iprintln(trMAIN, "#Btn: Long Press");
 #if DEBUG_LED_ACTIONS == 1
     sys_stopwatch_ms_start(&reaction_time_sw);
     blink_stop();
@@ -343,7 +340,7 @@ void button_long_press(void)
 void button_double_press(void)
 {
     system_flags |= flag_d_press;
-    iprintln(trMAIN, "#Btn: Dbl Press");
+    //iprintln(trMAIN, "#Btn: Dbl Press");
 #if DEBUG_LED_ACTIONS == 1
     if (blink_period_ms > 0)
     {
@@ -359,7 +356,7 @@ void button_double_press(void)
 void button_press(void)
 {
     system_flags |= flag_s_press;
-    iprintln(trMAIN, "#Btn: Short Press");
+    //iprintln(trMAIN, "#Btn: Short Press");
 }
 
 void button_down(void)
@@ -375,7 +372,7 @@ void deactivate_button(uint8_t method)
     if (reaction_time_sw.running)
     {
         reaction_time_ms = sys_stopwatch_ms_stop(&reaction_time_sw);
-        system_flags |= method;
+        system_flags |= (method & (flag_deactivated | flag_sw_stopped));
         blink_stop(); //Stop blinking if we are measuring the reaction time
         dev_rgb_set_colour(colour[2].rgb); //Set the tertiary colour as the new colour
         iprintln(trMAIN, "#Time: %lu ms (%d)", reaction_time_ms, method);
@@ -425,6 +422,7 @@ void blink_stop(void)
 
 void blink_action(void)
 {
+    //RVN-TODO should probably keep the colours unchanged and just swop the index being used by the blinking....
     //Swop the colours on the RGB LED
     SWOP_U32(colour[0].rgb, colour[1].rgb);
     //Set the new colour
@@ -469,12 +467,20 @@ void address_update(void)
     //Reset the comms address to that which we got from the NVstore
 }
 
+typedef union {
+    uint8_t u8_val;
+    uint16_t u16_val;
+    uint32_t u32_val;
+    float f_val;
+    uint8_t data[sizeof(uint32_t)]; //Max size is 4 bytes (uint32_t)
+} cmd_payload_u;
+
 void msg_process(void)
 {
-    uint8_t _u8_val = 0;
-    uint16_t _u16_val = 0;
-    uint32_t _u32_val = 0;
-    float _fl_val = 0.0f;
+    cmd_payload_u cmd_payload;
+    // uint8_t _u8_val = 0;
+    // uint16_t _u16_val = 0;
+    // uint32_t _u32_val = 0;
     uint8_t _cnt = 0;
     bool accept_msg = false; //We start off NOT accepting broadcast messages (yet)
     master_command_t _cmd;
@@ -487,23 +493,23 @@ void msg_process(void)
         //Fall through to ensure we read the other nodes' responses to populate our blacklist
 
     //Have we received anything?
-    msg.len = dev_comms_rx_msg_available(&msg.src, &msg.dst, msg.data);
-    if (msg.len == 0)
+    rx_msg.len = dev_comms_rx_msg_available(&rx_msg.src, &rx_msg.dst, rx_msg.data);
+    if (rx_msg.len == 0)
         return; //Nothing to process
 
-    msg.rd_index = 0; //Set the read pointer to the start of the data array
+    rx_msg.rd_index = 0; //Set the read pointer to the start of the data array
 
-    if (msg.dst == _myAddr) 
+    if (rx_msg.dst == _myAddr) 
         _can_respond = true; //We are accepting messages addressed to us
 
     //Have we received anything?
-    while (read_msg_data((uint8_t *)&_cmd, 1) > 0)
+    while (read_msg_data((uint8_t *)&_cmd) > 0)
     {
         //Check for a roll-call first
-        if (rollcall_msg_handler(_cmd, msg.src, msg.dst))
+        if (rollcall_msg_handler(_cmd, rx_msg.src, rx_msg.dst))
             return; //Handled the roll-call message already (or ignored it)
 
-        if (msg.src != ADDR_MASTER)
+        if (rx_msg.src != ADDR_MASTER)
             return;//   //Going forward, we only care about messages from the master device
         
         //We are accepting direct messages IF we are WAITING or IDLE
@@ -511,7 +517,7 @@ void msg_process(void)
             accept_msg = (reg_state >= waiting)? true : false;
 
         //If we are not accepting messages, we need to check if this is a broadcast message
-        if (msg.dst == ADDR_BROADCAST)
+        if (rx_msg.dst == ADDR_BROADCAST)
         {
             //Even for broadcast msgs there are limits... e.g. no information can be "READ", and no console commands can be executed
             if (_cmd >= cmd_set_bitmask_index)
@@ -525,24 +531,24 @@ void msg_process(void)
         if ((!accept_msg) && ((_cnt > 0) || (_cmd != cmd_bcast_address_mask)))
         {
             //Not really an error....
-            //iprintln(trALWAYS, "!Msg not for us (0x%02X)", msg.dst);
+            //iprintln(trALWAYS, "!Msg not for us (0x%02X)", rx_msg.dst);
             return;
         }
         
         // if (reg_state != idle)
         //     continue; //We are not in the idle state, so we don't care about anything else
         
-        //iprintln(trALWAYS, "#Parsing: 0x%02X for 0x%02X", _cmd, msg.dst);
+        //iprintln(trALWAYS, "#Parsing: 0x%02X for 0x%02X", _cmd, rx_msg.dst);
 
         switch (_cmd)
         {
             case cmd_bcast_address_mask:
             {
-                if (read_cmd_payload(_cmd, (uint8_t *)&_u32_val, sizeof(uint32_t)))
+                if (read_cmd_payload(_cmd, (uint8_t *)&cmd_payload))
                 {
                     //iprint(trALWAYS, "#BCST 0x%08X & 0x%08X : ", BIT_POS(my_mask_index), _u32_val);
                     //We need to check if the broadcast message applies to us or not
-                    accept_msg = is_bcast_msg_for_me(_u32_val)? true : false;
+                    accept_msg = is_bcast_msg_for_me(cmd_payload.u32_val)? true : false;
                     //iprintln(trALWAYS, "%s", accept_msg? "YES" : "NO");
                 }
                 //else //read failure already handled in read_cmd_payload()
@@ -553,13 +559,13 @@ void msg_process(void)
             case cmd_set_rgb_1:
             case cmd_set_rgb_2:
             {
-                if (read_cmd_payload(_cmd, (uint8_t *)&_u32_val, (3*sizeof(uint8_t))))
+                if (read_cmd_payload(_cmd, (uint8_t *)&cmd_payload))
                 {
                     //If we are not blinking, this will have no effect
                     sys_cb_tmr_stop(blink_action);
 
                     //blink_pause(); //pause blinking if we are changing LED colours
-                    colour[_cmd - cmd_set_rgb_0].rgb = _u32_val;
+                    colour[_cmd - cmd_set_rgb_0].rgb = cmd_payload.u32_val;
                     //If we are changing the primary colour, we need to set it now
                     if (_cmd == cmd_set_rgb_0)
                         dev_rgb_set_colour(colour[0].rgb);
@@ -568,8 +574,7 @@ void msg_process(void)
                     if (blink_period_ms > 0)
                         sys_cb_tmr_start(blink_action, blink_period_ms, true);
 
-                    if (_can_respond) 
-                        dev_comms_response_append(_cmd, resp_ok, NULL, 0);
+                    _response_ok_append(_cmd);
                 }
                 //else //read failure already handled in read_cmd_payload()
                 break;
@@ -577,32 +582,32 @@ void msg_process(void)
             
             case cmd_set_blink:
             {
-                if (read_cmd_payload(_cmd, (uint8_t *)&_u32_val, sizeof(uint32_t)))
+                if (read_cmd_payload(_cmd, (uint8_t *)&cmd_payload))
                 {
                     blink_stop(); //Stop blinking if we are measuring the reaction time
-                    if (_u32_val > 0) //Only restart the timer if the period is > 0
-                        blink_start(_u32_val); //Start blinking at the specified intervals
-                    if (_can_respond) 
-                        dev_comms_response_append(_cmd, resp_ok, NULL, 0);
+                    if (cmd_payload.u32_val > 0) //Only restart the timer if the period is > 0
+                        blink_start(cmd_payload.u32_val); //Start blinking at the specified intervals
+                    _response_ok_append(_cmd);
                 }
                 break;
             }   
             
             case cmd_set_switch:
             {
-                if (read_cmd_payload(_cmd, &_u8_val, sizeof(uint8_t)))
+                if (read_cmd_payload(_cmd, (uint8_t *)&cmd_payload))
                 {
-                    if (_u8_val > 1)
+                    if (cmd_payload.u8_val > 1)
                     {
-                        iprintln(trALWAYS, "#Invalid value (%d > %d)", _u8_val, 1);
+                        iprintln(trALWAYS, "#Invalid value (%d > %d)", cmd_payload.u8_val, 1);
                         if (_can_respond) 
                         {
-                            _u16_val = (0x0001) | (_u8_val << 8);
-                            dev_comms_response_append(_cmd, resp_err_range, (uint8_t *)&_u16_val, sizeof(uint16_t));
+                            //cmd_payload.data[0] should already contain the incorrect value
+                            cmd_payload.data[1] = 1;
+                            dev_comms_response_append(_cmd, resp_err_range, (uint8_t *)&cmd_payload.u16_val, sizeof(uint16_t));
                         }
                         break; // from switch... continue with the next command
                     }
-                    else if (_u8_val == 1)
+                    else if (cmd_payload.u8_val == 1)
                     {
                         system_flags |= flag_activated;
                         reaction_time_ms = 0lu;
@@ -614,29 +619,29 @@ void msg_process(void)
                         //if the stopwatch was running, we return the elapsed time.
                         deactivate_button(flag_deactivated);
                     }
-                    if (_can_respond) 
-                        dev_comms_response_append(_cmd, resp_ok, NULL, 0);
+                    _response_ok_append(_cmd);
                 }
                 break;
             }
             
             case cmd_set_dbg_led:
             {
-                if (read_cmd_payload(_cmd, (uint8_t*)&_u8_val, sizeof(uint8_t)))
+                if (read_cmd_payload(_cmd, (uint8_t*)&cmd_payload))
                 {
-                    if (_u8_val >= dbg_led_state_limit)
-                    {
-                        iprintln(trALWAYS, "#Invalid index (%d > %d)", _u8_val, RGB_BTN_MAX_NODES);
-                        if (_can_respond)
-                        {
-                            _u16_val = (0x00FF & (dbg_led_state_limit - 1)) | (_u8_val << 8);
-                            dev_comms_response_append(_cmd, resp_err_range, (uint8_t *)&_u16_val, sizeof(uint16_t));
-                        }
-                        break;
-                    }
-                    dbg_led((dbg_blink_state_t)_u8_val); //Set the debug LED state
-                    if (_can_respond) 
-                        dev_comms_response_append(_cmd, resp_ok, NULL, 0);
+                    //Range checking removed on the debug led
+                    // if (cmd_payload.u8_val >= dbg_led_state_limit)
+                    // {
+                    //     iprintln(trALWAYS, "#Invalid index (%d > %d)", cmd_payload.u8_val, RGB_BTN_MAX_NODES);
+                    //     if (_can_respond)
+                    //     {
+                    //         //cmd_payload.data[0] should already contain the incorrect value
+                    //         cmd_payload.data[1] = dbg_led_state_limit - 1; //Set the maximum value
+                    //         dev_comms_response_append(_cmd, resp_err_range, (uint8_t *)&cmd_payload.u16_val, sizeof(uint16_t));
+                    //     }
+                    //     break;
+                    // }
+                    dbg_led((dbg_blink_state_t)cmd_payload.u8_val); //Set the debug LED state
+                    _response_ok_append(_cmd);
                 }
                 //else //read failure already handled in read_cmd_payload()
                 break;
@@ -644,26 +649,30 @@ void msg_process(void)
 
             case cmd_set_time:
             {
-                if (read_cmd_payload(_cmd, (uint8_t *)&_u32_val, sizeof(uint32_t)))
+                if (read_cmd_payload(_cmd, (uint8_t *)&cmd_payload))
                 {
-                    time_ms_offset = sys_millis() - _u32_val; //Set the time offset to the specified value
-                    if (_can_respond)
-                        dev_comms_response_append(_cmd, resp_ok, NULL, 0);
+#if CLOCK_CORRECTION_ENABLED == 1
+                    time_ms_offset = sys_millis() - cmd_payload.u32_val; //Set the time offset to the specified value
+#else
+                    time_ms_offset = millis() - cmd_payload.u32_val;
+#endif /* CLOCK_CORRECTION_ENABLED */
+                    _response_ok_append(_cmd);
                 }
                 break;
             }   
 
+#if CLOCK_CORRECTION_ENABLED == 1
             case cmd_set_sync:
             {
-                if (read_cmd_payload(_cmd, (uint8_t *)&_u32_val, sizeof(uint32_t)))
+                if (read_cmd_payload(_cmd, (uint8_t *)&cmd_payload))
                 {
-                    if (_u32_val == 0xFFFFFFFF)
+                    if (cmd_payload.u32_val == 0xFFFFFFFF)
                     {
                         //This forces a reset of the correction value
                         sys_time_correction_factor_reset(); //Set the time correction factor
                         iprintln(trALWAYS, "#Correction Factor reset");
                     }
-                    else if (_u32_val == 0)
+                    else if (cmd_payload.u32_val == 0)
                     {
                         //This indicates the start of the sync process
                         sys_stopwatch_ms_start(&sync_sw); //Start the stopwatch for the sync process
@@ -671,47 +680,49 @@ void msg_process(void)
                     }
                     else
                     {
+                        float _fl_val = 0.0f;
                         char buff[16];
                         if (!sync_sw.running)
                         {
                             iprintln(trALWAYS, "#Not Sync'ing");
                             if (_can_respond) 
                             {
-                                _u8_val = 0x01; //Indicate that we are not syncing
-                                dev_comms_response_append(_cmd, resp_err_reject_cmd, (uint8_t *)&_u8_val, sizeof(uint8_t));
+                                cmd_payload.u8_val = 0x01; //Indicate that we are not syncing
+                                dev_comms_response_append(_cmd, resp_err_reject_cmd, (uint8_t *)&cmd_payload.u8_val, sizeof(uint8_t));
                             }
                             break;
                         }
                         uint32_t my_elapsed_time_ms = sys_stopwatch_ms_stop(&sync_sw); //Stop the stopwatch for the sync process
-                        iprintln(trALWAYS, "#Sync stopped after %lu ms (%lu ms)", my_elapsed_time_ms, _u32_val);
+                        iprintln(trALWAYS, "#Sync stopped after %lu ms (%lu ms)", my_elapsed_time_ms, cmd_payload.u32_val);
                         //This is now the end of the sync process.... the value is the time in milliseconds measured by the master
-                        _fl_val = (float)_u32_val / (float)my_elapsed_time_ms; //Calculate the time correction factor
+                        _fl_val = (float)cmd_payload.u32_val / (float)my_elapsed_time_ms; //Calculate the time correction factor
                         sys_time_correction_factor_set(_fl_val); //Set the time correction factor
-                        iprintln(trALWAYS, "#Time correction factor: %s", float2str(buff, (double)_fl_val, 8, 16));
+                        iprintln(trALWAYS, "#Time correction factor: %s", float2str(buff, (float)_fl_val, 8, 16));
                     }
-                    if (_can_respond)
-                        dev_comms_response_append(_cmd, resp_ok, NULL, 0);
+                    _response_ok_append(_cmd);
                 }
                 break;
             }
+#endif /* CLOCK_CORRECTION_ENABLED */
 
             case cmd_set_bitmask_index:
             {
                 //We are being registered by the master, so we need to set our address bit mask
-                if (read_cmd_payload(_cmd, &_u8_val, sizeof(uint8_t)))
+                if (read_cmd_payload(_cmd, (uint8_t *)&cmd_payload))
                 {
-                    if (((int8_t)_u8_val < 0) || ((int8_t)_u8_val > RGB_BTN_MAX_NODES))
+                    if (cmd_payload.u8_val > RGB_BTN_MAX_NODES)
                     {
-                        iprintln(trALWAYS, "#Invalid index (%d > %d)", _u8_val, RGB_BTN_MAX_NODES);
-                        _u16_val = (0x00FF & RGB_BTN_MAX_NODES) | (_u8_val << 8);
-                        dev_comms_response_append(_cmd, resp_err_range, (uint8_t *)&_u16_val, sizeof(uint16_t));
+                        iprintln(trALWAYS, "#Invalid index (%d > %d)", cmd_payload.u8_val, RGB_BTN_MAX_NODES);
+                        //cmd_payload.data[0] should already contain the incorrect value
+                        cmd_payload.data[1] = RGB_BTN_MAX_NODES - 1; //Set the maximum value
+                        dev_comms_response_append(_cmd, resp_err_range, (uint8_t *)&cmd_payload.u16_val, sizeof(uint16_t));
                         break; // from switch... continue with the next command
                     }
-                    my_mask_index = (int8_t)_u8_val; //Set the address bit mask for this device
+                    my_mask_index = (int8_t)cmd_payload.u8_val; //Set the address bit mask for this device
                     iprintln(trALWAYS, "#State: IDLE (Index: %d)", my_mask_index);
                     reg_state = idle; //We are now in the "idle" state
                     dbg_led(dbg_led_off); //Turn off the debug LED blinking
-                    dev_comms_response_append(_cmd, resp_ok, NULL, 0);
+                    _response_ok_append(_cmd);
                     // sys_poll_tmr_start(&debug_tmr, 1000lu, true);
                 }
                 //else //read failure already handled in read_cmd_payload()
@@ -721,34 +732,35 @@ void msg_process(void)
             case cmd_new_add:
             {
                 //The master is assigning a new address to us, so we need to set it
-                if (read_cmd_payload(_cmd, (uint8_t *)&_u8_val, sizeof(uint8_t)))
+                if (read_cmd_payload(_cmd, (uint8_t *)&cmd_payload))
                 {
 #if (DEV_COMMS_DEBUG == 1)
                     //Special case: 0xFF is used to indicate that the master wants us to reset our address
-                    if ((_u8_val == 0xFF) && (msg.dst == ADDR_BROADCAST))
+                    if ((cmd_payload.u8_val == 0xFF) && (rx_msg.dst == ADDR_BROADCAST))
                     {
                         //This is a broadcast message that does not get a response
                         //Start by resetting the blacklist of addresses
                         dev_comms_blacklist_clear();
                         _u8_val = dev_comms_addr_new();
-                        dev_nvstore_write(&_u8_val, sizeof(uint8_t)); //Save the new address to the NV store
+                        dev_nvstore_write(&cmd_payload.u8_val, sizeof(uint8_t)); //Save the new address to the NV store
                         //Reset right now
-                        iprintln(trALWAYS, "#Resetting device (new address: 0x%02X)", _u8_val);
+                        iprintln(trALWAYS, "#Resetting device (new address: 0x%02X)", cmd_payload.u8_val);
                         console_flush(); //Flush the console output before resetting
                         resetFunc(); //This will reset the device and re-initialise the comms
                     }
 #endif
-                    if (!dev_comms_verify_addr(_u8_val))
+                    if (!dev_comms_verify_addr(cmd_payload.u8_val))
                     {
-                        iprintln(trALWAYS, "#Invalid address (%d)", _u8_val);
-                        _u16_val = (0x00FF & dev_comms_addr_get() ) | (_u8_val << 8);
-                        dev_comms_response_append(_cmd, resp_err_range, (uint8_t *)&_u16_val, sizeof(uint16_t));
+                        iprintln(trALWAYS, "#Invalid address (%d)", cmd_payload.u8_val);
+                        //cmd_payload.data[0] should already contain the incorrect value
+                        cmd_payload.data[1] = dev_comms_addr_get();
+                        dev_comms_response_append(_cmd, resp_err_range, (uint8_t *)&cmd_payload.u16_val, sizeof(uint16_t));
                         break;
                     }
-                    dev_nvstore_write(&_u8_val, sizeof(uint8_t)); //Save the new address to the NV store
-                    dev_comms_response_append(_cmd, resp_ok, NULL, 0);
+                    dev_nvstore_write(&cmd_payload.u8_val, sizeof(uint8_t)); //Save the new address to the NV store
+                    _response_ok_append(_cmd);
                     //This response will still be sent using the old address... it will be updated in the next loop iteration
-                    iprintln(trALWAYS, "#New Address set from Master: 0x%02X", _u8_val);
+                    iprintln(trALWAYS, "#New Address set from Master: 0x%02X", cmd_payload.u8_val);
                 }
                 //else //read failure already handled in read_cmd_payload()
                 break;
@@ -758,23 +770,20 @@ void msg_process(void)
             case cmd_get_rgb_1:
             case cmd_get_rgb_2:
             {
-                _u32_val = colour[_cmd-cmd_get_rgb_0].rgb;
-                dev_comms_response_append(_cmd, resp_ok, (uint8_t*)&_u32_val, (3*sizeof(uint8_t)));
+                _response_ok_append(_cmd, (uint8_t*)&colour[_cmd-cmd_get_rgb_0].rgb);
                 break;
             }
 
             case cmd_get_blink:
             {
-                _u32_val = blink_period_ms; //Get the period of the timer
-                dev_comms_response_append(_cmd, resp_ok, (uint8_t*)&_u32_val, sizeof(uint32_t));
+                _response_ok_append(_cmd, (uint8_t*)&blink_period_ms);
                 break;
             }
 
             case cmd_get_reaction:
             {
                 //We're not even bothering with reading a payload....
-                _u32_val = reaction_time_ms;
-                dev_comms_response_append(_cmd, resp_ok, (uint8_t*)&_u32_val, sizeof(uint32_t));
+                _response_ok_append(_cmd, (uint8_t*)&reaction_time_ms);
                 break;
             }
             
@@ -782,7 +791,7 @@ void msg_process(void)
             {
                 //We're not even bothering with reading a payload....
                 //read_cmd_payload(_cmd, NULL);   // No data to read
-                dev_comms_response_append(_cmd, resp_ok, (uint8_t*)&system_flags, sizeof(uint8_t));
+                _response_ok_append(_cmd, (uint8_t*)&system_flags);
                 //Now we can clear the edge-detect flags that we have read
                 system_flags &= ~(flag_s_press | flag_l_press | flag_d_press | flag_activated | flag_deactivated | flag_sw_stopped);
                 break;
@@ -790,23 +799,37 @@ void msg_process(void)
 
             case cmd_get_dbg_led:
             {
-                dev_comms_response_append(_cmd, resp_ok, (uint8_t*)&dbg_led_state, sizeof(uint8_t));
+                _response_ok_append(_cmd, (uint8_t*)&dbg_led_state);
                 break;
             }
 
             case cmd_get_time:
             {
                 //We're not even bothering with reading a payload....
-                _u32_val = sys_millis() - time_ms_offset; //Get the current time in milliseconds
-                dev_comms_response_append(_cmd, resp_ok, (uint8_t*)&_u32_val, sizeof(uint32_t));
+#if CLOCK_CORRECTION_ENABLED == 1
+
+                cmd_payload.u32_val = sys_millis() - time_ms_offset; //Get the current time in milliseconds
+#else
+                cmd_payload.u32_val = millis() - time_ms_offset; //Get the current time in
+#endif /* CLOCK_CORRECTION_ENABLED */
+                _response_ok_append(_cmd, (uint8_t*)&cmd_payload.u32_val);
                 break;
             }
 
+#if CLOCK_CORRECTION_ENABLED == 1
             case cmd_get_sync:
             {
+                float _fl_val = 0.0f;
                 //We're not even bothering with reading a payload....
                 _fl_val = sys_time_correction_factor(); //Get the current time correction factor
-                dev_comms_response_append(_cmd, resp_ok, (uint8_t*)&_fl_val, sizeof(float));
+                _response_ok_append(_cmd, (uint8_t*)&_fl_val);
+                break;
+            }
+#endif /* CLOCK_CORRECTION_ENABLED */
+            case cmd_get_version:
+            {
+                //We're not even bothering with reading a payload....
+                _response_ok_append(_cmd, (uint8_t*)&my_version);
                 break;
             }
 
@@ -816,7 +839,7 @@ void msg_process(void)
             {
                 uint8_t _data[RGB_BTN_MSG_MAX_LEN - sizeof(comms_msg_hdr_t) - sizeof(uint8_t)];
                 memset(_data, 0, sizeof(_data));
-                if (read_cmd_payload(_cmd, _data, (msg.len - msg.rd_index)))
+                if (read_cmd_payload(_cmd, _data, (rx_msg.len - rx_msg.rd_index)))
                 {
                     for (int8_t i = 0; (i < ((int8_t)sizeof(_data))) && (_data[i] > 0); i++)
                         console_read_byte(_data[i]);
@@ -825,12 +848,12 @@ void msg_process(void)
                         //iprintln(trALWAYS, "#Console: \"%s\"", _data);
                         //Maybe wise to turn OFF all COMMS and HAL_SERIAL traces while this is happening?
                         console_enable_alt_output_stream(dev_comms_response_add_byte);
-                        dev_comms_response_append(cmd_wr_console_cont, resp_ok, NULL, 0);
+                        _response_ok_append(cmd_wr_console_cont);
                         console_read_byte('\n');
                         console_service(); //This *should* pipe the output to the alternate stream and reset it back to stdout once it is done
                         if (!dev_comms_transmit_now()) //Send the response message now
-                            iprintln(trALWAYS, "!Sending console response msg");
-                        dev_comms_response_append(cmd_wr_console_done, resp_ok, NULL, 0);
+                            iprintln(trALWAYS, "!Sending console response rx_msg");
+                        _response_ok_append(cmd_wr_console_done);
                     }
                 }
                 //else //read failure already handled in read_cmd_payload()
@@ -844,7 +867,7 @@ void msg_process(void)
                 iprintln(trALWAYS, "!Unknown Cmd: 0x%02X", _cmd);
                 //Unkown/unhandled command.... return error (NAK?) to master
                 if (_can_respond)
-                    dev_comms_response_append(_cmd, resp_err_unknown_cmd, NULL, 0);
+                    dev_comms_response_append(_cmd, resp_err_unknown_cmd);
                 break;
             }
         }
@@ -853,43 +876,78 @@ void msg_process(void)
     }
 
     //If we have a response ready for a direct message, we need to send it immediately, (without waiting for bus silence)
-    if ((msg.src == ADDR_MASTER) && (_can_respond) && (reg_state >= waiting))
+    if ((rx_msg.src == ADDR_MASTER) && (_can_respond) && (reg_state >= waiting))
         if (!dev_comms_transmit_now()) //Send the response message now
             iprintln(trALWAYS, "!Tx response");
 }
 
 uint8_t read_msg_data(uint8_t * dst, uint8_t len)
 {
-    uint8_t data_len = min(msg.len, sizeof(msg.data));
+    uint8_t data_len = min(rx_msg.len, sizeof(rx_msg.data));
 
     // iprintln(trMAIN, "data_rd_index = %d", _comms.rx.data_rd_index);
     // iprintln(trMAIN, "data_length   = %d", _comms.rx.data_length);
     if (len == 0)
         return 0; //Nothing to do
 
-    //iprintln(trCOMMS, "#Rd %d from %d/%d", len, msg.rd_index, data_len);
+    //iprintln(trCOMMS, "#Rd %d from %d/%d", len, rx_msg.rd_index, data_len);
 
-    if (msg.rd_index >= data_len)
+    if (rx_msg.rd_index >= data_len)
         return 0; //No data available
 
-    if (len > (data_len - msg.rd_index))
+    if (len > (data_len - rx_msg.rd_index))
         return 0; //Requesting more data than available
 
     if ((dst) && (len > 0))// Don't copy to NULL
-        memcpy(dst, &msg.data[msg.rd_index], len);
+        memcpy(dst, &rx_msg.data[rx_msg.rd_index], len);
     
 
-    msg.rd_index += len;
+    rx_msg.rd_index += len;
 
     return len;
 }
 
-bool read_cmd_payload(uint8_t cmd, uint8_t * dst, uint8_t len)
+uint8_t _cmd_rx_payload_size(master_command_t cmd)
 {
-    if (read_msg_data(dst, len) != len)
+    for (uint8_t i = 0; i < ARRAY_SIZE(cmd_table); i++)
     {
-        iprintln(trALWAYS, "!Rd %d bytes for cmd 0x%02X", len, cmd);
-        dev_comms_response_append((master_command_t)cmd, resp_err_payload_len, &len, 1);
+        if (cmd_table[i].cmd == cmd)
+        {
+            return cmd_table[i].mosi_sz;
+        }
+    }
+    return 0; //Command not found, so no payload size
+}
+
+uint8_t _cmd_ok_tx_payload_size(master_command_t cmd)
+{
+    //We only respond on direct messages OR roll-call messages
+    if ((rx_msg.dst != dev_comms_addr_get()) && (cmd != cmd_roll_call))
+        return 0xff; //Only provide a valid payload for OK response to a direct message (or Rollcalls)
+
+    for (uint8_t i = 0; i < ARRAY_SIZE(cmd_table); i++)
+    {
+        if (cmd_table[i].cmd == cmd)
+        {
+            return cmd_table[i].miso_sz;
+        }
+    }
+    return 0; //Command not found, so no payload size
+}
+
+void _response_ok_append(master_command_t cmd, uint8_t * data)
+{
+    dev_comms_response_append(cmd, resp_ok, data, _cmd_ok_tx_payload_size(cmd), (cmd_roll_call == cmd)? true : false); 
+}
+
+bool read_cmd_payload(master_command_t cmd, uint8_t * dst)
+{
+    uint8_t _payload_len = _cmd_rx_payload_size(cmd);
+
+    if ((read_msg_data(dst, _payload_len) != _payload_len) || (_payload_len == 0))
+    {
+        iprintln(trALWAYS, "!Rd %d bytes for cmd 0x%02X", _payload_len, cmd);
+        dev_comms_response_append(cmd, resp_err_payload_len, &_payload_len, 1);
         return false;
     }
     return true;//dev_comms_read_payload(dst, len);
@@ -916,11 +974,12 @@ void send_roll_call_response(void)
         roll_call_time_ms = sys_random(BUS_SILENCE_MIN_MS, BUS_SILENCE_MIN_MS*10);
         //RVN - TODO - This is a bit of a thumbsuck time period.... maybe come back to this later?
         sys_stopwatch_ms_start(&roll_call_sw, 0); //Restart the stopwatch for the rollcall response
-        iprintln(trALWAYS, "#ROLL-CALL - wait some more (%u ms)", (uint8_t)roll_call_time_ms);
+        iprintln(trALWAYS, "#RC - wait more (%u ms)", (uint8_t)roll_call_time_ms);
         return;
     }
 
-    dev_comms_response_append(cmd_roll_call, resp_ok, &my_version, 1, true);
+    _response_ok_append(cmd_roll_call);
+    
     if (dev_comms_transmit_now()) //Send the response message now
     {
         //Now we wait for the master to register us
@@ -930,7 +989,7 @@ void send_roll_call_response(void)
     }
     else
     {
-        iprintln(trALWAYS, "!Tx roll-call response");
+        iprintln(trALWAYS, "!Tx RC");
         reg_state = un_reg; //RVN - TODO - we need to go back to the state we were in before the roll-call started (no necessarily un_reg)
         dbg_led(dbg_led_blink_500ms); //Start blinking the debug LED at 500ms intervals
     }
@@ -963,7 +1022,7 @@ void state_machine_handler(void)
     //dev_comms_check_error();
 }
 
-bool rollcall_msg_handler(uint8_t _cmd, uint8_t _src, uint8_t _dst)
+bool rollcall_msg_handler(master_command_t _cmd, uint8_t _src, uint8_t _dst)
 {
     uint8_t _u8_val = 0;
     if (_cmd != cmd_roll_call)
@@ -973,7 +1032,7 @@ bool rollcall_msg_handler(uint8_t _cmd, uint8_t _src, uint8_t _dst)
     if ((_src == ADDR_MASTER) && (_dst == ADDR_BROADCAST))
     {    
         //Now we need to read the payload of the roll-call message
-        if (read_cmd_payload(_cmd, &_u8_val, sizeof(uint8_t)))
+        if (read_cmd_payload(_cmd, &_u8_val))
         {
             //The payload of the roll-call message is a single byte, which can be:
             // 0 - Roll call for ALL devices on the bus
@@ -983,7 +1042,7 @@ bool rollcall_msg_handler(uint8_t _cmd, uint8_t _src, uint8_t _dst)
                 // If we are registered and this was meant for unregistered devices, we do NOT respond
                 if (reg_state == idle)
                 {
-                    iprintln(trALWAYS, "#ROLL-CALL Ignored (registered)");
+                    iprintln(trALWAYS, "#RC Ignored");
                     return true; //Handled the roll-call message already (ignored it)
                 }
             }
@@ -996,7 +1055,7 @@ bool rollcall_msg_handler(uint8_t _cmd, uint8_t _src, uint8_t _dst)
         }
         else //read failure already handled in read_cmd_payload()
         {
-            iprintln(trALWAYS, "!Tx roll-call");
+            iprintln(trALWAYS, "!Rx RC");
             return true; //Handled the roll-call message already (ignored it)
         }        
         //New ROLL-CALL command from the master, so we need to start the roll-call response timer (again?)
@@ -1075,7 +1134,7 @@ bool rollcall_msg_handler(uint8_t _cmd, uint8_t _src, uint8_t _dst)
              broadcast to all devices will be sent (requiring no responses).
         */
 
-        iprintln(trALWAYS, "#ROLL-CALL - Answer in %lu ms", roll_call_time_ms);
+        iprintln(trALWAYS, "#RC - Answer in %lu ms", roll_call_time_ms);
         sys_stopwatch_ms_start(&roll_call_sw, 0); //Start the stopwatch for the roll-call response
         reg_state = roll_call; //We are in the process of responding to a roll-call
         dbg_led(dbg_led_blink_50ms); //Start blinking the debug LED at 50ms intervals
@@ -1174,7 +1233,7 @@ void _sys_handler_led(void)
         else */
         if (hex2u32(&rgb, argStr, 6)) //is it a hex value?
         {
-            sys_poll_tmr_stop(&blink_tmr);
+            blink_stop();
             dev_rgb_set_colour(rgb);
             col_mask |= 0x07;
             continue; //to the next argument
@@ -1393,7 +1452,6 @@ void _sys_handler_crc(void)
 #endif /* REDUCE_CODESIZE */
     }
 }
-#endif /* REDUCE_CODESIZE */
 
 void _sys_handler_dump_ram(void)
 {
@@ -1506,6 +1564,7 @@ void _sys_handler_dump_generic(char * memType, unsigned long memStart, unsigned 
         return;
     }    
 }
+#endif /* REDUCE_CODESIZE */
 
 #endif /* CONSOLE_ENABLED */
 #endif /* MAIN_DEBUG */

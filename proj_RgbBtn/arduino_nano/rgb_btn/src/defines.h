@@ -19,10 +19,6 @@ defines
 
 const char BUILD_TIME_AND_DATE[] = {__TIME__ " " __DATE__}; /* Used in our startup Banner*/
  
- //This is the firmware version of this Button Controller. The high nibble denotes 
-//the major version, while the low nibble denotes the minor version. 0x10 => V1.0
-#define PROJECT_VERSION	    0x10
-
 #define btnChasePin_RX0     (0)
 #define btnChasePin_TX0     (1)
 

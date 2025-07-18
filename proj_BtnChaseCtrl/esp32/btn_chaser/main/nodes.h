@@ -91,10 +91,12 @@ button_t * get_node_button_ptr(int slot);
 
 void node_parse_rx_msg(void);
 
+size_t cmd_mosi_payload_size(master_command_t cmd);
 const char * cmd_to_str(master_command_t cmd);
 
 
 /*** Node Message ****/
+//bool is_direct_node_cmd(master_command_t cmd);
 
 void init_node_msg(uint8_t node/*, bool reset_response_data*/);
 
@@ -116,10 +118,12 @@ bool add_node_msg_get_reaction(uint8_t node);
 bool add_node_msg_get_flags(uint8_t node);
 bool add_node_msg_get_time(uint8_t node);
 bool add_node_msg_get_correction(uint8_t node);
+bool add_node_msg_get_version(uint8_t node);
 
 bool node_msg_tx_now(uint8_t node, uint64_t wait_for_timeout);
 
 /*** Broadcast Message ****/
+//bool is_bcst_cmd(master_command_t cmd);
 void init_bcst_msg(int * exclude_nodes, int exclude_count);
 bool add_bcst_msg_set_rgb(uint8_t index, uint32_t rgb_col);
 bool add_bcst_msg_set_blink(uint32_t period_ms);

@@ -2,11 +2,6 @@
 Global Defines
  *******************************************************************************/
 
-//This is the firmware version of this rotator. The high nibble denotes the major
-//version, while the low nibble denotes the minor version. 0x10 => V1.0
-#define PROJECT_VERSION	0x10 /* Major - Minor*/
-
-
 /* The "CONSOLE_ENABLED" define includes all the Console's menu interfacing and
  * such like. This also takes up about 53% of the available codespace. */
 #define CONSOLE_ENABLED
