@@ -256,7 +256,7 @@ void setup() {
 
     reg_state = un_reg; //We are not registered yet
     system_flags |= flag_unreg;
-    dbg_led(dbg_led_blink_500ms); //Start blinking the debug LED at 200ms intervals
+    dbg_led(dbg_led_blink_slow); //Start blinking the debug LED at 200ms intervals
 
     //This can only be set by the master device
     my_mask_index = -1;
@@ -283,9 +283,9 @@ void dbg_led(dbg_blink_state_t state)
         case dbg_led_off:
         case dbg_led_on:
             break;
-        case dbg_led_blink_50ms:
-        case dbg_led_blink_200ms:
-        case dbg_led_blink_500ms:
+        case dbg_led_blink_fast:
+        case dbg_led_blink:
+        case dbg_led_blink_slow:
         default:
             sys_cb_tmr_start(tmr_debug_led, state*10lu, true);
             break;
@@ -910,12 +910,9 @@ uint8_t read_msg_data(uint8_t * dst, uint8_t len)
 uint8_t _cmd_rx_payload_size(master_command_t cmd)
 {
     for (uint8_t i = 0; i < ARRAY_SIZE(cmd_table); i++)
-    {
         if (cmd_table[i].cmd == cmd)
-        {
             return cmd_table[i].mosi_sz;
-        }
-    }
+
     return 0; //Command not found, so no payload size
 }
 
@@ -926,12 +923,9 @@ uint8_t _cmd_ok_tx_payload_size(master_command_t cmd)
         return 0xff; //Only provide a valid payload for OK response to a direct message (or Rollcalls)
 
     for (uint8_t i = 0; i < ARRAY_SIZE(cmd_table); i++)
-    {
         if (cmd_table[i].cmd == cmd)
-        {
             return cmd_table[i].miso_sz;
-        }
-    }
+            
     return 0; //Command not found, so no payload size
 }
 
@@ -985,13 +979,13 @@ void send_roll_call_response(void)
         //Now we wait for the master to register us
         reg_state = waiting; //We are now in the "waiting for registration" state
         iprintln(trALWAYS, "#State: WAIT");
-        dbg_led(dbg_led_blink_200ms); //Start blinking the debug LED at 200ms intervals
+        dbg_led(dbg_led_blink); //Start blinking the debug LED at 200ms intervals
     }
     else
     {
         iprintln(trALWAYS, "!Tx RC");
         reg_state = un_reg; //RVN - TODO - we need to go back to the state we were in before the roll-call started (no necessarily un_reg)
-        dbg_led(dbg_led_blink_500ms); //Start blinking the debug LED at 500ms intervals
+        dbg_led(dbg_led_blink_slow); //Start blinking the debug LED at 500ms intervals
     }
 }
 
@@ -1137,7 +1131,7 @@ bool rollcall_msg_handler(master_command_t _cmd, uint8_t _src, uint8_t _dst)
         iprintln(trALWAYS, "#RC - Answer in %lu ms", roll_call_time_ms);
         sys_stopwatch_ms_start(&roll_call_sw, 0); //Start the stopwatch for the roll-call response
         reg_state = roll_call; //We are in the process of responding to a roll-call
-        dbg_led(dbg_led_blink_50ms); //Start blinking the debug LED at 50ms intervals
+        dbg_led(dbg_led_blink_fast); //Start blinking the debug LED at 50ms intervals
     }
 
     // or was this a roll-call response from another device?

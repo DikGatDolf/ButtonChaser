@@ -37,6 +37,16 @@ typedef struct
     bool (*arg_parse)(const char **arg_str_array, int arg_cnt);
 } game_t;
 
+
+typedef enum
+{
+    game_idle,            // Waiting for a game to start
+    game_node_reg,        // Waiting for rollcall responses and subsequent node registration to complete
+    game_init,            // Initialising the game
+    game_running,         // A game is currently running
+    game_paused,          // A game is paused
+} game_state_e;
+
 /******************************************************************************
 Global (public) Function prototypes
 ******************************************************************************/

@@ -89,7 +89,7 @@ int active_node_count(void);
 button_t * get_node_button_ptr(int slot);
 
 
-void node_parse_rx_msg(void);
+bool node_parse_rx_msg(void);
 
 size_t cmd_mosi_payload_size(master_command_t cmd);
 const char * cmd_to_str(master_command_t cmd);
@@ -104,7 +104,7 @@ bool add_node_msg_register(uint8_t node);
 bool add_node_msg_new_addr(uint8_t node, uint8_t new_addr);
 bool add_node_msg_set_rgb(uint8_t node, uint8_t index, uint32_t rgb_col);
 bool add_node_msg_set_blink(uint8_t node, uint32_t period_ms);
-bool add_node_msg_set_dbgled(uint8_t node, dbg_blink_state_t state);
+bool add_node_msg_set_dbgled(uint8_t node, uint8_t state);
 bool add_node_msg_set_active(uint8_t node, bool start);
 bool add_node_msg_set_time(uint8_t node, uint32_t new_time_ms);
 bool add_node_msg_sync_reset(uint8_t node);
@@ -120,14 +120,14 @@ bool add_node_msg_get_time(uint8_t node);
 bool add_node_msg_get_correction(uint8_t node);
 bool add_node_msg_get_version(uint8_t node);
 
-bool node_msg_tx_now(uint8_t node, uint64_t wait_for_timeout);
+bool node_msg_tx_now(uint8_t node);
 
 /*** Broadcast Message ****/
 //bool is_bcst_cmd(master_command_t cmd);
 void init_bcst_msg(int * exclude_nodes, int exclude_count);
 bool add_bcst_msg_set_rgb(uint8_t index, uint32_t rgb_col);
 bool add_bcst_msg_set_blink(uint32_t period_ms);
-bool add_bcst_msg_set_dbgled(dbg_blink_state_t dbg_blink_state);
+bool add_bcst_msg_set_dbgled(uint8_t dbg_blink_state);
 bool add_bcst_msg_set_time_ms(uint32_t new_time_ms);
 bool add_bcst_msg_sync_reset(void);
 bool add_bcst_msg_sync_start(void);

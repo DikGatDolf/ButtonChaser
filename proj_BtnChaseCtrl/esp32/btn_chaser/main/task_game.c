@@ -84,6 +84,8 @@ GameTask_t _game_task = {
     .current_game_index = -1,
 };
 
+game_state_e _game_state = game_idle;
+
 /*******************************************************************************
 Local (private) Functions
 *******************************************************************************/
@@ -101,11 +103,75 @@ void _task_game_mainfunc(void * pvParameters)
     }
     else
     {
-        games_list[_game_task.current_game_index].init(); //Call the init function for the game
-        while (1) 
+        bool all_good = true;
+
+        while (all_good) 
         {
             TickType_t xLastWakeTime = xTaskGetTickCount();
-            games_list[_game_task.current_game_index].main();
+
+            if (!node_parse_rx_msg()) //Process any received messages, this will also update the node_list[x].btn fields with the responses
+            {
+                iprintln(trNODE, "#Error: No response from nodes (presumed dead)");
+                all_good = false; //Set the all_good flag to false to exit the loop
+                continue; //Skip the rest of the loop and wait for the next iteration
+            }
+            
+            switch (_game_state) //Replace with a meaningful condition
+            {
+                case game_node_reg:
+                {
+                    iprintln(trGAME, "#Starting Registration....");
+                    if (!bcst_rollcall(true))
+                    {    
+                        iprintln(trGAME, "#Failed register nodes");
+                        all_good = false; //Set the all_good flag to false to exit the loop
+                    }
+                    else
+                    {
+                        iprintln(trGAME, "#Rollcall complete, registering new nodes");
+                        register_new_buttons();
+                    }
+
+                    if (node_count() > 0) //If we have 1+ nodes registered, we can proceed to the next state
+                    {
+                        _game_state = (games_list[_game_task.current_game_index].init)? game_init : game_running;
+                    }
+                    else
+                    {
+                        iprintln(trGAME, "#No nodes registered, cannot start game");
+                        all_good = false; //Set the all_good flag to false to exit the loop
+                    }
+                    break;
+                }
+                case game_init:
+                {
+                    iprintln(trGAME, "#Game Initialisation....");
+                    if (games_list[_game_task.current_game_index].init)
+                        games_list[_game_task.current_game_index].init(); //Call the game initialisation function if one is defined
+                    _game_state = game_running;
+                    break;
+                }
+                case game_running:
+                {
+                    if (_game_task.current_game_index < 0 || _game_task.current_game_index >= games_cnt())
+                    {
+                        iprintln(trGAME|trALWAYS, "#Invalid game index: %d", _game_task.current_game_index);
+                        all_good = false; //Set the all_good flag to false to exit the loop
+                    }
+                    else if (!games_list[_game_task.current_game_index].main)
+                    {
+                        iprintln(trGAME|trALWAYS, "#No main function for game %s", games_list[_game_task.current_game_index].name);
+                        all_good = false; //Set the all_good flag to false to exit the loop
+                    }
+                    else
+                        games_list[_game_task.current_game_index].main();
+                    break;
+                }
+                case game_idle:
+                default:
+                    all_good = false;
+                    break;
+            }
 
             xTaskDelayUntil(&xLastWakeTime, MAX(1, pdMS_TO_TICKS(TASK_GAME_INTERVAL_MS)));  //vTaskDelay(pdMS_TO_TICKS(EXAMPLE_CHASE_SPEED_MS));
             /* Inspect our own high water mark on entering the task. */
@@ -113,6 +179,7 @@ void _task_game_mainfunc(void * pvParameters)
         }
     }
     iprintln(trGAME|trALWAYS, "#Game Task Ended prematurely!");
+    //end_game(); //End the game if we are not receiving any responses from the nodes
 }
 
 
@@ -142,6 +209,7 @@ void * start_game(int index)
     }
 
     _game_task.current_game_index = index;
+    _game_state = game_node_reg; //Set the game state to node registration
 
     // Create the task, storing the handle.  Note that the passed parameter ucParameterToPass
 	// must exist for the lifetime of the task, so in this case is declared static.  If it was just an
@@ -150,7 +218,8 @@ void * start_game(int index)
 	if ((xTaskCreate( _task_game_mainfunc, PRINTF_TAG, _game_task.task.stack_depth, _game_task.task.parameter_to_pass, 1, &_game_task.task.handle ) != pdPASS) ||
 		(_game_task.current_game_index < 0))
 	{
-		iprintln(trGAME|trALWAYS, "#Unable to start %s Game Task!", PRINTF_TAG);
+		iprintln(trGAME|trALWAYS, "#Unable to start %s Task!", PRINTF_TAG);
+        end_game(); //End the game if we cannot start the task
 		return NULL;
 	}
 
@@ -176,12 +245,14 @@ void end_game(void)
         }
 
         _game_task.current_game_index = -1;
+        _game_state = game_idle; //Reset the game state to idle
     }
 }
 
 bool is_game_running(void)
 {
-    return ((_game_task.current_game_index >= 0) && (_game_task.current_game_index < games_cnt()))? true : false;
+    return (_game_state != game_idle)? true : false;
+    // return ((_game_task.current_game_index >= 0) && (_game_task.current_game_index < games_cnt()))? true : false;
 }
 
 int current_game(void)

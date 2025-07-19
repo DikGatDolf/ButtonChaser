@@ -99,9 +99,9 @@ typedef struct
 /*******************************************************************************
  Local function prototypes
  *******************************************************************************/
-bool str_to_broadcast_cmd(const char * cmd_str, master_command_t * cmd, int * arg_len);
+bool str_to_bcst_set_cmd(const char * cmd_str, master_command_t * cmd);
 bool str_to_node_get_cmd(const char * cmd_str, master_command_t * rd_cmd);
-bool str_to_node_set_cmd(const char * cmd_str, master_command_t * wr_cmd, int * arg_len);
+bool str_to_node_set_cmd(const char * cmd_str, master_command_t * wr_cmd);
 
 
 /*! CONSOLE MENU HANDLER - Performs a system reset
@@ -116,6 +116,8 @@ void _sys_handler_reg(void);
 void _sys_handler_bcst(void);
 void _sys_handler_node_get(void);
 void _sys_handler_node_set(void);
+bool _sys_handler_get_node_data(uint8_t node, uint16_t requests);
+void _sys_handler_display_node_data(uint8_t node, uint16_t requests);
 void _sys_handler_list(void);
 bool _sys_handler_read_node_from_str(const char * arg_str_in, uint8_t * node_inout, bool* help_requested);
 void _sys_handler_game(void);
@@ -214,8 +216,13 @@ void app_main(void)
 
     while (1)
     {
+        //If a game is running, this is handled by the game task
         if (!is_game_running())
-            node_parse_rx_msg();
+        {
+            if (!node_parse_rx_msg()) //Process any received messages, this will also update the node_list[x].btn fields with the responses
+                iprintln(trNODE, "#Error: No response from nodes (presumed dead)");
+        }
+
         //else the game should be handing this for us
 
         /* Inspect our own high water mark on entering the task. */
@@ -258,7 +265,7 @@ bool str_to_node_get_cmd(const char * cmd_str, master_command_t * rd_cmd)
     return false;
 }
 
-bool str_to_node_set_cmd(const char * cmd_str, master_command_t * wr_cmd, int * arg_len)
+bool str_to_node_set_cmd(const char * cmd_str, master_command_t * wr_cmd)
 {
     for (int i = 0; i < ARRAY_SIZE(set_cmd_table); i++)
     {
@@ -268,9 +275,7 @@ bool str_to_node_set_cmd(const char * cmd_str, master_command_t * wr_cmd, int * 
             (!strcasecmp(cmd_str, set_cmd_table[i].name_3)))
         {  
             if (wr_cmd != NULL)
-                *wr_cmd = get_cmd_table[i].cmd; //Return the read command enum value
-            if (arg_len != NULL)
-                *arg_len = cmd_mosi_payload_size(get_cmd_table[i].cmd); //Return the MOSI data length for this command
+                *wr_cmd = set_cmd_table[i].cmd; //Return the read command enum value
             
             return true; //We can broadcast this command
         }
@@ -278,7 +283,7 @@ bool str_to_node_set_cmd(const char * cmd_str, master_command_t * wr_cmd, int * 
     return false;
 }
 
-bool str_to_broadcast_cmd(const char * cmd_str, master_command_t * cmd, int * arg_len)
+bool str_to_bcst_set_cmd(const char * cmd_str, master_command_t * cmd)
 {
     for (int i = 0; i < ARRAY_SIZE(set_cmd_table); i++)
     {
@@ -291,9 +296,7 @@ bool str_to_broadcast_cmd(const char * cmd_str, master_command_t * cmd, int * ar
             if (!set_cmd_table[i].allow_bcst)
                 return false; //This command cannot be broadcast
             if (cmd != NULL)
-                *cmd = get_cmd_table[i].cmd; //Return the read command enum value
-            if (arg_len != NULL)
-                *arg_len = cmd_mosi_payload_size(get_cmd_table[i].cmd); //Return the MOSI data length for this command
+                *cmd = set_cmd_table[i].cmd; //Return the read command enum value
             
             return true; //We can broadcast this command
         }
@@ -480,7 +483,6 @@ void _sys_handler_bcst(void)
     int valid_bcst_cmds = 0;
     uint32_t value;
     master_command_t cmd;
-    int arg_len;
     button_t btn;
     uint8_t changes = 0; /* Bitmask of changes made to the button: 0x01 = RGB led 0, 0x02 = RGB led 1, 0x04 = RGB led 2, 0x08 = blink period, 0x10 = debug LED state */
 
@@ -494,11 +496,11 @@ void _sys_handler_bcst(void)
             break; //from while-loop
         }
 
-        if (str_to_broadcast_cmd(arg, &cmd, &arg_len))
+        if (str_to_bcst_set_cmd(arg, &cmd))
         {
-            if ((cmd == cmd_none) || (arg_len == 0))
+            if (cmd == cmd_none)
             {
-                iprintln(trALWAYS, "Invalid Command \"%s\" (%d)", arg, arg_len);
+                iprintln(trALWAYS, "Invalid Command \"%s\"", arg);
                 help_requested = true;
                 continue; //Skip the rest of the loop and go to the next argument
             }
@@ -652,7 +654,6 @@ void _sys_handler_node_set(void)
     int valid_node_set_cmds = 0;
     uint32_t value;
     master_command_t cmd;
-    int arg_len;
     button_t btn;
     uint8_t changes = 0; /* Bitmask of changes made to the button: 0x01 = RGB led 0, 0x02 = RGB led 1, 0x04 = RGB led 2, 0x08 = blink period, 0x10 = debug LED state */
 
@@ -672,11 +673,11 @@ void _sys_handler_node_set(void)
         else if (help_requested)
             break; //Skip the rest of the loop and go to the next argument
 
-        if (str_to_node_set_cmd(arg, &cmd, &arg_len))
+        if (str_to_node_set_cmd(arg, &cmd))
         {
-            if ((cmd == cmd_none) || (arg_len == 0))
+            if (cmd == cmd_none)
             {
-                iprintln(trALWAYS, "Invalid Command \"%s\" (%d)", arg, arg_len);
+                iprintln(trALWAYS, "Invalid Command \"%s\"", arg);
                 help_requested = true;
                 continue; //Skip the rest of the loop and go to the next argument
             }
@@ -835,7 +836,7 @@ void _sys_handler_node_set(void)
                 }
             }
             //Wait for the response from the node
-            if (node_msg_tx_now((uint8_t)_node, 1000LL))
+            if (node_msg_tx_now((uint8_t)_node))
                 iprintln(trALWAYS, "Wrote %d command%s to node %d (0x%02X)", valid_node_set_cmds, (valid_node_set_cmds > 1) ? "s" : "", _node, get_node_addr(_node));
         }
     }
@@ -904,7 +905,8 @@ void _sys_handler_node_get(void)
 
         if (!strcasecmp("all", arg))
         {    
-            requests = 0xFF; //Set the RGB LED state
+            //Set all the bits in the requests bitmask
+            requests = 0xFFFF; //Set the RGB LED state
             valid_node_get_cmds = NODE_MAX_GET_CMDS; //We are requesting all commands
             break; //from while-loop
         }
@@ -977,123 +979,24 @@ void _sys_handler_node_get(void)
             iprintln(trALWAYS, "No GET commands specified. Please specify at least one value to read");
             help_requested = true;
         }
+        else if (_node == 0xff)
+        {
+            //Get the node data for every registered node
+            for (uint8_t i = 0; i < RGB_BTN_MAX_NODES; i++)
+            {
+                if (!is_node_valid(i))
+                    continue; //Skip unregistered nodes
+
+                if (_sys_handler_get_node_data(i, requests))
+                    _sys_handler_display_node_data(i, requests);
+            }
+        }
         else
         {
             //iprintln(trALWAYS, "Broadcasting to nodes with mask 0x%04X (%d nodes)", _mask, node_count());
-            init_node_msg(_node);
-            bool msg_success = true;
-            for (uint8_t i = 0; i < NODE_MAX_GET_CMDS; i++)
-            {
-                uint16_t mask = BIT_POS(i);
-                if ((requests & mask) == 0)
-                    continue; //Skip this bit, we are not request this
 
-                switch (mask)
-                {
-                    case 0x0001: msg_success = add_node_msg_get_rgb(_node, 0); break;
-                    case 0x0002: msg_success = add_node_msg_get_rgb(_node, 1); break;
-                    case 0x0004: msg_success = add_node_msg_get_rgb(_node, 2); break;
-                    case 0x0008: msg_success = add_node_msg_get_blink(_node); break;
-                    case 0x0010: msg_success = add_node_msg_get_dbgled(_node); break;
-                    case 0x0020: msg_success = add_node_msg_get_reaction(_node); break;
-                    case 0x0040: msg_success = add_node_msg_get_time(_node); break;
-                    case 0x0080: msg_success = add_node_msg_get_flags(_node); break;
-                    case 0x0100: msg_success = add_node_msg_get_correction(_node); break;
-                    case 0x0200: msg_success = add_node_msg_get_version(_node); break;
-                    default: msg_success = false; break; //Skip any other bits
-                }
-
-                if (!msg_success)
-                {
-                    iprintln(trALWAYS, "Failed to load GET msg for node %d (0x%02X)", _node, mask);
-                    return; //Nothing to do further
-                }
-            }
-            //Wait for the response from the node
-            if (node_msg_tx_now((uint8_t)_node, 1000LL))
-            {
-                //Print the responses
-                button_t *btn = get_node_button_ptr(_node);
-                for (uint8_t i = 0; i < NODE_MAX_GET_CMDS; i++)
-                {
-                    uint16_t mask = BIT_POS(i);
-                    if ((requests & mask) == 0)
-                        continue; //Skip this bit, we did notrequest this
-
-                    switch (mask)
-                    {
-                        case 0x0001: 
-                        case 0x0002:
-                        case 0x0004:
-                            iprint(trALWAYS,   "RGB[%d]:       ", i);
-                            if (rgb2name(btn->rgb_colour[i]) == NULL)
-                                iprintln(trALWAYS, "0x%06X", btn->rgb_colour[i]);
-                            else
-                                iprintln(trALWAYS, "%s", rgb2name(btn->rgb_colour[i]));
-                            break;
-                        case 0x0008:
-                            iprintln(trALWAYS, "Blink period: %d ms", btn->blink_ms);
-                            break;
-                        case 0x0010:
-                            iprint(trALWAYS,   "Debug LED:    ");
-                            if (btn->dbg_led_state == dbg_led_off)      iprintln(trALWAYS, "OFF");
-                            else if (btn->dbg_led_state == dbg_led_on)  iprintln(trALWAYS, "ON");
-                            else                                        iprintln(trALWAYS, "BLINK (%dms)", btn->dbg_led_state*10);
-                            break;
-                        case 0x0020:
-                            iprintln(trALWAYS, "Reaction:     %u ms", btn->reaction_ms);
-                            break;
-                        case 0x0040: 
-                            iprintln(trALWAYS, "Time:         %u ms", btn->time_ms);
-                            break;
-                        case 0x0080: 
-                            iprint(trALWAYS,   "Flags:        0x%02X", btn->flags);
-                            if (btn->flags != 0)
-                            {
-                                bool first = false;
-                                iprint(trALWAYS, " (");
-                                for (uint8_t f = 0; f < 8; f++)
-                                {
-                                    if (btn->flags & BIT_POS(f))
-                                    {
-                                        switch (BIT_POS(f))
-                                        {
-                                            case flag_s_press:      iprint(trALWAYS, "%s%s", (first)? "|" : "", "SHT_PRS"); break;
-                                            case flag_l_press:      iprint(trALWAYS, "%s%s", (first)? "|" : "", "LNG_PRS"); break;
-                                            case flag_d_press:      iprint(trALWAYS, "%s%s", (first)? "|" : "", "DBL_PRS"); break;
-                                            case flag_activated:    iprint(trALWAYS, "%s%s", (first)? "|" : "", "ACTIVATED"); break;
-                                            case flag_deactivated:  iprint(trALWAYS, "%s%s", (first)? "|" : "", "DEACTIVATED"); break;
-                                            case flag_sw_stopped:   iprint(trALWAYS, "%s%s", (first)? "|" : "", "STOPPED"); break;
-                                            case flag_blinking:     iprint(trALWAYS, "%s%s", (first)? "|" : "", "BLINKING"); break;
-                                            case flag_unreg:        iprint(trALWAYS, "%s%s", (first)? "|" : "", "UNREG"); break;
-                                        }
-                                        first = true; //Set the first flag to true, so we can print the comma
-                                    }
-                                }
-                                iprint(trALWAYS, ")");
-                            }
-                            iprintln(trALWAYS, "");
-                            break;
-                        case 0x0100: 
-                            iprintln(trALWAYS,   "Time Factor:  %.6f", btn->time_factor);
-                            break;
-                        case 0x0200: 
-                            iprintln(trALWAYS,   "Version:      %d.%d.%d.%d", 
-                                (btn->version & 0x000000FF), 
-                                (btn->version & 0x0000FF00) >> 8, 
-                                (btn->version & 0x00FF0000) >> 16,
-                                (btn->version & 0xFF000000) >> 24);
-                            break;
-                        default: msg_success = false; break; //Skip any other bits
-                    }
-
-                    if (!msg_success)
-                    {
-                        iprintln(trALWAYS, "Failed to load GET msg for node %d (0x%02X)", _node, mask);
-                        return; //Nothing to do further
-                    }
-                }
-            }
+            if (_sys_handler_get_node_data(_node, requests))
+                _sys_handler_display_node_data(_node, requests);
         }
     }
 
@@ -1115,6 +1018,156 @@ void _sys_handler_node_get(void)
         iprintln(trALWAYS, "      version: get the node's firmware version");
         iprintln(trALWAYS, "      all:   get all node parameters (rgb0-2, blink, dbg, sw, flags, time, sync)");
     }
+}
+
+bool _sys_handler_get_node_data(uint8_t node, uint16_t requests)
+{
+    if (node >= RGB_BTN_MAX_NODES)
+    {
+        iprintln(trALWAYS, "Invalid node number %d. Must be between 0 and %d", node, RGB_BTN_MAX_NODES - 1);
+        return false;
+    }
+    if (!is_node_valid(node))
+    {
+        iprintln(trALWAYS, "Node %d is not registered", node);
+        return false;
+    }
+    if (requests == 0)
+    {
+        iprintln(trALWAYS, "No GET requests made for node %d", node);
+        return true;
+    }
+
+    init_node_msg(node);
+    bool msg_success = true;
+    for (uint8_t i = 0; i < NODE_MAX_GET_CMDS; i++)
+    {
+        uint16_t mask = BIT_POS(i);
+        if ((requests & mask) == 0)
+            continue; //Skip this bit, we are not request this
+
+        switch (mask)
+        {
+            case 0x0001: msg_success = add_node_msg_get_rgb(node, 0); break;
+            case 0x0002: msg_success = add_node_msg_get_rgb(node, 1); break;
+            case 0x0004: msg_success = add_node_msg_get_rgb(node, 2); break;
+            case 0x0008: msg_success = add_node_msg_get_blink(node); break;
+            case 0x0010: msg_success = add_node_msg_get_dbgled(node); break;
+            case 0x0020: msg_success = add_node_msg_get_reaction(node); break;
+            case 0x0040: msg_success = add_node_msg_get_time(node); break;
+            case 0x0080: msg_success = add_node_msg_get_flags(node); break;
+            case 0x0100: msg_success = add_node_msg_get_correction(node); break;
+            case 0x0200: msg_success = add_node_msg_get_version(node); break;
+            default: msg_success = false; break; //Skip any other bits
+        }
+
+        if (!msg_success)
+        {
+            iprintln(trALWAYS, "Failed to load GET msg for node %d (0x%02X)", node, mask);
+            return false; //Nothing to do further
+        }
+    }
+
+    //Wait for the response from the node
+    return node_msg_tx_now((uint8_t)node);
+}
+
+void _sys_handler_display_node_data(uint8_t node, uint16_t requests)
+{
+    if (node >= RGB_BTN_MAX_NODES)
+    {
+        iprintln(trALWAYS, "Invalid node number %d. Must be between 0 and %d", node, RGB_BTN_MAX_NODES - 1);
+        return;
+    }
+    if (!is_node_valid(node))
+    {
+        iprintln(trALWAYS, "Node %d is not registered", node);
+        return;
+    }
+    if (requests == 0)
+    {
+        iprintln(trALWAYS, "No GET requests made for node %d", node);
+        return;
+    }
+    //Print the responses
+    iprintln(trALWAYS, "Node %d Data:", node);
+    button_t *btn = get_node_button_ptr(node);
+    for (uint8_t i = 0; i < NODE_MAX_GET_CMDS; i++)
+    {
+        uint16_t mask = BIT_POS(i);
+        if ((requests & mask) == 0)
+            continue; //Skip this bit, we did notrequest this
+
+        switch (mask)
+        {
+            case 0x0001: 
+            case 0x0002:
+            case 0x0004:
+                iprint(trALWAYS,   "RGB[%d]:       ", i);
+                if (rgb2name(btn->rgb_colour[i]) == NULL)
+                    iprintln(trALWAYS, "0x%06X", btn->rgb_colour[i]);
+                else
+                    iprintln(trALWAYS, "%s", rgb2name(btn->rgb_colour[i]));
+                break;
+            case 0x0008:
+                iprintln(trALWAYS, "Blink period: %d ms", btn->blink_ms);
+                break;
+            case 0x0010:
+                iprint(trALWAYS,   "Debug LED:    ");
+                if (btn->dbg_led_state == dbg_led_off)      iprintln(trALWAYS, "OFF");
+                else if (btn->dbg_led_state == dbg_led_on)  iprintln(trALWAYS, "ON");
+                else                                        iprintln(trALWAYS, "BLINK (%dms)", btn->dbg_led_state*10);
+                break;
+            case 0x0020:
+                iprintln(trALWAYS, "Reaction:     %u ms", btn->reaction_ms);
+                break;
+            case 0x0040: 
+                iprintln(trALWAYS, "Time:         %u ms", btn->time_ms);
+                break;
+            case 0x0080: 
+                iprint(trALWAYS,   "Flags:        0x%02X", btn->flags);
+                if (btn->flags != 0)
+                {
+                    bool first = false;
+                    iprint(trALWAYS, " (");
+                    for (uint8_t f = 0; f < 8; f++)
+                    {
+                        if (btn->flags & BIT_POS(f))
+                        {
+                            switch (BIT_POS(f))
+                            {
+                                case flag_s_press:      iprint(trALWAYS, "%s%s", (first)? "|" : "", "SHT_PRS"); break;
+                                case flag_l_press:      iprint(trALWAYS, "%s%s", (first)? "|" : "", "LNG_PRS"); break;
+                                case flag_d_press:      iprint(trALWAYS, "%s%s", (first)? "|" : "", "DBL_PRS"); break;
+                                case flag_activated:    iprint(trALWAYS, "%s%s", (first)? "|" : "", "ACTIVATED"); break;
+                                case flag_deactivated:  iprint(trALWAYS, "%s%s", (first)? "|" : "", "DEACTIVATED"); break;
+                                case flag_sw_stopped:   iprint(trALWAYS, "%s%s", (first)? "|" : "", "STOPPED"); break;
+                                case flag_blinking:     iprint(trALWAYS, "%s%s", (first)? "|" : "", "BLINKING"); break;
+                                case flag_unreg:        iprint(trALWAYS, "%s%s", (first)? "|" : "", "UNREG"); break;
+                            }
+                            first = true; //Set the first flag to true, so we can print the comma
+                        }
+                    }
+                    iprint(trALWAYS, ")");
+                }
+                iprintln(trALWAYS, "");
+                break;
+            case 0x0100: 
+                iprintln(trALWAYS,   "Time Factor:  %.6f", btn->time_factor);
+                break;
+            case 0x0200: 
+                iprintln(trALWAYS,   "Version:      %d.%d.%d.%d", 
+                    (btn->version & 0x000000FF), 
+                    (btn->version & 0x0000FF00) >> 8, 
+                    (btn->version & 0x00FF0000) >> 16,
+                    (btn->version & 0xFF000000) >> 24);
+                break;
+            default: 
+                iprintln(trALWAYS, "Unknown GET mask for node %d (0x%02X)", node, mask);
+                break; //Skip any other bits
+        }
+    }
+    iprintln(trALWAYS, "------------------------------------------------");
 }
 
 void _sys_handler_list(void)
@@ -1214,7 +1267,7 @@ void _sys_handler_sync(void)
                 bcst_msg_tx_now();      //Fire and forget the Broadcast the message to all nodes
                 iprintln(trALWAYS, "Broadcast msg (0x%02X) sent", _actions);
             }
-            else if (node_msg_tx_now((uint8_t)_node, 1000LL))
+            else if (node_msg_tx_now((uint8_t)_node))
                 iprintln(trALWAYS, "Msg (0x%02X) sent to node %d", _actions, _node);
         }
     }
@@ -1269,6 +1322,7 @@ void _sys_handler_game(void)
     uint32_t value;
     bool got_start = false;
     bool got_stop = false;
+    bool got_settings = false;
     int game_nr = -1;
     char * game_args[10];
     int game_arg_cnt = 0;
@@ -1277,9 +1331,9 @@ void _sys_handler_game(void)
 	{
         char *arg = console_arg_pop();
 
-        if (got_start && (game_nr >= 0))
+        if ((got_start || got_settings) && (game_nr >= 0))
         {
-            //These are now considered to be paramters for the game to start
+            //These are now considered to be paramters for the game to start, or change
             if (game_arg_cnt >= 10)
             {
                 iprintln(trALWAYS, "Too many game arguments specified. Maximum is 10.");
@@ -1287,6 +1341,7 @@ void _sys_handler_game(void)
                 break; //from while-loop
             }
             game_args[game_arg_cnt++] = arg;
+            got_settings = true; //If we got a game argument, we cannot have a settings command
             continue; //Skip the rest of the loop and go to the next argument
         }
 
@@ -1333,6 +1388,12 @@ void _sys_handler_game(void)
             got_start = true;
             continue; //Skip the rest of the loop and go to the next argument
         }
+        if ((!strcasecmp("set", arg)) || (!strcasecmp("settings", arg)) || (!strcasecmp("setting", arg)))
+        {
+            //If we got a start command, we cannot have a stop or info command
+            got_settings = true;
+            continue; //Skip the rest of the loop and go to the next argument
+        }
 
         iprintln(trALWAYS, "Invalid Argument (\"%s\")", arg);
         help_requested = true;
@@ -1342,31 +1403,28 @@ void _sys_handler_game(void)
     if (!help_requested)
     {
         //Deal with actions that require a game number, but maybe did not get one
-        if (got_start)
+        if (game_nr < 0)
         {
-            if (game_nr < 0)
+            iprintln(trALWAYS, "Please specify a game number (0 to %d) to start", games_cnt() - 1);
+            return;
+        }
+        //submit the game arguments to the game
+        if ((game_arg_cnt > 0) && got_settings)
+        {
+            iprint(trALWAYS, "Game argument%s: ", (game_arg_cnt > 1) ? "s" : "");
+            for (int i = 0; i < game_arg_cnt; i++)
             {
-                iprintln(trALWAYS, "Please specify a game number (0 to %d) to start", games_cnt() - 1);
+                if (i > 0) iprint(trALWAYS, ", ");
+                iprint(trALWAYS, "\"%s%s\"", (i > 0)? ", " : "", game_args[i]);
+            }
+            iprintln(trALWAYS, "");
+            if (!parse_game_args(game_nr, (const char**)game_args, game_arg_cnt))
                 return;
-            }
-            else
-            {
-                //first submit the game arguments to the game
-                if (game_arg_cnt > 0)
-                {
-                    iprint(trALWAYS, "Game argument%s: ", (game_arg_cnt > 1) ? "s" : "");
-                    for (int i = 0; i < game_arg_cnt; i++)
-                    {
-                        if (i > 0) iprint(trALWAYS, ", ");
-                        iprint(trALWAYS, "\"%s%s\"", (i > 0)? ", " : "", game_args[i]);
-                    }
-                    iprintln(trALWAYS, "");
-                    if (!parse_game_args(game_nr, (const char**)game_args, game_arg_cnt))
-                        return;
-                }
-                iprintln(trALWAYS, "Starting \"%s\" (%d)", game_name(game_nr), game_nr);
-                start_game(game_nr);
-            }
+        }
+        if (got_start && (game_nr >= 0))
+        {
+            iprintln(trALWAYS, "Starting \"%s\" (%d)", game_name(game_nr), game_nr);
+            start_game(game_nr);
             return;
         }
         //Deal with actions that DON'T require a game number, but might have gotten one
@@ -1410,6 +1468,7 @@ void _sys_handler_game(void)
         iprintln(trALWAYS, "       \"game <#>\" - Displays info on the selected game");
         iprintln(trALWAYS, "       \"game stop\" - Stops a currently running game");
         iprintln(trALWAYS, "       \"game <#> start [<param_1 ... param_n>]\" - Starts a game");
+        iprintln(trALWAYS, "       \"game <#> set [<param_1 ... param_n>]\" - Sets parameters for a game");
         iprintln(trALWAYS, "         [<param_1 ... param_n>]\" - Optional game-specific parameters");
     }
 }

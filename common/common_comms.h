@@ -175,9 +175,9 @@ enum system_flags_e
 typedef enum dbg_blink_state_e
 {
     dbg_led_off         = 0,
-    dbg_led_blink_50ms  = 5,
-    dbg_led_blink_200ms = 20,
-    dbg_led_blink_500ms = 50,
+    dbg_led_blink_fast  = 5,
+    dbg_led_blink       = 20,
+    dbg_led_blink_slow  = 50,
     dbg_led_on          = 0xff, /* This is the "on" state, not a blink state */
 }dbg_blink_state_t;
 
@@ -207,18 +207,20 @@ typedef struct {
     uint8_t dst;    // The destination address of the message
 }comms_msg_hdr_t;
 
+#define RGB_BTN_MSG_MAX_DATA_LEN     (RGB_BTN_MSG_MAX_LEN - sizeof(comms_msg_hdr_t) - sizeof(uint8_t)) // The maximum data length of the message, excluding the header and CRC
+
 typedef struct {
     comms_msg_hdr_t hdr;
-    uint8_t data[RGB_BTN_MSG_MAX_LEN - sizeof(comms_msg_hdr_t) - sizeof(uint8_t)];
-    uint8_t crc;    // Not necisarely the last byte of the message, byte we should allow for it
+    uint8_t data[RGB_BTN_MSG_MAX_DATA_LEN];
+    uint8_t crc;    // Not necessarily the last byte of the message, but we should allow for it
 }comms_msg_t;
 #pragma pack(pop)
 
 typedef struct command_s
 {
     master_command_t cmd; /* The command ID */
-    uint8_t miso_sz;      /* The size of the payload MOSI */
-    uint8_t mosi_sz;      /* The size of the payload MISO */
+    uint8_t mosi_sz;      /* The size of the payload of cmds FROM the Master TO the Slave */
+    uint8_t miso_sz;      /* The size of the payload of cmd responses FROM the slave TO the master */
     uint8_t access_flags; /* A mask indicating how this command can be accessed */
 }command_payload_size_t;
 

@@ -90,6 +90,8 @@ typedef struct
     uint8_t cnt; // The number of commands in this command list
     uint8_t retry_cnt; // The number of times we have retried sending a message to this node
     uint64_t expiry;
+    uint32_t exp_rx_len; // The length of the response data we are waiting for 
+    uint8_t  exp_rx_cnt; // The number of responses we are waiting for
 }slave_node_cmd_t;
 
 typedef struct
@@ -114,13 +116,13 @@ bool is_addr_registered(uint8_t addr);
 bool _get_adress_node_index(uint8_t addr, int *slot);
 void _deregister_node(int node);
 
-bool _add_cmd_to_node_msg(uint8_t node, master_command_t cmd, uint8_t *data, uint8_t data_len, bool restart);
-bool _bcst_append(uint8_t cmd, uint8_t * data, uint8_t data_len);
+bool _add_cmd_to_node_msg(uint8_t node, master_command_t cmd, uint8_t *data, bool restart);
+bool _bcst_append(uint8_t cmd, uint8_t * data);
 void _rollcall_handler(uint8_t addr);
 
-void _check_all_pending_node_responses(void);
+bool _check_all_pending_node_responses(void);
 void _response_handler(int slot, master_command_t resp_cmd, response_code_t resp, uint8_t *resp_data, size_t resp_data_len);
-size_t _miso_payload_size(master_command_t cmd, response_code_t resp, size_t data_len_remaining);
+size_t _miso_payload_size(master_command_t cmd, response_code_t resp);
 int _responses_pending(int slot);
 bool _resend_unresponsive_cmds(int slot);
 master_command_t _next_expected_response(int slot);
@@ -183,9 +185,10 @@ bool is_node_valid(uint8_t node)
     return true; //The slot is valid and has a registered button
 }
 
-bool _add_cmd_to_node_msg(uint8_t node, master_command_t cmd, uint8_t *data, uint8_t data_len, bool restart)//, uint64_t timeout_ms)
+bool _add_cmd_to_node_msg(uint8_t node, master_command_t cmd, uint8_t *data, bool restart)//, uint64_t timeout_ms)
 {
     uint8_t node_addr;
+    uint8_t data_len = cmd_mosi_payload_size(cmd);
   
     if (!is_node_valid(node))
         return false; //No button registered at this slot
@@ -196,13 +199,30 @@ bool _add_cmd_to_node_msg(uint8_t node, master_command_t cmd, uint8_t *data, uin
     {
         int i = node_list[node].responses.cnt;
         //Found an empty slot
-        node_list[node].responses.cmd_data[i].cmd = cmd; //Store the command we are waiting for
-        node_list[node].responses.cmd_data[i].data = data; //No data for this command
-        node_list[node].responses.cmd_data[i].len = data_len; //No data length for this command
+        node_list[node].responses.cmd_data[i].cmd = cmd; //Store the command we are expecting a response for
+        node_list[node].responses.cmd_data[i].data = data; //...and  data for this command...
+        node_list[node].responses.cmd_data[i].len = data_len; //...and the length of the data
         //node_list[slot].responses.resp[i] = resp_err_none; //No response yet
         node_list[node].responses.cnt++; //Increment the command count for this node
 
-        node_list[node].responses.expiry = (uint64_t)sys_poll_tmr_ms() + CMD_RESPONSE_TIMEOUT_MS;//timeout_ms; //Store the timestamp of when we sent the command
+
+        //RVN - TODO. I guess we can calculate how long the response will be and if it might be 
+        //received over several messages, in which case we will need to extend the message timeout
+        uint32_t response_len = _miso_payload_size(cmd, resp_ok);
+        response_len = MIN(response_len, RGB_BTN_MSG_MAX_DATA_LEN) + (2 * sizeof(uint8_t)); //Get the expected response length for this command + 2 bytes for the response code and command ID
+        //iprintln(trNODE, "#Expecting %d bytes for \"%s\" (%d - %d)", response_len, cmd_to_str(cmd), node_list[node].responses.exp_rx_len, node_list[node].responses.exp_rx_cnt);
+
+        if ((node_list[node].responses.exp_rx_len + response_len) > RGB_BTN_MSG_MAX_DATA_LEN)
+        {
+            node_list[node].responses.exp_rx_cnt++;
+            iprintln(trNODE, "#Response will span over %d msgs (%d > %d)", node_list[node].responses.exp_rx_cnt, node_list[node].responses.exp_rx_len + response_len, RGB_BTN_MSG_MAX_DATA_LEN);            
+            node_list[node].responses.exp_rx_len = response_len; //Reset the response length to the expected response length
+        }
+        else
+        {
+            node_list[node].responses.exp_rx_len += response_len; //Add the expected response length to the total response length
+        }
+        // node_list[node].responses.expiry = (uint64_t)sys_poll_tmr_ms() + CMD_RESPONSE_TIMEOUT_MS;//timeout_ms; //Store the timestamp of when we sent the command
         node_list[node].responses.retry_cnt = 0;
         //if we run out of space.... well, heck, then we will not wait for that response...
         return true; //Command added successfully
@@ -211,7 +231,7 @@ bool _add_cmd_to_node_msg(uint8_t node, master_command_t cmd, uint8_t *data, uin
     return false; //Failed to append the command
 }
 
-bool _bcst_append(uint8_t cmd, uint8_t * data, uint8_t data_len)
+bool _bcst_append(uint8_t cmd, uint8_t * data)
 {
     //Must be preceeded by a comms_bcst_start() command
     if ((bcst_msg.data_length == 0) ||                       /* There should at least be a cmd_bcast_address_mask in the data */ 
@@ -228,7 +248,7 @@ bool _bcst_append(uint8_t cmd, uint8_t * data, uint8_t data_len)
         return false; //Cannot append this command to the broadcast message
     }
 
-    return comms_tx_msg_append(&bcst_msg, ADDR_BROADCAST, cmd, data, data_len, false);
+    return comms_tx_msg_append(&bcst_msg, ADDR_BROADCAST, cmd, data, cmd_mosi_payload_size(cmd), false);
 }
 
 bool _resend_unresponsive_cmds(int slot)
@@ -304,7 +324,7 @@ void _rollcall_handler(uint8_t addr)
     iprintln(trNODE, "#No space for 0x%02X", addr);
 }
 
-size_t _miso_payload_size(master_command_t cmd, response_code_t resp, size_t data_len_remaining)
+size_t _miso_payload_size(master_command_t cmd, response_code_t resp)
 {
     if (resp == resp_err_range)
         return 2; //2 bytes payload
@@ -312,7 +332,7 @@ size_t _miso_payload_size(master_command_t cmd, response_code_t resp, size_t dat
     if ((resp == resp_err_payload_len) || (resp == resp_err_reject_cmd))
         return 1; //1 byte payload
 
-    if ((resp == resp_err_unknown_cmd) || (data_len_remaining == 0))
+    if (resp == resp_err_unknown_cmd)
         return 0; //Nothing 
 
     //means the response is OK, so we need to return the payload size based on the command
@@ -321,10 +341,10 @@ size_t _miso_payload_size(master_command_t cmd, response_code_t resp, size_t dat
         if (cmd_table[i].cmd == cmd)
         {
             //Found the command, so return the payload size
-            return MIN(cmd_table[i].miso_sz, data_len_remaining);
+            return cmd_table[i].miso_sz;
         }
     }
-    return data_len_remaining; //the remainder of data in the message (minus the 2 bytes for the response code and command)
+    return (size_t)-1; //the remainder of data in the message (minus the 2 bytes for the response code and command)
 }
 
 void _deregister_node(int node)
@@ -336,7 +356,7 @@ void _deregister_node(int node)
     memset(&node_list[node], 0, sizeof(slave_node_t)); //Reset the slot to zero
 }
 
-void _check_all_pending_node_responses(void)
+bool _check_all_pending_node_responses(void)
 {
     //Check if we have any pending responses that timed out
     for (int node = 0; node < RGB_BTN_MAX_NODES; node++)
@@ -354,8 +374,12 @@ void _check_all_pending_node_responses(void)
             iprintln(trNODE, "#  - \"%s\" (%d bytes)", cmd_to_str(node_list[node].responses.cmd_data[j].cmd), node_list[node].responses.cmd_data[j].len);
 
         if (!_resend_unresponsive_cmds(node))
+        {
             _deregister_node(node); //Deregister the node
+            return false; //Node is no longer valid, so we can return
+        }
     }
+    return true; //All pending responses checked, no timeouts found, or retries sent successfully
 }
 
 int _responses_pending(int slot)
@@ -445,8 +469,8 @@ void _response_handler(int slot, master_command_t resp_cmd, response_code_t resp
                 return; //Skip this response, we can't handle it
                 break;
         }
-        iprint(trNODE, "#RX OK for \"%s\" from Node %d. Data: [", cmd_to_str(resp_cmd), slot);
-        for (int i = 0; i < resp_data_len; i++) iprint(trNODE, "%s%02X ", (i > 0)? " ":"", resp_data[i]);
+        iprint(trNODE, "#%d: \"%s\" = OK. [", slot, cmd_to_str(resp_cmd));
+        for (int i = 0; i < resp_data_len; i++) iprint(trNODE, "%s%02X", (i > 0)? " ":"", resp_data[i]);
         iprintln(trNODE, "]");
         //Update the button member with the new value
         memcpy(((uint8_t *)&node_list[slot].btn) + (size_t)member_offset, (void *)resp_data, resp_data_len);
@@ -512,7 +536,7 @@ uint8_t _register_addr(uint8_t addr)
             init_node_msg((uint8_t)i/*, true*/);
             if (add_node_msg_register((uint8_t)i))
             {
-                if (node_msg_tx_now((uint8_t)i, 1000LL))
+                if (node_msg_tx_now((uint8_t)i))
                 {
                     iprintln(trALWAYS, "Registered 0x%02X @ %d (%d/%d nodes)", node_list[i].address, i, node_count(), rc_response_count());
                     return addr; //Continue to the next address
@@ -555,13 +579,19 @@ void init_node_msg(uint8_t node/*, bool reset_response_data*/)
     node_list[node].responses.cnt = 0; //Reset the command count for this node
     node_list[node].responses.expiry = 0; //Reset the expiry time
     node_list[node].responses.retry_cnt = 0; //Reset the retry count
+    node_list[node].responses.exp_rx_len = 0; // The length of the response data we are waiting for 
+    node_list[node].responses.exp_rx_cnt = 1; // The number response messages we are expecting (minimum is 1)
+
     memset(node_list[node].responses.cmd_data, 0, sizeof(node_list[node].responses.cmd_data)); //Reset the command data list
 }
 
-bool node_msg_tx_now(uint8_t node, uint64_t wait_for_timeout)
+bool node_msg_tx_now(uint8_t node)
 {
     if (!is_node_valid(node))
         return false;
+
+    //We should only set the expiry time for the message at this point...
+    node_list[node].responses.expiry = (uint64_t)sys_poll_tmr_ms() + (node_list[node].responses.exp_rx_cnt * CMD_RESPONSE_TIMEOUT_MS);
 
     if (!comms_tx_msg_send(&node_list[node].msg)) //Send the message immediately
     {
@@ -569,25 +599,19 @@ bool node_msg_tx_now(uint8_t node, uint64_t wait_for_timeout)
         return false; //Failed to send the message
     }
 
-    if (wait_for_timeout == 0)
-        return true; //If we don't want to wait for a response, we can just return true
-
     //This function will block whichever task it is called from until the response is received or the timeout expires.
     //The responses are handled in the main APP task, so this should NOT be called from the APP task, as it will block the console task and not allow the APP task to process the responses.
-
-    uint64_t expiry_time = sys_poll_tmr_ms() + wait_for_timeout;
 
     //iprintln(trALWAYS, "Waiting for response from 0x%02X (%d cmd%s)", node_list[node].address, node_list[node].responses.cnt, (node_list[node].responses.cnt > 1) ? "s" : "");
     while (_responses_pending(node) > 0)
     {
-        node_parse_rx_msg(); //Process any received messages, this will update the node_list with the responses
-
-        if (sys_poll_tmr_ms() > expiry_time)
+        //Just wait here.... and keep on processing the responses... the response handler will do retries on timeouts
+        if (!node_parse_rx_msg()) //Process any received messages, this will also update the node_list[x].btn fields with the responses
         {
-            iprintln(trALWAYS, "#Timeout waiting for response from %d (0x%02X), %d cmd%s", node, get_node_addr(node), _responses_pending(node), (_responses_pending(node) > 1) ? "s" : "");
-            return false; //Timeout expired, no response received
+            iprintln(trNODE, "#Error: No response from node %d (presumed dead)", node);
+            return false; //Failed to parse the received message
         }
-        //Just wait here....
+        //if a timeout occurs after all the retries, the node will be de-registered and the while loop will exit
         vTaskDelay(1); //Wait a bit before checking again
     }
 
@@ -596,7 +620,7 @@ bool node_msg_tx_now(uint8_t node, uint64_t wait_for_timeout)
 
 bool add_node_msg_register(uint8_t node)
 {
-    return _add_cmd_to_node_msg(node, cmd_set_bitmask_index, &node, sizeof(uint8_t), true);
+    return _add_cmd_to_node_msg(node, cmd_set_bitmask_index, &node, true);
 }
 
 bool add_node_msg_new_addr(uint8_t node, uint8_t new_addr)
@@ -621,7 +645,7 @@ bool add_node_msg_new_addr(uint8_t node, uint8_t new_addr)
     * Another question to consider.... why do we need to assign a new address to a node/button?
      */
 
-     return _add_cmd_to_node_msg(node, cmd_new_add, &new_addr, sizeof(uint8_t), true);
+     return _add_cmd_to_node_msg(node, cmd_new_add, &new_addr, true);
 }
 
 // bool is_direct_node_cmd(master_command_t cmd)
@@ -641,7 +665,7 @@ bool add_node_msg_set_rgb(uint8_t node, uint8_t index, uint32_t rgb_col)
         iprintln(trNODE, "#Invalid RGB index (%d)", index);
         return false;
     }
-    return _add_cmd_to_node_msg(node, cmd_set_rgb_0 + index, (uint8_t *)&rgb_col, (3*sizeof(uint8_t)), false);
+    return _add_cmd_to_node_msg(node, cmd_set_rgb_0 + index, (uint8_t *)&rgb_col, false);
 }
 bool add_node_msg_get_rgb(uint8_t node, uint8_t index)
 {
@@ -650,75 +674,75 @@ bool add_node_msg_get_rgb(uint8_t node, uint8_t index)
         iprintln(trNODE, "#Invalid RGB index (%d)", index);
         return false;
     }
-    return _add_cmd_to_node_msg(node, cmd_get_rgb_0 + index, NULL, 0, false);
+    return _add_cmd_to_node_msg(node, cmd_get_rgb_0 + index, NULL, false);
 }
 
 bool add_node_msg_set_blink(uint8_t node, uint32_t period_ms)
 {
-    return _add_cmd_to_node_msg(node, cmd_set_blink, (uint8_t *)&period_ms, sizeof(uint32_t), false);
+    return _add_cmd_to_node_msg(node, cmd_set_blink, (uint8_t *)&period_ms, false);
 }
 bool add_node_msg_get_blink(uint8_t node)
 {
-    return _add_cmd_to_node_msg(node, cmd_get_blink, NULL, 0, false);
+    return _add_cmd_to_node_msg(node, cmd_get_blink, NULL, false);
 }
 
-bool add_node_msg_set_dbgled(uint8_t node, dbg_blink_state_t state)
+bool add_node_msg_set_dbgled(uint8_t node, uint8_t state)
 {
-    return _add_cmd_to_node_msg(node, cmd_set_dbg_led, (uint8_t *)&state, sizeof(dbg_blink_state_t), false);
+    return _add_cmd_to_node_msg(node, cmd_set_dbg_led, (uint8_t *)&state, false);
 }
 bool add_node_msg_get_dbgled(uint8_t node)
 {
-    return _add_cmd_to_node_msg(node, cmd_get_dbg_led, NULL, 0, false);
+    return _add_cmd_to_node_msg(node, cmd_get_dbg_led, NULL, false);
 }
 
 bool add_node_msg_set_active(uint8_t node, bool start)
 {
     uint8_t payload = start? 0x01 : 0x00; //Default command to start the stopwatch
-    return _add_cmd_to_node_msg(node, cmd_set_switch, &payload, sizeof(uint8_t), false);
+    return _add_cmd_to_node_msg(node, cmd_set_switch, &payload, false);
 }
 bool add_node_msg_get_reaction(uint8_t node)
 {
-    return _add_cmd_to_node_msg(node, cmd_get_reaction, NULL, 0, false);
+    return _add_cmd_to_node_msg(node, cmd_get_reaction, NULL, false);
 }
 
 bool add_node_msg_get_flags(uint8_t node)
 {
-    return _add_cmd_to_node_msg(node, cmd_get_flags, NULL, 0, false);
+    return _add_cmd_to_node_msg(node, cmd_get_flags, NULL, false);
 }
 
 bool add_node_msg_set_time(uint8_t node, uint32_t new_time_ms)
 {
-    return _add_cmd_to_node_msg(node, cmd_set_time, (uint8_t *)&new_time_ms, sizeof(uint32_t), false);
+    return _add_cmd_to_node_msg(node, cmd_set_time, (uint8_t *)&new_time_ms, false);
 }
 bool add_node_msg_get_time(uint8_t node)
 {
-    return _add_cmd_to_node_msg(node, cmd_get_time, NULL, 0, false);
+    return _add_cmd_to_node_msg(node, cmd_get_time, NULL, false);
 }
 
 bool add_node_msg_sync_reset(uint8_t node)
 {
     uint32_t reset_value = 0xFFFFFFFF; //Reset value for the sync command
-    return _add_cmd_to_node_msg(node, cmd_set_sync, (uint8_t *)&reset_value, sizeof(uint32_t), false);
+    return _add_cmd_to_node_msg(node, cmd_set_sync, (uint8_t *)&reset_value, false);
 }
 bool add_node_msg_sync_start(uint8_t node)
 {
     sys_stopwatch_ms_start(&sync_stopwatch, 0xFFFFFFFE); //Start the stopwatch for the sync command
     uint32_t start_value = 0x0; //Start value for the sync command
-    return _add_cmd_to_node_msg(node, cmd_set_sync, (uint8_t *)&start_value, sizeof(uint32_t), false);
+    return _add_cmd_to_node_msg(node, cmd_set_sync, (uint8_t *)&start_value, false);
 }
 bool add_node_msg_sync_end(uint8_t node)
 {
     uint32_t stop_value = sys_stopwatch_ms_stop(&sync_stopwatch); //Stop the sync and provide our elapsed time
-    return _add_cmd_to_node_msg(node, cmd_set_sync, (uint8_t *)&stop_value, sizeof(uint32_t), false);
+    return _add_cmd_to_node_msg(node, cmd_set_sync, (uint8_t *)&stop_value, false);
 }
 bool add_node_msg_get_correction(uint8_t node)
 {
-    return _add_cmd_to_node_msg(node, cmd_get_sync, NULL, 0, false);
+    return _add_cmd_to_node_msg(node, cmd_get_sync, NULL, false);
 }
 
 bool add_node_msg_get_version(uint8_t node)
 {
-    return _add_cmd_to_node_msg(node, cmd_get_version, NULL, 0, false);
+    return _add_cmd_to_node_msg(node, cmd_get_version, NULL, false);
 }
 
 size_t cmd_mosi_payload_size(master_command_t cmd)
@@ -799,6 +823,7 @@ void init_bcst_msg(int * exclude_nodes, int exclude_count)
 
 void bcst_msg_tx_now(void)
 {
+    //Apart from Roll-calls, broadcast messages are essentially "fire and forget" messages, so we don't need to wait for a response
     if (!comms_tx_msg_send(&bcst_msg))
         iprintln(trNODE, "#Error: Could not send broadcast (0x%02X)", bcst_msg.msg.hdr.id);
 }
@@ -810,39 +835,39 @@ bool add_bcst_msg_set_rgb(uint8_t index, uint32_t rgb_col)
         iprintln(trNODE, "#Invalid RGB index (%d)", index);
         return false;
     }
-    return _bcst_append(cmd_set_rgb_0 + index, (uint8_t *)&rgb_col, (3*sizeof(uint8_t)));
+    return _bcst_append(cmd_set_rgb_0 + index, (uint8_t *)&rgb_col);
 }
 
 bool add_bcst_msg_set_blink(uint32_t period_ms)
 {
-    return _bcst_append(cmd_set_blink, (uint8_t *)&period_ms, sizeof(uint32_t));
+    return _bcst_append(cmd_set_blink, (uint8_t *)&period_ms);
 }
 
-bool add_bcst_msg_set_dbgled(dbg_blink_state_t dbg_blink_state)
+bool add_bcst_msg_set_dbgled(uint8_t dbg_blink_state)
 {
-    return _bcst_append(cmd_set_dbg_led, (uint8_t *)&dbg_blink_state, sizeof(uint8_t));
+    return _bcst_append(cmd_set_dbg_led, (uint8_t *)&dbg_blink_state);
 }
 
 bool add_bcst_msg_set_time_ms(uint32_t new_time_ms)
 {
-    return _bcst_append(cmd_set_dbg_led, (uint8_t *)&new_time_ms, sizeof(uint32_t));
+    return _bcst_append(cmd_set_dbg_led, (uint8_t *)&new_time_ms);
 }
 
 bool add_bcst_msg_sync_reset(void)
 {
     uint32_t reset_value = 0xFFFFFFFF; //Reset value for the sync command
-    return _bcst_append(cmd_set_sync, (uint8_t *)&reset_value, sizeof(uint32_t));
+    return _bcst_append(cmd_set_sync, (uint8_t *)&reset_value);
 }
 bool add_bcst_msg_sync_start(void)
 {
     sys_stopwatch_ms_start(&sync_stopwatch, 0xFFFFFFFE); //Start the stopwatch for the sync command
     uint32_t start_value = 0x0; //Start value for the sync command
-    return _bcst_append(cmd_set_sync, (uint8_t *)&start_value, sizeof(uint32_t));
+    return _bcst_append(cmd_set_sync, (uint8_t *)&start_value);
 }
 bool add_bcst_msg_sync_end(void)
 {
     uint32_t stop_value = sys_stopwatch_ms_stop(&sync_stopwatch); //Stop the sync and provide our elapsed time
-    return _bcst_append(cmd_set_sync, (uint8_t *)&stop_value, sizeof(uint32_t));
+    return _bcst_append(cmd_set_sync, (uint8_t *)&stop_value);
 }
 bool is_time_sync_busy(void)
 {
@@ -894,7 +919,7 @@ int active_node_count(void)
             count++; //Count the number of registered buttons
     }
     if (count > 1)
-        iprintln(trNODE, "#ERROR - %d active nodes found", count);
+        iprintln(trNODE, "#Error - %d active nodes found", count);
 
     return count;
 }
@@ -966,7 +991,7 @@ bool waiting_for_rollcall(bool blocking)
     return false; //Roll-call is complete, we can register nodes now
 }
 
-void node_parse_rx_msg(void)
+bool node_parse_rx_msg(void)
 {
     comms_msg_t rx_msg;
     size_t rx_msg_size;
@@ -990,7 +1015,8 @@ void node_parse_rx_msg(void)
             _cmd = (master_command_t) rx_msg.data[_data_idx++];
             _resp = (response_code_t)rx_msg.data[_data_idx++]; //The 2nd byte is the response code
             _resp_data = &rx_msg.data[_data_idx]; //The rest of the data is the response data
-            _resp_data_len = _miso_payload_size(_cmd, _resp, payload_len - _data_idx); //The rest of the payload is the data
+            _resp_data_len = _miso_payload_size(_cmd, _resp); //The rest of the payload is the data
+            _resp_data_len = MIN(_resp_data_len, payload_len - _data_idx); //The rest of the payload is the data
             //iprintln(trNODE, "#%d bytes payload for \"%s\" (Resp: 0x%02X, Total: %d, Index: %d)", _resp_data_len, cmd_to_str(_cmd), _resp, payload_len, _data_idx);
             _data_idx += _resp_data_len; //Move the data index forward by the command data length
 
@@ -1001,7 +1027,7 @@ void node_parse_rx_msg(void)
             {
                 _rollcall_handler(rx_msg.hdr.src); //Handle the roll-call response
                 //RVN - should we return from here? or continue processing the rest of the message?
-                return;
+                return true;
             }
             else
             {
@@ -1024,7 +1050,7 @@ void node_parse_rx_msg(void)
     }
 
     //Check if we have any pending responses that timed out
-    _check_all_pending_node_responses();
+    return _check_all_pending_node_responses();
 }
 
 void register_new_buttons(void)
