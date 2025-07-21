@@ -989,7 +989,7 @@ bool _console_service(void)
 			//  Now parse the line if it is Valid
 			if (_console.rx.cnt > 0)
 				_parse_rx_line();
-			// Start a new line now....
+			// Start a new line now...
 			_console.rx.cnt = 0; // Reset index pointer
 			break;
 
@@ -1006,7 +1006,7 @@ bool _console_service(void)
 			// ****** Escape ******
 		case '\t':
 			// RVN TODO - Auto-complete?
-			/// Naaah.... too much hassle for this scope.
+			/// Naaah... too much hassle for this scope.
 			printf("\t");
 			break;
 
@@ -1154,7 +1154,7 @@ int console_add_menu(const char *_group_name, ConsoleMenuItem_t *_tbl, size_t _c
 			return 0;
 		}
 
-		// We also want to add it in alphabetical order....
+		// We also want to add it in alphabetical order...
 		// We walk through the existing list until we find a group which is alphabetically "after" our group
 		if (strcasecmp(_console.menu_grp_list.group[index].name, _group_name) < 0)
 			continue; // with the for loop

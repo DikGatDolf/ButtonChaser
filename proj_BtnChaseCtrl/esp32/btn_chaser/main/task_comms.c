@@ -199,7 +199,7 @@ static esp_timer_create_args_t _bus_silence_tmr_args = {
 static esp_timer_handle_t _bus_silence_tmr = NULL;
 
 
-const int comms_uart_buffer_size = (1024);//(RGB_BTN_MSG_MAX_LEN);// + 2; //Absolute worst case scenario.... every character in the msg escaped, plus STX and ETX
+const int comms_uart_buffer_size = (1024);//(RGB_BTN_MSG_MAX_LEN);// + 2; //Absolute worst case scenario... every character in the msg escaped, plus STX and ETX
 
 comms_rx_msg_t _rx = {0};
 
@@ -230,7 +230,7 @@ void _comms_main_func(void * pvParameters)
     ESP_ERROR_CHECK(uart_driver_install(UART_NUM_1, comms_uart_buffer_size, 0, (2 * RGB_BTN_MSG_MAX_LEN) + 2, &_comms.rs485.rx_queue, 0));
     /* From the function prototype description:     tx_buffer_size -- UART TX ring buffer size. If set to zero, driver will not use TX buffer, 
                                                                         TX function will block task until all data have been sent out.  
-        But this does not seem to ring true in pratical terms.... can be tested by setting USE_BUILTIN_RS485_UART to 0*/
+        But this does not seem to ring true in pratical terms... can be tested by setting USE_BUILTIN_RS485_UART to 0*/
     ESP_ERROR_CHECK(uart_param_config(UART_NUM_1, &_comms.rs485.uart_config));
 
 #if USE_BUILTIN_RS485_UART == 0    
@@ -400,7 +400,7 @@ void _tx_msg_handler(comms_msg_queue_item_t *tx_q_msg)
         vTaskDelay(1); //Wait for 1 tick
     }
 
-    //Handle the framing and escaping of the message here.....
+    //Handle the framing and escaping of the message here....
     tx_data_len = 0;
     tx_data[tx_data_len++] = STX; //Start of message
 
@@ -459,7 +459,7 @@ bool _rx_data_process(uint8_t rx_data)
                 // if we were sending just now, we want to check if our rx and tx buffers match
                 if (memcmp((uint8_t *)&_rx.msg, (uint8_t *)&_tx.msg, min(_rx.length, RGB_BTN_MSG_MAX_LEN)) == 0)
                 {
-                    //No need to check this message in the application.... we are done with it
+                    //No need to check this message in the application... we are done with it
                     _tx.state = tx_idle;
                     ESP_ERROR_CHECK(gpio_set_level(output_RS485_DE, 0)); // Set RS485 DE pin to low
                 }
@@ -600,7 +600,7 @@ esp_err_t task_comms_tx(uint8_t *tx_data, size_t tx_size)
         return ESP_FAIL;
     }
 
-    //RVN - TODO - We need to wake the task up from here....
+    //RVN - TODO - We need to wake the task up from here...
     return ESP_OK;
 }
 

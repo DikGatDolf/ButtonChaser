@@ -5,7 +5,7 @@ Author:     Rudolph van Niekerk
 
 This implements software timers which has to be polled to check for expiry.
 Yeah, I know FreeRTOS has built-in timers, but these are limited by the 
-configTICK_RATE_HZ frequency.... about 100Hz. This means we have a timer 
+configTICK_RATE_HZ frequency... about 100Hz. This means we have a timer 
 resoluton of 10ms.
 
 This implementation makes use of the the timer thread already running on the 

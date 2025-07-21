@@ -288,7 +288,7 @@ char * str_next_word(const char *str)
         while (!isspace((int)*nxtWord))
         {
             if (*nxtWord == 0) 
-                return NULL;    // end of string reached..... no more words
+                return NULL;    // end of string reached.... no more words
             nxtWord++;          // Move to the next character
         }
         //We've reached the end of the "current" word... now we need to find the next word (and null terminate whitespace as we go)

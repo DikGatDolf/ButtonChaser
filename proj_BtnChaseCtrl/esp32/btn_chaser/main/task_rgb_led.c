@@ -518,7 +518,7 @@ void _led_info_print(int _index)
             iprintln(trALWAYS, "%s LED - Blinking (0x%06X <-> 0x%06X), %.2f Hz", drv_rgb_led_strip_index2name(_index), rgb_led->col_1, rgb_led->col_2, (500.0f/rgb_led->timer.ms_period));
             break;
         case led_state_rainbow:
-            //Remember, the bottom 16 bits of col_2 is the total count.... x LED_UPDATE_INTERVAL_MS gives the period
+            //Remember, the bottom 16 bits of col_2 is the total count... x LED_UPDATE_INTERVAL_MS gives the period
             iprintln(trALWAYS, "%s LED - Rainbow, %dms", drv_rgb_led_strip_index2name(_index), (rgb_led->col_2 & 0xFFFF) * LED_UPDATE_INTERVAL_MS);
             break;
         default:
@@ -573,7 +573,7 @@ esp_err_t _handler_parse_address_str(uint32_t * addr_mask, const char * str)
 
 void _led_handler_common_action(void/*rgb_led_action_cmd action*/)
 {
-    //These functions (_menu_handler....) are called from the console task, so they should 
+    //These functions (_menu_handler...) are called from the console task, so they should 
     // not manupiluate the RGB task variables directly, but instead send messages to the RGB 
     // task via the msg_queue
     bool help_requested = false;
@@ -592,7 +592,7 @@ void _led_handler_common_action(void/*rgb_led_action_cmd action*/)
     else if (strcasecmp(arg, "rainbow") == 0)
         action = led_action_rainbow;
     else
-        return; //Nothing to do.... (how did we get here?)
+        return; //Nothing to do... (how did we get here?)
 
     while (console_arg_cnt() > 0)
 	{
@@ -779,7 +779,7 @@ void _led_handler_common_action(void/*rgb_led_action_cmd action*/)
 
 void _led_handler_status(void)
 {
-    //These functions (_menu_handler....) are called from the console task, so they should 
+    //These functions (_menu_handler...) are called from the console task, so they should 
     // not manupiluate the RGB task variables directly, but instead send messages to the RGB 
     // task via the msg_queue
     bool help_requested = false;
@@ -933,16 +933,16 @@ void _led_handler_col_list(void)
     if (!help_requested)
     {
         //All the arguments are valid... let's list each one of them 
-        //There are two options.... 
+        //There are two options... 
         // 1) the used provides a Colour name (to get the RGB value)
         // 2) the user provides a Hue value (to get the RGB value)
         while (console_arg_cnt() > 0)
         {
             char *arg = console_arg_pop();
             if ((!strcasecmp("all", arg)) || (!strcasecmp("list", arg)))
-                continue;   //Skip.... already handled
+                continue;   //Skip... already handled
             if (!strcasecmp("hues", arg))
-                continue;   //Skip.... already handled
+                continue;   //Skip... already handled
             if (ESP_OK == parse_str_to_colour(&parse_value, arg))
             {
                 iprint(trALWAYS, " % 8s -> 0x%06X", arg, parse_value);
@@ -974,7 +974,7 @@ void _led_handler_col_list(void)
 
 void _led_handler_reset(void)
 {
-    //These functions (_menu_handler....) are called from the console task, so they should 
+    //These functions (_menu_handler...) are called from the console task, so they should 
     // not manupiluate the RGB task variables directly, but instead send messages to the RGB 
     // task via the msg_queue
     bool help_requested = false;

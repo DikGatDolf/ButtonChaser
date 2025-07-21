@@ -43,39 +43,25 @@ Global (public) variables
 /******************************************************************************
 Global (public) function definitions
 ******************************************************************************/
-/*! \brief Start a roll-call for all nodes.
- * \param all If true, the function will reset the roll-call list and start a new roll-call for all nodes.
- * This function sends a roll-call command to all nodes and waits for their responses.
- * It is used to discover all (or new) nodes in the network and register them.
- */
-bool bcst_rollcall(bool all);
-
-/*! \brief Wait for the roll-call timer to expire.
- * \param blocking If true, the function will block until the roll-call timer expires.
- * This function blocks the calling task until the roll-call timer expires.
- * It is used to ensure that all roll-call responses are received before proceeding with other functions such as registering nodes.
- */
-bool waiting_for_rollcall(bool blocking);
-
 /*! \brief Register new buttons (nodes) in the system.
  * This function checks the roll-call list for new addresses and registers them as nodes.
  * It will send a register command to each new node found in the roll-call list.
  */
-void register_new_buttons(void);
+bool nodes_register_all(void);
 
 /*! \brief Get the address of a registered node.
- * \param node The index of the node in the node_list.
+ * \param node The index of the node in the nodes.list.
  * \return The address of the node, or ADDR_BROADCAST if the node is invalid.
  */
 uint8_t get_node_addr(uint8_t node);
 
 /*! \brief Get the number of registered nodes.
- * This function counts the number of nodes that have a valid address in the node_list.
+ * This function counts the number of nodes that have a valid address in the nodes.list.
  */
 int node_count(void);
 
 /*! \brief Check if a node is valid.
- * \param node The index of the node in the node_list.
+ * \param node The index of the node in the nodes.list.
  * \return True if the node is valid, false otherwise.
  */
 bool is_node_valid(uint8_t node);
@@ -89,7 +75,7 @@ int active_node_count(void);
 button_t * get_node_button_ptr(int slot);
 
 
-bool node_parse_rx_msg(void);
+void node_parse_rx_msg(void);
 
 size_t cmd_mosi_payload_size(master_command_t cmd);
 const char * cmd_to_str(master_command_t cmd);
@@ -124,7 +110,7 @@ bool node_msg_tx_now(uint8_t node);
 
 /*** Broadcast Message ****/
 //bool is_bcst_cmd(master_command_t cmd);
-void init_bcst_msg(int * exclude_nodes, int exclude_count);
+void init_bcst_msg(void);
 bool add_bcst_msg_set_rgb(uint8_t index, uint32_t rgb_col);
 bool add_bcst_msg_set_blink(uint32_t period_ms);
 bool add_bcst_msg_set_dbgled(uint8_t dbg_blink_state);
@@ -135,6 +121,8 @@ bool add_bcst_msg_sync_end(void);
 void bcst_msg_tx_now(void);
 
 bool is_time_sync_busy(void);
+
+void bcst_msg_clear_all(void);
 
 #ifdef __cplusplus
 }

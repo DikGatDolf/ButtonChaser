@@ -62,9 +62,7 @@ local variables
 
 uint32_t _total_cycles;
 uint32_t _count;
-
-bool _new_params = false; //Flag to indicate that new parameters have been set
-uint32_t _cycle_period;
+uint32_t _tmp_cycle_period = GAME_DEMO_PERIOD_MS_DEF;
 
 /*******************************************************************************
 Local (private) Functions
@@ -75,16 +73,6 @@ Global (public) Functions
 *******************************************************************************/
 void game_demo_main(void)
 {
-    if (_new_params)
-    {
-        uint32_t _new_total_cycles = (_cycle_period /TASK_GAME_INTERVAL_MS);
-        if (_total_cycles != _new_total_cycles)
-            _count = (_count * _new_total_cycles) / _total_cycles; //Adjust the count to the new total cycles
-        _total_cycles = _new_total_cycles; //Update the total cycles to the new value
-        _new_params = false; //Reset the flag
-        iprintln(trGAME, "#Period changed to %d ms (%d cycles)", _cycle_period, _total_cycles);
-    }
-
     //This function is going to be called repeatedly within a task's while(1) loop.
     uint32_t rgb = 0;
     uint32_t hue = (HUE_MAX *_count/_total_cycles)%HUE_MAX;
@@ -99,7 +87,7 @@ void game_demo_main(void)
     //     }
     // }
 
-    init_bcst_msg(NULL, 0);
+    init_bcst_msg();
     if (add_bcst_msg_set_rgb(0, rgb))
         bcst_msg_tx_now();
     else
@@ -109,7 +97,7 @@ void game_demo_main(void)
         _count = 0;
 }
 
-void game_demo_init(void)
+void game_demo_init(bool startup, bool new_game_params)
 {
     //This function is called once to initialise the game.
     //It can be used to set up any resources needed for the game.
@@ -117,32 +105,33 @@ void game_demo_init(void)
     //The minimum timer value is 40ms (TASK_GAME_INTERVAL_MS).
     //Dividing the period by TASK_GAME_INTERVAL_MS gives us a count of how many task cycles it takes to loop through the 360 degree hue spectrum,
     //No need to start a timer... we use the task cycle interval to update the hue (if needed)
-    _total_cycles = (((_new_params)? _cycle_period : GAME_DEMO_PERIOD_MS_DEF) /TASK_GAME_INTERVAL_MS);
-    _count = 0;
-    iprintln(trGAME|trALWAYS, "#Starting with a period of %dms (%d cycles)", _cycle_period, _total_cycles);
-    _new_params = false; //Reset the flag
+    if (startup)
+    {
+        _total_cycles = (((new_game_params)? _tmp_cycle_period : GAME_DEMO_PERIOD_MS_DEF) /TASK_GAME_INTERVAL_MS);
+        _count = 0;
+        iprintln(trGAME|trALWAYS, "#Starting with a period of %.1f s (%d cycles)", _tmp_cycle_period/1000.0f, _total_cycles);
+    }
+    else
+    {
+        uint32_t _new_total_cycles = (_tmp_cycle_period /TASK_GAME_INTERVAL_MS);
+        if (_total_cycles != _new_total_cycles)
+            _count = (_count * _new_total_cycles) / _total_cycles; //Adjust the count to the new total cycles
+        _total_cycles = _new_total_cycles; //Update the total cycles to the new value
+        iprintln(trGAME, "#Period changed to %.1f s (%d cycles)", _tmp_cycle_period/1000.0f, _total_cycles);
+    }
 }
 
 void game_demo_teardown(void)
 {
-    //Turn off all the LED's, as a matter of courtesy
-    init_bcst_msg(NULL, 0);
-    add_bcst_msg_set_blink(0); //Turn off blinking
-    add_bcst_msg_set_rgb(0, 0);
-    add_bcst_msg_set_dbgled(dbg_led_off); //Turn off the debug LED
-    bcst_msg_tx_now();
-
-        //This function is called once to tear down the game.
+    //This function is called once to tear down the game.
     //It can be used to free any resources allocated during the game.
-    _cycle_period = GAME_DEMO_PERIOD_MS_DEF; //Reset the period to the default value
-    _new_params = false; //Reset the flag
+    _tmp_cycle_period = GAME_DEMO_PERIOD_MS_DEF; //Reset the period to the default value
 }
 
-bool game_demo_arg_parser(const char **arg_str_array, int arg_cnt)
+bool game_demo_arg_parser(const char **arg_str_array, int arg_cnt, bool * new_game_params)
 {
     bool help_requested = false;
     uint32_t value;
-
     
     const char *arg = *arg_str_array++;
 
@@ -172,7 +161,7 @@ bool game_demo_arg_parser(const char **arg_str_array, int arg_cnt)
 
         iprintln(trALWAYS, "Invalid argument (\"%s\")", arg);
         help_requested = true;
-        // break; //Skip the rest of the arguments.... we only cater for 1
+        // break; //Skip the rest of the arguments... we only cater for 1
     }
 
     if (arg_cnt > 1)
@@ -195,8 +184,9 @@ bool game_demo_arg_parser(const char **arg_str_array, int arg_cnt)
 
     if (!help_requested)
     {
-        _cycle_period = (value > 0) ? value*1000 : GAME_DEMO_PERIOD_MS_DEF;
-        _new_params = true;
+        _tmp_cycle_period = (value > 0) ? value*1000 : GAME_DEMO_PERIOD_MS_DEF;
+        if (new_game_params != NULL)
+            *new_game_params = true; //Indicate that new parameters have been set
     }
 
     if (help_requested)
@@ -205,7 +195,7 @@ bool game_demo_arg_parser(const char **arg_str_array, int arg_cnt)
         iprintln(trALWAYS, "");
         iprintln(trALWAYS, "%s Parameters:", PRINTF_TAG);
         iprintln(trALWAYS, " <period>: A value indicating the cycle period in s (%d to %d)", GAME_DEMO_PERIOD_MIN_MS / 1000, GAME_DEMO_PERIOD_MAX_MS / 1000);
-        iprintln(trALWAYS, "        If omitted, a default period of %d ms is used", GAME_DEMO_PERIOD_MS_DEF);
+        iprintln(trALWAYS, "        If omitted, a default period of %d s is used", GAME_DEMO_PERIOD_MS_DEF/1000);
     }
     return true;
 }

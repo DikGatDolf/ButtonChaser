@@ -48,6 +48,8 @@ typedef struct cb_tmr_s
     volatile unsigned long ms_cnt;  // 1ms ~ 49 days.
     unsigned long ms_period;        // 1ms ~ 49 days.
     bool reload_mode; //Reload mode
+    bool enabled;     //Is the timer enabled... used to pause the timer operation to 
+                      // prevent it from being polled while it is being modified
 } cb_tmr_t;
 
 cb_tmr_t cb_tmr[MAX_CB_TMR_CNT];
@@ -129,7 +131,7 @@ ISR(TIMER1_OVF_vect)
     }
     for (int i = 0; i < MAX_CB_TMR_CNT; i++)
     {
-        if (cb_tmr[i].func)
+        if ((cb_tmr[i].func) && (cb_tmr[i].enabled)) //Check if the function pointer is not NULL and the timer is enabled
         {
             if ((--cb_tmr[i].ms_cnt) == 0)
             {
@@ -261,13 +263,19 @@ bool sys_cb_tmr_start(void (*cb_tmr_exp)(void), unsigned long interval, bool rel
     {
         if (cb_tmr[i].func == cb_tmr_exp)
         {
-            //Already in the list, so just reset the timer
-            ATOMIC_BLOCK(ATOMIC_RESTORESTATE) 
-            {
-                cb_tmr[i].ms_period = interval; // 1ms ~ 49 days.
-                cb_tmr[i].ms_cnt = interval;    // 1ms ~ 49 days.
-                cb_tmr[i].reload_mode = reload;
-            }
+            //Already in the list, so we can just reset the timer settings
+            cb_tmr[i].enabled = false; //Disable the timer as a first action, so we can change the settings without worring about it being changed by the interrupt
+            
+            //If the new period is longer than the previously set period, then we increse the count by the difference of the two periods
+            if (interval > cb_tmr[i].ms_period)
+                cb_tmr[i].ms_cnt += (interval - cb_tmr[i].ms_period);
+            //if the new period is shorter than the previously set period, we need to adjust the count.... but only if the current count is longer than the new period
+            else if (cb_tmr[i].ms_cnt > interval)
+                cb_tmr[i].ms_cnt = interval;
+            //The rest of the settings are just set to their new values
+            cb_tmr[i].ms_period = interval; // 1ms ~ 49 days.
+            cb_tmr[i].reload_mode = reload;
+            cb_tmr[i].enabled = true; //Enable the timer again as the very last action!
             return true;
         }
     }
@@ -277,13 +285,11 @@ bool sys_cb_tmr_start(void (*cb_tmr_exp)(void), unsigned long interval, bool rel
     {
         if (!cb_tmr[i].func)
         {
-            ATOMIC_BLOCK(ATOMIC_RESTORESTATE) 
-            {
-                cb_tmr[i].ms_period = interval; // 1ms ~ 49 days.
-                cb_tmr[i].ms_cnt = interval;
-                cb_tmr[i].func = cb_tmr_exp;
-                cb_tmr[i].reload_mode = reload;
-            }
+            cb_tmr[i].ms_period = interval; // 1ms ~ 49 days.
+            cb_tmr[i].ms_cnt = interval;
+            cb_tmr[i].reload_mode = reload;
+            cb_tmr[i].func = cb_tmr_exp;
+            cb_tmr[i].enabled = true; //Enable the timer as the very last action!
             return true;
         }
     }
@@ -300,14 +306,12 @@ void sys_cb_tmr_stop(void (*cb_tmr_exp)(void))
     {
         if (cb_tmr[i].func == cb_tmr_exp)
         {
-            ATOMIC_BLOCK(ATOMIC_RESTORESTATE) 
-            {
-                //In the list, just remove it
-                cb_tmr[i].ms_period = 0lu;
-                cb_tmr[i].ms_cnt = 0lu;
-                cb_tmr[i].func = NULL;
-                cb_tmr[i].reload_mode = false;
-            }
+            cb_tmr[i].enabled = false; //Disable the timer as a first action, so we can change the settings without worrying about it being changed by the interrupt
+            //In the list, just remove it
+            cb_tmr[i].ms_period = 0lu;
+            cb_tmr[i].ms_cnt = 0lu;
+            cb_tmr[i].func = NULL;
+            cb_tmr[i].reload_mode = false;
             return;
         }
     }

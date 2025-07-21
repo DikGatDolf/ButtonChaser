@@ -27,6 +27,7 @@ This (slave) device  is responsible for:
 #include <avr/pgmspace.h>
 //#include <SPI.h>
 #include "defines.h"
+#include <util/atomic.h>
 
 
 #include "sys_utils.h"
@@ -329,28 +330,13 @@ void loop() {
 void button_long_press(void)
 {
     system_flags |= flag_l_press;
-    //iprintln(trMAIN, "#Btn: Long Press");
-#if DEBUG_LED_ACTIONS == 1
-    sys_stopwatch_ms_start(&reaction_time_sw);
-    blink_stop();
-    dev_rgb_set_colour(colRed);
-#endif    
+    //iprintln(trMAIN, "#Btn: Long Press");   
 }
 
 void button_double_press(void)
 {
     system_flags |= flag_d_press;
-    //iprintln(trMAIN, "#Btn: Dbl Press");
-#if DEBUG_LED_ACTIONS == 1
-    if (blink_period_ms > 0)
-    {
-        //Stop the blinking timer, as we are not interested in it anymore
-        blink_stop();
-        dev_rgb_set_colour(colBlack); //Turn off the LED
-    }
-    else //Start the blinking timer
-        blink_start(200lu); //Start blinking at 200ms intervals
-#endif    
+    //iprintln(trMAIN, "#Btn: Dbl Press");   
 }
 
 void button_press(void)
@@ -396,23 +382,6 @@ void blink_start(unsigned long _period_ms)
         blink_stop();
 }
 
-// void blink_pause(void)
-// {
-//     //If we are not blinking, this will have no effect
-//     system_flags &= ~flag_blinking; //Clear the blinking flag
-//     sys_cb_tmr_stop(blink_action);
-// }
-
-// void blink_resume(void)
-// {
-//     //If we are not blinking, this will have no effect
-//     if (blink_period_ms > 0)
-//     {
-//         system_flags |= flag_blinking; //Clear the blinking flag
-//         sys_cb_tmr_start(blink_action, blink_period_ms, true);
-//     }
-// }
-
 void blink_stop(void)
 {
     system_flags &= ~flag_blinking; //Clear the blinking flag
@@ -420,13 +389,12 @@ void blink_stop(void)
     sys_cb_tmr_stop(blink_action);
 }
 
+bool blink_colour_index = false;
 void blink_action(void)
 {
-    //RVN-TODO should probably keep the colours unchanged and just swop the index being used by the blinking....
-    //Swop the colours on the RGB LED
-    SWOP_U32(colour[0].rgb, colour[1].rgb);
+    blink_colour_index = !blink_colour_index; //Toggle the colour index
     //Set the new colour
-    dev_rgb_set_colour(colour[0].rgb);
+    dev_rgb_set_colour(colour[blink_colour_index? 1 : 0].rgb);
     //Restart the timer    
     if (blink_period_ms == 0)
         sys_cb_tmr_stop(blink_action); // will self-destruct after exiting this function
@@ -467,20 +435,9 @@ void address_update(void)
     //Reset the comms address to that which we got from the NVstore
 }
 
-typedef union {
-    uint8_t u8_val;
-    uint16_t u16_val;
-    uint32_t u32_val;
-    float f_val;
-    uint8_t data[sizeof(uint32_t)]; //Max size is 4 bytes (uint32_t)
-} cmd_payload_u;
-
 void msg_process(void)
 {
     cmd_payload_u cmd_payload;
-    // uint8_t _u8_val = 0;
-    // uint16_t _u16_val = 0;
-    // uint32_t _u32_val = 0;
     uint8_t _cnt = 0;
     bool accept_msg = false; //We start off NOT accepting broadcast messages (yet)
     master_command_t _cmd;
@@ -561,18 +518,15 @@ void msg_process(void)
             {
                 if (read_cmd_payload(_cmd, (uint8_t *)&cmd_payload))
                 {
-                    //If we are not blinking, this will have no effect
-                    sys_cb_tmr_stop(blink_action);
-
-                    //blink_pause(); //pause blinking if we are changing LED colours
-                    colour[_cmd - cmd_set_rgb_0].rgb = cmd_payload.u32_val;
-                    //If we are changing the primary colour, we need to set it now
-                    if (_cmd == cmd_set_rgb_0)
+                    //Do not change the blinking status, but we should really change the colour atomically
+                    ATOMIC_BLOCK(ATOMIC_RESTORESTATE) 
+                    {
+                        colour[_cmd - cmd_set_rgb_0].rgb = cmd_payload.u32_val;
+                    }
+                    //If we are not blinking and we are changing the primary colour, we need to set it now
+                    if ((blink_period_ms == 0) && (_cmd == cmd_set_rgb_0))
                         dev_rgb_set_colour(colour[0].rgb);
-
-                    //If we are not blinking, this will have no effect
-                    if (blink_period_ms > 0)
-                        sys_cb_tmr_start(blink_action, blink_period_ms, true);
+                    //else, the blinking *should* take care of the colour change
 
                     _response_ok_append(_cmd);
                 }
@@ -584,11 +538,10 @@ void msg_process(void)
             {
                 if (read_cmd_payload(_cmd, (uint8_t *)&cmd_payload))
                 {
-                    blink_stop(); //Stop blinking if we are measuring the reaction time
-                    if (cmd_payload.u32_val > 0) //Only restart the timer if the period is > 0
-                        blink_start(cmd_payload.u32_val); //Start blinking at the specified intervals
+                    blink_start(cmd_payload.u32_val); //Start/Stop blinking at the specified intervals... resetting to a new value *should* be handled gracefully
                     _response_ok_append(_cmd);
                 }
+                //else //read failure already handled in read_cmd_payload()
                 break;
             }   
             
@@ -596,7 +549,7 @@ void msg_process(void)
             {
                 if (read_cmd_payload(_cmd, (uint8_t *)&cmd_payload))
                 {
-                    if (cmd_payload.u8_val > 1)
+                    if (cmd_payload.u8_val > CMD_SW_PAYLOAD_ACTIVATE)
                     {
                         iprintln(trALWAYS, "#Invalid value (%d > %d)", cmd_payload.u8_val, 1);
                         if (_can_respond) 
@@ -607,13 +560,13 @@ void msg_process(void)
                         }
                         break; // from switch... continue with the next command
                     }
-                    else if (cmd_payload.u8_val == 1)
+                    else if (cmd_payload.u8_val == CMD_SW_PAYLOAD_ACTIVATE)
                     {
                         system_flags |= flag_activated;
                         reaction_time_ms = 0lu;
                         sys_stopwatch_ms_start(&reaction_time_sw);
                     }
-                    else //if (_u8_val == 0)
+                    else //if (_u8_val == CMD_SW_PAYLOAD_DEACTIVATE)
                     {
                         //Stop measuring the reaction time
                         //if the stopwatch was running, we return the elapsed time.
@@ -621,6 +574,7 @@ void msg_process(void)
                     }
                     _response_ok_append(_cmd);
                 }
+                //else //read failure already handled in read_cmd_payload()
                 break;
             }
             
@@ -628,18 +582,6 @@ void msg_process(void)
             {
                 if (read_cmd_payload(_cmd, (uint8_t*)&cmd_payload))
                 {
-                    //Range checking removed on the debug led
-                    // if (cmd_payload.u8_val >= dbg_led_state_limit)
-                    // {
-                    //     iprintln(trALWAYS, "#Invalid index (%d > %d)", cmd_payload.u8_val, RGB_BTN_MAX_NODES);
-                    //     if (_can_respond)
-                    //     {
-                    //         //cmd_payload.data[0] should already contain the incorrect value
-                    //         cmd_payload.data[1] = dbg_led_state_limit - 1; //Set the maximum value
-                    //         dev_comms_response_append(_cmd, resp_err_range, (uint8_t *)&cmd_payload.u16_val, sizeof(uint16_t));
-                    //     }
-                    //     break;
-                    // }
                     dbg_led((dbg_blink_state_t)cmd_payload.u8_val); //Set the debug LED state
                     _response_ok_append(_cmd);
                 }
@@ -925,7 +867,7 @@ uint8_t _cmd_ok_tx_payload_size(master_command_t cmd)
     for (uint8_t i = 0; i < ARRAY_SIZE(cmd_table); i++)
         if (cmd_table[i].cmd == cmd)
             return cmd_table[i].miso_sz;
-            
+
     return 0; //Command not found, so no payload size
 }
 
@@ -1057,7 +999,7 @@ bool rollcall_msg_handler(master_command_t _cmd, uint8_t _src, uint8_t _dst)
         //A random jitter is added between 0 and 255ms to try to eliminate/reduce the probability of bus 
         //  collisions between nodes with the same addresses.
         //Means we will respond to the roll-call command between 10 and 2795 ms later
-        roll_call_time_ms = (((uint32_t)dev_comms_addr_get() * 2 * BUS_SILENCE_MIN_MS)) + sys_random(0, 0xFF);
+        roll_call_time_ms = ROLL_CALL_TIMOUT_MS(dev_comms_addr_get(), sys_random(0, 0xFF));
 
         /*With a maximum of 31 nodes on the bus, and a randomly generated address between 1 and 254, the 
            probability of a collision between two devices is ~31.4%
@@ -1132,6 +1074,11 @@ bool rollcall_msg_handler(master_command_t _cmd, uint8_t _src, uint8_t _dst)
         sys_stopwatch_ms_start(&roll_call_sw, 0); //Start the stopwatch for the roll-call response
         reg_state = roll_call; //We are in the process of responding to a roll-call
         dbg_led(dbg_led_blink_fast); //Start blinking the debug LED at 50ms intervals
+        //We should also stop any blinking that was happening before
+        blink_stop(); //Stop blinking the debug LED
+        dev_rgb_set_colour(colBlack); //Set the RGB LED off
+        // and probably clear all status flags (except for the unreg flag)
+        system_flags &= (flag_unreg);
     }
 
     // or was this a roll-call response from another device?

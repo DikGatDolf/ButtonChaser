@@ -544,7 +544,7 @@ bool _drv_rgb_led_strip_get_strip_index(int * led_index, int * strip_index)
         if (tli < led_strip_list[tsi]->led_cnt)
             break; //from for loop
 
-        //Nope.... subtract the number of leds in the current strip from the index and we'll move on to the next strip
+        //Nope... subtract the number of leds in the current strip from the index and we'll move on to the next strip
         tli -= led_strip_list[tsi]->led_cnt;
     }
 
@@ -598,7 +598,7 @@ bool drv_rgb_led_strip_name2index(const char * name, int * led_index,  int * led
             //We have a match, let's see what is next
             if ((*led_index_str == 0) || ((*led_index_str == ':') && (*(led_index_str+1) == 0)))
             {
-                //The entire LED strip.... The address is either bit 0 (0x0001), or all the rest (0xFFFE)
+                //The entire LED strip... The address is either bit 0 (0x0001), or all the rest (0xFFFE)
                 *led_index = start_index;
                 *led_cnt = led_strip_list[s]->led_cnt;
                 return true;
@@ -625,7 +625,7 @@ bool drv_rgb_led_strip_name2index(const char * name, int * led_index,  int * led
             iprintln(trALWAYS, "Unable to parse \"%s\" in \"%s\"", led_index_str, name);
             return false;
         }
-        //No match.... let's check the next strip, but increment the start_index by the number of leds in the current strip
+        //No match... let's check the next strip, but increment the start_index by the number of leds in the current strip
         start_index += led_strip_list[s]->led_cnt;
     }
     iprintln(trALWAYS, "\"%s\" not found (%d)", name, drv_rgb_led_strip_MAX);

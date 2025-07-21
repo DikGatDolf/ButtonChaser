@@ -92,7 +92,10 @@ bool sys_cb_tmr_start(void (*cb_tmr_exp)(void), unsigned long interval, bool rel
 */
 void sys_cb_tmr_stop(void (*cb_tmr_exp)(void));
 
-/*! Sets the timers interval and starts it. 
+/*! Sets the timers interval and starts it. If a timer is already running,
+ *  it will be just reset with the new interval and continue running, hopefully 
+ *  adjusting the values in such a way that the current operation is not 
+ *  adversely affected.
  * @param t         a pointer to a static timer_ms_t 
  * @param interval  period (in ms) after which to expire (unsigned long)
  * @param reload    Setting reload to true will ensure that a timer automatically 

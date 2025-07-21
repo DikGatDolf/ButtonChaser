@@ -46,7 +46,7 @@ The passed traceflags is compared with the system set trace print flag(s) to
 ******************************************************************************/
 #define iprintln(traceflags, fmtstr, ...) console_printline(traceflags, PRINTF_TAG, fmtstr, ##__VA_ARGS__)
 /******************************************************************************
-"Incomplete" version of iprintln.... no "\n" added at the end
+"Incomplete" version of iprintln... no "\n" added at the end
 ******************************************************************************/
 #define iprint(traceflags, fmtstr, ...) console_print(traceflags, PRINTF_TAG, fmtstr, ##__VA_ARGS__)
 

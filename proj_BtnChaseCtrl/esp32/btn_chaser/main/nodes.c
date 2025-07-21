@@ -7,7 +7,7 @@ Author:     Rudolph van Niekerk
 For clarification, a button is JUST a button until it's address is registered, 
  then it is a NODE on our network.
 Buttons are reference by their address, and NODES are referenced by their 
-  slot #in the node_list array.
+  slot #in the nodes.list array.
  *******************************************************************************/
 
 
@@ -72,7 +72,7 @@ local defines
  *******************************************************************************/
 typedef struct
 {
-    uint8_t     list[RGB_BTN_MAX_NODES]; // The response list for the roll-call
+    uint8_t     list[RGB_BTN_MAX_NODES+1]; // The response list for the roll-call
     int         cnt; // The number of slave nodes
     Timer_ms_t  timer;
 }rollcall_t;
@@ -80,8 +80,9 @@ typedef struct
 typedef struct
 {
     master_command_t cmd;
-    uint8_t *data;
-    uint8_t len;
+    cmd_payload_u payload; // The payload for the command
+    // uint8_t *data;
+//    uint8_t len;
 }cmd_data_t;
 
 typedef struct
@@ -105,13 +106,30 @@ typedef struct
     comms_tx_msg_t      msg; // The message we are currently building to send to this node
 }slave_node_t;
 
+typedef struct
+{
+    slave_node_t        list[RGB_BTN_MAX_NODES]; // The list of registered nodes
+    uint8_t             cnt; // The number of nodes in the list
+}nodes_t;
+
 /*******************************************************************************
  Local function prototypes
  *******************************************************************************/
-int rc_response_count(void);
-int add_rc_address(uint8_t addr);
+/*! \brief Start a roll-call for all nodes.
+ * \param all If true, the function will reset the roll-call list and start a new roll-call for all nodes.
+ * This function sends a roll-call command to all nodes and waits for their responses.
+ * It is used to discover all (or new) nodes in the network and register them.
+ */
+bool _bcst_rollcall(bool all);
 
-bool is_addr_registered(uint8_t addr);
+/*! \brief Wait for the roll-call timer to expire.
+ * \param blocking If true, the function will block until the roll-call timer expires.
+ * This function blocks the calling task until the roll-call timer expires.
+ * It is used to ensure that all roll-call responses are received before proceeding with other functions such as registering nodes.
+ */
+bool _waiting_for_rollcall(bool blocking);
+
+int _add_rc_address(uint8_t addr);
 
 bool _get_adress_node_index(uint8_t addr, int *slot);
 void _deregister_node(int node);
@@ -120,44 +138,43 @@ bool _add_cmd_to_node_msg(uint8_t node, master_command_t cmd, uint8_t *data, boo
 bool _bcst_append(uint8_t cmd, uint8_t * data);
 void _rollcall_handler(uint8_t addr);
 
-bool _check_all_pending_node_responses(void);
+void _check_all_pending_node_responses(void);
 void _response_handler(int slot, master_command_t resp_cmd, response_code_t resp, uint8_t *resp_data, size_t resp_data_len);
 size_t _miso_payload_size(master_command_t cmd, response_code_t resp);
 int _responses_pending(int slot);
 bool _resend_unresponsive_cmds(int slot);
-master_command_t _next_expected_response(int slot);
 
 uint8_t _register_addr(uint8_t addr);
 
 uint32_t _inactive_nodes_mask(void);
 
-
 /*******************************************************************************
  Local variables
  *******************************************************************************/
 
-slave_node_t    node_list[RGB_BTN_MAX_NODES] = {0}; 
+nodes_t nodes = {0}; // The structure containing all registered nodes
+
 comms_tx_msg_t bcst_msg = {0};
 
 rollcall_t rollcall = {0}; // The structure containing information for all who respond on rollcalls
 
 //RVN - Technically I  should maintain a separate stopwatch for each node, but 
 //  holy crap that is adding sooooooooo much more complexity (e.g. a sw is 
-//  started for a node and stopped using a broadcast.... or vice versa... 
-// .... Aaaaaaargh! Can open..... worms everywhere!)
+//  started for a node and stopped using a broadcast... or vice versa... 
+// ... Aaaaaaargh! Can open.... worms everywhere!)
 Stopwatch_ms_t sync_stopwatch;
 /*******************************************************************************
  Local (private) Functions
  *******************************************************************************/
 bool _get_adress_node_index(uint8_t addr, int *slot)
 {
-    for (int i = 0; i < RGB_BTN_MAX_NODES; i++)
+    for (int i = 0; i < nodes.cnt; i++)
     {
-        if (node_list[i].address == addr)
+        if (nodes.list[i].address == addr)
         {
             if (slot != NULL)
                 *slot = i; //Return the slot index if requested
-            return true;
+            return true; //Address found in the registered list
         }
     }
     return false; //Address not found in the registered list
@@ -165,21 +182,26 @@ bool _get_adress_node_index(uint8_t addr, int *slot)
 
 bool is_node_valid(uint8_t node)
 {
-    if (node >= RGB_BTN_MAX_NODES)
+    if (nodes.cnt == 0)
+    {
+        iprintln(trNODE, "#No nodes registered yet");
+        return false; //No nodes registered
+    }
+    if (node >= nodes.cnt)
     {
         iprintln(trNODE, "#Invalid slot %d for getting node address (%d/%d in use)", node, node_count(), RGB_BTN_MAX_NODES);
         return false;
     }
-    if (node_list[node].address == 0)
+    if (nodes.list[node].address == 0)
     {
         // iprintln(trALWAYS, "No button registered at slot %d", slot);
         return false;
     }
-    if ((node_list[node].address == ADDR_BROADCAST)  || (node_list[node].address == ADDR_MASTER))
+    if ((nodes.list[node].address == ADDR_BROADCAST)  || (nodes.list[node].address == ADDR_MASTER))
     {
-        iprintln(trNODE, "#Invalid node address, 0x%02X, at node %d... deleting!", node_list[node].address, node);
-        //This should be de-registered immediately, since it is not a valid node address
-        memset(&node_list[node], 0, sizeof(slave_node_t)); //Reset the slot to zero
+        iprintln(trNODE, "#Invalid node address, 0x%02X, at node %d... deleting!", nodes.list[node].address, node);
+        //RVN - TODO -This should really be de-registered immediately, since it is not a valid node address
+        memset(&nodes.list[node], 0, sizeof(slave_node_t)); //Reset the slot to zero
         return false;
     }
     return true; //The slot is valid and has a registered button
@@ -195,36 +217,44 @@ bool _add_cmd_to_node_msg(uint8_t node, master_command_t cmd, uint8_t *data, boo
 
     node_addr = get_node_addr(node);
 
-    if (comms_tx_msg_append(&node_list[node].msg, node_addr, cmd, data, data_len, restart))
+    if (nodes.list[node].responses.cnt >= NODE_CMD_CNT_MAX)
     {
-        int i = node_list[node].responses.cnt;
+        iprintln(trNODE, "#Cannot add command %s (0x%02X) to node %d (0x%02X) - (%d/%d)", cmd_to_str(cmd), cmd, node, node_addr, nodes.list[node].responses.cnt, NODE_CMD_CNT_MAX);
+        return false; //Too many commands pending for this node
+    }
+
+    if (comms_tx_msg_append(&nodes.list[node].msg, node_addr, cmd, data, data_len, restart))
+    {
+        int i = nodes.list[node].responses.cnt;
         //Found an empty slot
-        node_list[node].responses.cmd_data[i].cmd = cmd; //Store the command we are expecting a response for
-        node_list[node].responses.cmd_data[i].data = data; //...and  data for this command...
-        node_list[node].responses.cmd_data[i].len = data_len; //...and the length of the data
-        //node_list[slot].responses.resp[i] = resp_err_none; //No response yet
-        node_list[node].responses.cnt++; //Increment the command count for this node
+        nodes.list[node].responses.cmd_data[i].cmd = cmd; //Store the command we are expecting a response for
+        //We cannot just copy a pointer to the data since some of them are not static, so we need to copy the data
+        if (data_len > 0)
+            memcpy(nodes.list[node].responses.cmd_data[i].payload.data, data, data_len); //Copy the data to the payload
+        else
+            memset(nodes.list[node].responses.cmd_data[i].payload.data, 0, sizeof(nodes.list[node].responses.cmd_data[i].payload.data)); //If no data, then just zero the data buffer
+        nodes.list[node].responses.cnt++; //Increment the command count for this node
 
 
         //RVN - TODO. I guess we can calculate how long the response will be and if it might be 
         //received over several messages, in which case we will need to extend the message timeout
         uint32_t response_len = _miso_payload_size(cmd, resp_ok);
         response_len = MIN(response_len, RGB_BTN_MSG_MAX_DATA_LEN) + (2 * sizeof(uint8_t)); //Get the expected response length for this command + 2 bytes for the response code and command ID
-        //iprintln(trNODE, "#Expecting %d bytes for \"%s\" (%d - %d)", response_len, cmd_to_str(cmd), node_list[node].responses.exp_rx_len, node_list[node].responses.exp_rx_cnt);
+        //iprintln(trNODE, "#Expecting %d bytes for \"%s\" (%d - %d)", response_len, cmd_to_str(cmd), nodes.list[node].responses.exp_rx_len, nodes.list[node].responses.exp_rx_cnt);
 
-        if ((node_list[node].responses.exp_rx_len + response_len) > RGB_BTN_MSG_MAX_DATA_LEN)
+        if ((nodes.list[node].responses.exp_rx_len + response_len) > RGB_BTN_MSG_MAX_DATA_LEN)
         {
-            node_list[node].responses.exp_rx_cnt++;
-            iprintln(trNODE, "#Response will span over %d msgs (%d > %d)", node_list[node].responses.exp_rx_cnt, node_list[node].responses.exp_rx_len + response_len, RGB_BTN_MSG_MAX_DATA_LEN);            
-            node_list[node].responses.exp_rx_len = response_len; //Reset the response length to the expected response length
+            nodes.list[node].responses.exp_rx_cnt++;
+            iprintln(trNODE, "#Response will span over %d msgs (%d > %d)", nodes.list[node].responses.exp_rx_cnt, nodes.list[node].responses.exp_rx_len + response_len, RGB_BTN_MSG_MAX_DATA_LEN);            
+            nodes.list[node].responses.exp_rx_len = response_len; //Reset the response length to the expected response length
         }
         else
         {
-            node_list[node].responses.exp_rx_len += response_len; //Add the expected response length to the total response length
+            nodes.list[node].responses.exp_rx_len += response_len; //Add the expected response length to the total response length
         }
-        // node_list[node].responses.expiry = (uint64_t)sys_poll_tmr_ms() + CMD_RESPONSE_TIMEOUT_MS;//timeout_ms; //Store the timestamp of when we sent the command
-        node_list[node].responses.retry_cnt = 0;
-        //if we run out of space.... well, heck, then we will not wait for that response...
+        // nodes.list[node].responses.expiry = (uint64_t)sys_poll_tmr_ms() + CMD_RESPONSE_TIMEOUT_MS;//timeout_ms; //Store the timestamp of when we sent the command
+        nodes.list[node].responses.retry_cnt = 0;
+        //if we run out of space... well, heck, then we will not wait for that response...
         return true; //Command added successfully
     }
     iprintln(trNODE, "#Failed to append command %s (0x%02X) for node %d (0x%02X)", cmd_to_str(cmd), cmd, node, node_addr);
@@ -254,32 +284,28 @@ bool _bcst_append(uint8_t cmd, uint8_t * data)
 bool _resend_unresponsive_cmds(int slot)
 {
     //So now what, do we resend this command?
-    if (node_list[slot].responses.retry_cnt >= MAX_NODE_RETRIES) //If we have retried this command more than 3 times, we give up
+    if (nodes.list[slot].responses.retry_cnt >= MAX_NODE_RETRIES) //If we have retried this command more than 3 times, we give up
         return false; //Give up on this node
 
-    iprintln(trNODE, "#Resending last command to node 0x%02X (%d)", node_list[slot].address, slot);
+    iprintln(trNODE, "#Resending last command to node 0x%02X (%d)", nodes.list[slot].address, slot);
 
     //Resend the command
-    node_list[slot].responses.retry_cnt++; //Increment the retry count
-    comms_tx_msg_init(&node_list[slot].msg, node_list[slot].address); //Initialize the message for this node
+    nodes.list[slot].responses.retry_cnt++; //Increment the retry count
+    comms_tx_msg_init(&nodes.list[slot].msg, nodes.list[slot].address); //Initialize the message for this node
     //init_node_msg((uint8_t)slot, false);
-    for (int j = 0; j < node_list[slot].responses.cnt; j++)
+    for (int i = 0; i < nodes.list[slot].responses.cnt; i++)
     {
-        if (!comms_tx_msg_append(&node_list[slot].msg, node_list[slot].address, node_list[slot].responses.cmd_data[j].cmd, node_list[slot].responses.cmd_data[j].data, node_list[slot].responses.cmd_data[j].len, false))
+        cmd_data_t *cmd_data = &nodes.list[slot].responses.cmd_data[i];
+        if (!comms_tx_msg_append(&nodes.list[slot].msg, nodes.list[slot].address, cmd_data->cmd, &cmd_data->payload.data[0], cmd_mosi_payload_size(cmd_data->cmd), false))
         {
-            //RVN - TODO - Not liking how I am handling this failure.... but what the heck am I supposed to do.... another retry counter for this as well?
-            iprintln(trNODE, "#Error: Could not reload \"%s\" (%d bytes) to node %d (0x%02X) during resend", cmd_to_str(node_list[slot].responses.cmd_data[j].cmd), node_list[slot].responses.cmd_data[j].len, slot, node_list[slot].address);
+            //RVN - TODO - Not liking how I am handling this failure... but what the heck am I supposed to do... another retry counter for this as well?
+            iprintln(trNODE, "#Error: Could not reload \"%s\" (%d bytes) to node %d (0x%02X) during resend", cmd_to_str(cmd_data->cmd), cmd_mosi_payload_size(cmd_data->cmd), slot, nodes.list[slot].address);
             return false; //Failed to append the command, so we cannot resend it
         }
     }
-    comms_tx_msg_send(&node_list[slot].msg); //Send the message immediately
-    node_list[slot].responses.expiry = sys_poll_tmr_ms() + CMD_RESPONSE_TIMEOUT_MS;
+    comms_tx_msg_send(&nodes.list[slot].msg); //Send the message immediately
+    nodes.list[slot].responses.expiry = sys_poll_tmr_ms() + CMD_RESPONSE_TIMEOUT_MS;
     return true; //Command resent successfully
-}
-
-master_command_t _next_expected_response(int slot)
-{
-    return node_list[slot].responses.cmd_data[0].cmd; //Return the first command in the list
 }
 
 void _rollcall_handler(uint8_t addr)
@@ -294,11 +320,11 @@ void _rollcall_handler(uint8_t addr)
         //Find the first empty slot
         if (rollcall.list[i] == addr) 
         {
-            //This address is already in the list (only possible with "cmd_roll_call(unreg)"), so what happened?
+            //This address is already in the rollcall list (only possible with "cmd_roll_call(unreg)"), so what happened?
             /* It could be that this node has reset and is now responding to a roll-call again, (more likely, since it starting up in an unregsistered state)
             or it could be that a new node has joined the network with the same address as a previous node (less likely)
 
-            I guess the best course of action is to double check if we have comms with the node using this address.... if so, then this is a new button that has joined the network.
+            I guess the best course of action is to double check if we have comms with the node using this address... if so, then this is a new button that has joined the network.
                 Otherwise we can assume that this is a node that has reset and is now responding to a roll-call again.
 
                 For now we are just going to assume the more likely scenario...
@@ -315,7 +341,7 @@ void _rollcall_handler(uint8_t addr)
         }
         if (rollcall.list[i] == 0) 
         {
-            int cnt = add_rc_address(addr);
+            int cnt = _add_rc_address(addr);
             iprintln(trNODE, "#Got RC Reply #%d from 0x%02X (%d)", cnt, addr, i);
             return; //We found a slot, no need to continue
         }
@@ -352,51 +378,64 @@ void _deregister_node(int node)
     if (!is_node_valid(node))
         return; //No button registered at this slot
 
-    iprintln(trNODE, "#Deregistering node %d (0x%02X)", node, node_list[node].address);
-    memset(&node_list[node], 0, sizeof(slave_node_t)); //Reset the slot to zero
+    //Is this the last node we are deregistering?
+    int last_node_index = node_count() - 1; //Get the last node index
+    if (node < last_node_index)
+        memmove(&nodes.list[node], &nodes.list[node + 1], sizeof(slave_node_t) * (last_node_index - node));
+
+    memset(&nodes.list[last_node_index], 0, sizeof(slave_node_t)); //Reset the rest of the node list
+    nodes.cnt--; //Decrement the node count
+
+    iprintln(trNODE, "#Deregistered node %d (0x%02X) - %d Nodes remain:", node, nodes.list[node].address, nodes.cnt);
+    for (int i = 0; i < nodes.cnt; i++)
+    {
+        iprintln(trNODE, "#Node %d (0x%02X) - %d - %d ms", i, nodes.list[i].address, nodes.list[i].responses.cnt, nodes.list[i].responses.expiry);
+    }
+
 }
 
-bool _check_all_pending_node_responses(void)
+void _check_all_pending_node_responses(void)
 {
     //Check if we have any pending responses that timed out
-    for (int node = 0; node < RGB_BTN_MAX_NODES; node++)
+    for (int node = 0; node < nodes.cnt; node++)
     {
 
         if (0 == _responses_pending(node))
             continue; //No pending responses for this node, so we can skip it
         
         //Check if the response has timed out
-        if (node_list[node].responses.expiry > sys_poll_tmr_ms())
+        if (nodes.list[node].responses.expiry > sys_poll_tmr_ms())
             continue; //No timeout (yet)
-
-        iprintln(trNODE, "#Response timeout for 0x%02X (%d):", node_list[node].address, node);
-        for (int j = 0; j < node_list[node].responses.cnt; j++)
-            iprintln(trNODE, "#  - \"%s\" (%d bytes)", cmd_to_str(node_list[node].responses.cmd_data[j].cmd), node_list[node].responses.cmd_data[j].len);
 
         if (!_resend_unresponsive_cmds(node))
         {
+            iprintln(trNODE, "# %d failed retries for node %d (0x%02X), %d cmds:", nodes.list[node].responses.retry_cnt, node, nodes.list[node].address, nodes.list[node].responses.cnt);
+            for (int j = 0; j < nodes.list[node].responses.cnt; j++)
+                iprintln(trNODE, "#   %d - \"%s\" (%d bytes)", j+1, 
+                    cmd_to_str(nodes.list[node].responses.cmd_data[j].cmd), 
+                    cmd_mosi_payload_size(nodes.list[node].responses.cmd_data[j].cmd));
             _deregister_node(node); //Deregister the node
-            return false; //Node is no longer valid, so we can return
+            //move our index back by one, since we just removed a node
+            node--;
         }
     }
-    return true; //All pending responses checked, no timeouts found, or retries sent successfully
 }
 
 int _responses_pending(int slot)
 {
-    if (!is_node_valid(slot)) //Check if the slot is valid and has a registered button
+    // if (!is_node_valid(slot)) //Check if the slot is valid and has a registered button
+    //     return 0; //Skip this slot
+
+    if (nodes.list[slot].address == 0) //This slot is not in use
         return 0; //Skip this slot
 
-    if (node_list[slot].address == 0) //This slot is not in use
+    if (nodes.list[slot].responses.cnt == 0) //No pending responses for this node
         return 0; //Skip this slot
 
-    if (node_list[slot].responses.cnt == 0) //No pending responses for this node
-        return 0; //Skip this slot
-
-    if (node_list[slot].responses.expiry == 0)
+    if (nodes.list[slot].responses.expiry == 0)
         return 0; //No timeout (yet)
 
-    return node_list[slot].responses.cnt;
+    return nodes.list[slot].responses.cnt;
 }
 
 void _response_handler(int slot, master_command_t resp_cmd, response_code_t resp, uint8_t *resp_data, size_t resp_data_len)
@@ -412,10 +451,10 @@ void _response_handler(int slot, master_command_t resp_cmd, response_code_t resp
     if (!is_node_valid(slot)) //Check if the slot is valid and has a registered button
         return; //Skip this slot
 
-    if (node_list[slot].responses.cnt == 0) //No pending responses for this node
+    if (nodes.list[slot].responses.cnt == 0) //No pending responses for this node
         return; //Skip this slot
 
-    if (node_list[slot].responses.expiry == 0)
+    if (nodes.list[slot].responses.expiry == 0)
         return; //No timeout (yet)
 
     int _pending_responses = _responses_pending(slot);
@@ -424,11 +463,13 @@ void _response_handler(int slot, master_command_t resp_cmd, response_code_t resp
 
     //We should be getting the responses in the same order as we sent the commands
 
-    master_command_t waiting_cmd = _next_expected_response(slot);
-    if (resp_cmd != waiting_cmd)
+    master_command_t waiting_tx_cmd = nodes.list[slot].responses.cmd_data[0].cmd;
+    cmd_payload_u *waiting_tx_data = &nodes.list[slot].responses.cmd_data[0].payload; //Get the data that was sent with the command
+
+    if (resp_cmd != waiting_tx_cmd)
     {
         //Oops... this is not right?!?!?!
-        iprintln(trNODE, "#Error: Node %d (0x%02X) sent response (0x%02X) for \"%s\" iso \"%s\"", slot, get_node_addr(slot), resp, cmd_to_str(resp_cmd), cmd_to_str(waiting_cmd));
+        iprintln(trNODE, "#Error: Node %d (0x%02X) sent response (0x%02X) for \"%s\" iso \"%s\"", slot, get_node_addr(slot), resp, cmd_to_str(resp_cmd), cmd_to_str(waiting_tx_cmd));
         return; //Skip this response, we can't handle it
     }
 
@@ -450,7 +491,6 @@ void _response_handler(int slot, master_command_t resp_cmd, response_code_t resp
     //If this was a response to a read command, then we want to "save" the data returned from the node
     if (resp_data_len > 0) //Only GET's will have a response data length greater than 0
     {
-
         unsigned int member_offset = 0;
         switch (resp_cmd)
         {
@@ -469,101 +509,141 @@ void _response_handler(int slot, master_command_t resp_cmd, response_code_t resp
                 return; //Skip this response, we can't handle it
                 break;
         }
-        iprint(trNODE, "#%d: \"%s\" = OK. [", slot, cmd_to_str(resp_cmd));
-        for (int i = 0; i < resp_data_len; i++) iprint(trNODE, "%s%02X", (i > 0)? " ":"", resp_data[i]);
-        iprintln(trNODE, "]");
+        // iprint(trNODE, "#%d: \"%s\" = OK. [", slot, cmd_to_str(resp_cmd));
+        // for (int i = 0; i < resp_data_len; i++) iprint(trNODE, "%s%02X", (i > 0)? " ":"", resp_data[i]);
+        // iprintln(trNODE, "]");
         //Update the button member with the new value
-        memcpy(((uint8_t *)&node_list[slot].btn) + (size_t)member_offset, (void *)resp_data, resp_data_len);
-        node_list[slot].last_update_time = sys_poll_tmr_ms(); //Update the last update time for this node
+        memcpy(((uint8_t *)&nodes.list[slot].btn) + (size_t)member_offset, (void *)resp_data, resp_data_len);
+        nodes.list[slot].last_update_time = sys_poll_tmr_ms(); //Update the last update time for this node
 
         //RVN - TODO - Maybe we should maintain a timestamp for every field?
     }
 
+    //###########################################################################
+    //For certain commands' responses, we need to do some additional processing
+    //###########################################################################
+    if (resp_cmd == cmd_set_switch)
+    {
+        //set/clear the active state of the node based on what was sent to the node
+        nodes.list[slot].active = (waiting_tx_data->u8_val == CMD_SW_PAYLOAD_ACTIVATE); //Set the active state of the node based on the response data
+        //iprintln(trNODE, "#Node %d (0x%02X) is now %s", slot, nodes.list[slot].address, (nodes.list[slot].active) ? "active" : "deactivated");
+    }
+    if (resp_cmd == cmd_get_reaction)
+    {
+        //If the slot "was" active and the button read returned a positive reaction time, then we can assume that the button is not active anymore
+        if ((nodes.list[slot].btn.reaction_ms != 0) && (nodes.list[slot].active)) //If the reaction time is not zero and the node was active
+        {
+            nodes.list[slot].active = false; //Set the node to inactive
+            //iprintln(trNODE, "#Node %d (0x%02X) deactivated itself", slot, nodes.list[slot].address);
+        }
+
+    }
+
+
     //We got an OK response, so we can drop that command from the list
 
-    if (node_list[slot].responses.cnt > 1)//Delete the entry at index 0 and move the rest of the entries down
-        memmove(&node_list[slot].responses.cmd_data[0], &node_list[slot].responses.cmd_data[1], (node_list[slot].responses.cnt - 1) * sizeof(cmd_data_t));
+    if (nodes.list[slot].responses.cnt > 1)//Delete the entry at index 0 and move the rest of the entries down
+        memmove(&nodes.list[slot].responses.cmd_data[0], &nodes.list[slot].responses.cmd_data[1], (nodes.list[slot].responses.cnt - 1) * sizeof(cmd_data_t));
 
-    memset(&node_list[slot].responses.cmd_data[node_list[slot].responses.cnt - 1], 0, sizeof(cmd_data_t)); //Reset the last entry
+    memset(&nodes.list[slot].responses.cmd_data[nodes.list[slot].responses.cnt - 1], 0, sizeof(cmd_data_t)); //Reset the last entry
 
-    node_list[slot].responses.cnt--;
-    if (node_list[slot].responses.cnt == 0)
+    nodes.list[slot].responses.cnt--;
+    if (nodes.list[slot].responses.cnt == 0)
     {
-        node_list[slot].responses.retry_cnt = 0; //Reset the retry count
-        node_list[slot].responses.expiry = 0; //Reset the expiry time
+        nodes.list[slot].responses.retry_cnt = 0; //Reset the retry count
+        nodes.list[slot].responses.expiry = 0; //Reset the expiry time
     }
+}
+
+bool _bcst_rollcall(bool all)
+{
+    uint8_t data = 0xFF;
+
+    if (all)
+    {
+        data = 0x00; //If we are doing a roll-call for all nodes, we set the data to 0x00
+        memset(&rollcall, 0, sizeof(rollcall_t)); //Reset the roll-call list
+        memset(nodes.list, 0, sizeof(nodes.list)); //Reset all buttons to unregistered state
+        nodes.cnt = 0; //Reset the node count
+    }
+
+    if (comms_tx_msg_append(&bcst_msg, ADDR_BROADCAST, cmd_roll_call, &data, sizeof(uint8_t), true))
+    {
+        //This is all that is needed... this command can be sent immediately
+        if (comms_tx_msg_send(&bcst_msg))
+        {
+            //The maximum time we could afford to wait for a response.
+            sys_poll_tmr_start(&rollcall.timer, ROLL_CALL_TIMOUT_MS(ADDR_BROADCAST, ADDR_BROADCAST) + BUS_SILENCE_MIN_MS, false);
+            return true;
+        }
+    }
+    return false;
 }
 
 /*******************************************************************************
  Global (public) Functions
  *******************************************************************************/
 
-bool is_addr_registered(uint8_t addr)
-{
-    for (int i = 0; i < RGB_BTN_MAX_NODES; i++)
-    {
-        if (node_list[i].address == addr)
-            return true; //Found the address in the registered list
-    }
-    return false; //Address not found in the registered list
-}
-
 uint8_t get_node_addr(uint8_t node)
 {
     // if (!is_node_valid(node))
     //     return ADDR_BROADCAST;
 
-    return node_list[node].address;
+    return nodes.list[node].address;
 }
 
 uint8_t _register_addr(uint8_t addr)
 {
     if ((addr == ADDR_BROADCAST)  || (addr == ADDR_MASTER))
-        return 0x00;    //Invalid address
+        return 0x00;    //Invalid address - Should really never happen, but just in case
 
-    if (is_addr_registered(addr))
-        return addr;    //Already registered
-
-    //Find the next free slot in the node_list
-    for (int i = 0; i < RGB_BTN_MAX_NODES; i++)
+    //Find the next free slot in the nodes.list
+    for (int i = 0; i < nodes.cnt; i++)
     {
-        if ((node_list[i].address == 0) || (node_list[i].address == ADDR_BROADCAST)  || (node_list[i].address == ADDR_MASTER))
+        if (nodes.list[i].address == addr) //If this address is already registered, we can just return it
         {
-            //LEt's assume this is going to be all good
-            memset(&node_list[i], 0, sizeof(slave_node_t)); //Reset the slot to zero
-            node_list[i].address = addr; //Set the address of this node
-
-            init_node_msg((uint8_t)i/*, true*/);
-            if (add_node_msg_register((uint8_t)i))
-            {
-                if (node_msg_tx_now((uint8_t)i))
-                {
-                    iprintln(trALWAYS, "Registered 0x%02X @ %d (%d/%d nodes)", node_list[i].address, i, node_count(), rc_response_count());
-                    return addr; //Continue to the next address
-                }
-                else
-                {
-                    //WTF?!?!
-                    iprintln(trALWAYS, "Registration failed for 0x%02X @ %d (%d/%d nodes)", addr, i, node_count(), rc_response_count());
-                    memset(&node_list[i], 0, sizeof(slave_node_t)); //Reset the slot to zero
-                    return 0x00; //Failed to send the register message
-                }
-            }
+            iprintln(trNODE|trALWAYS, "#Address 0x%02X already registered at slot %d", addr, i);
+            return addr; //Already registered
         }
     }
-    iprintln(trALWAYS, "No Node Slot available for 0x%02X", addr);
+
+    if (nodes.cnt >= RGB_BTN_MAX_NODES)
+    {
+        iprintln(trNODE|trALWAYS, "#No free slots available for address 0x%02X", addr);
+        return 0x00; //No free slots available
+    }
+
+    uint8_t slot_index = nodes.cnt;
+    //iprintln(trNODE, "#Registering 0x%02X at slot %d", addr, nodes.cnt);
+
+    //LEt's assume this is going to be all good
+    memset(&nodes.list[nodes.cnt], 0, sizeof(slave_node_t)); //Reset the slot to zero
+    nodes.list[nodes.cnt].address = addr; //Set the address of this node
+    nodes.cnt++; //Increment the node count
+
+    init_node_msg(slot_index); //Initialize the message for this node
+    if (add_node_msg_register(slot_index))
+    {
+        if (node_msg_tx_now(slot_index))
+        {
+            //iprintln(trNODE, "#Registered 0x%02X @ %d (%d/%d nodes)", nodes.list[slot_index].address, slot_index, nodes.cnt, rollcall.cnt);
+            return addr; //Continue to the next address
+        }
+    }
+    memset(&nodes.list[slot_index], 0, sizeof(slave_node_t)); //Reset the slot to zero
+    nodes.cnt--; //Decrement the node count... this registration failed
+    iprintln(trNODE|trALWAYS, "#Registration failed for 0x%02X @ %d (%d/%d nodes)", addr, slot_index, nodes.cnt, rollcall.cnt);
     return 0x00;
 }
 
 int node_count(void)
 {
-    int count = 0;
-    for (int i = 0; i < RGB_BTN_MAX_NODES; i++)
-    {
-        if (node_list[i].address > 0) //This slot is in use
-            count++; //Count the number of registered buttons
-    }
-    return count;
+    return nodes.cnt;
+    // int count = 0;
+    // for (int i = 0; i < nodes.cnt; i++)
+    //     count++; //Count the number of registered buttons
+
+    // return count;
 }
 
 void init_node_msg(uint8_t node/*, bool reset_response_data*/)
@@ -571,18 +651,18 @@ void init_node_msg(uint8_t node/*, bool reset_response_data*/)
     if (!is_node_valid(node))
         return;
 
-    comms_tx_msg_init(&node_list[node].msg, node_list[node].address); //Initialize the message for this node
+    comms_tx_msg_init(&nodes.list[node].msg, nodes.list[node].address); //Initialize the message for this node
 
     // if (!reset_response_data)
     //     return; //We don't want to reset the response data, so we can just return
 
-    node_list[node].responses.cnt = 0; //Reset the command count for this node
-    node_list[node].responses.expiry = 0; //Reset the expiry time
-    node_list[node].responses.retry_cnt = 0; //Reset the retry count
-    node_list[node].responses.exp_rx_len = 0; // The length of the response data we are waiting for 
-    node_list[node].responses.exp_rx_cnt = 1; // The number response messages we are expecting (minimum is 1)
+    nodes.list[node].responses.cnt = 0; //Reset the command count for this node
+    nodes.list[node].responses.expiry = 0; //Reset the expiry time
+    nodes.list[node].responses.retry_cnt = 0; //Reset the retry count
+    nodes.list[node].responses.exp_rx_len = 0; // The length of the response data we are waiting for 
+    nodes.list[node].responses.exp_rx_cnt = 1; // The number response messages we are expecting (minimum is 1)
 
-    memset(node_list[node].responses.cmd_data, 0, sizeof(node_list[node].responses.cmd_data)); //Reset the command data list
+    memset(nodes.list[node].responses.cmd_data, 0, sizeof(nodes.list[node].responses.cmd_data)); //Reset the command data list
 }
 
 bool node_msg_tx_now(uint8_t node)
@@ -591,26 +671,22 @@ bool node_msg_tx_now(uint8_t node)
         return false;
 
     //We should only set the expiry time for the message at this point...
-    node_list[node].responses.expiry = (uint64_t)sys_poll_tmr_ms() + (node_list[node].responses.exp_rx_cnt * CMD_RESPONSE_TIMEOUT_MS);
+    nodes.list[node].responses.expiry = (uint64_t)sys_poll_tmr_ms() + (nodes.list[node].responses.exp_rx_cnt * CMD_RESPONSE_TIMEOUT_MS);
 
-    if (!comms_tx_msg_send(&node_list[node].msg)) //Send the message immediately
+    if (!comms_tx_msg_send(&nodes.list[node].msg)) //Send the message immediately
     {
-        iprintln(trNODE, "#Error: Could not send message to node %d (0x%02X)", node, node_list[node].address);
+        iprintln(trNODE, "#Error: Could not send message to node %d (0x%02X)", node, nodes.list[node].address);
         return false; //Failed to send the message
     }
 
     //This function will block whichever task it is called from until the response is received or the timeout expires.
     //The responses are handled in the main APP task, so this should NOT be called from the APP task, as it will block the console task and not allow the APP task to process the responses.
 
-    //iprintln(trALWAYS, "Waiting for response from 0x%02X (%d cmd%s)", node_list[node].address, node_list[node].responses.cnt, (node_list[node].responses.cnt > 1) ? "s" : "");
+    //iprintln(trALWAYS, "Waiting for response from 0x%02X (%d cmd%s)", nodes.list[node].address, nodes.list[node].responses.cnt, (nodes.list[node].responses.cnt > 1) ? "s" : "");
     while (_responses_pending(node) > 0)
     {
-        //Just wait here.... and keep on processing the responses... the response handler will do retries on timeouts
-        if (!node_parse_rx_msg()) //Process any received messages, this will also update the node_list[x].btn fields with the responses
-        {
-            iprintln(trNODE, "#Error: No response from node %d (presumed dead)", node);
-            return false; //Failed to parse the received message
-        }
+        //Just wait here... and keep on processing the responses... the response handler will do retries on timeouts
+        node_parse_rx_msg(); //Process any received messages, this will also update the nodes.list[x].btn fields with the responses
         //if a timeout occurs after all the retries, the node will be de-registered and the while loop will exit
         vTaskDelay(1); //Wait a bit before checking again
     }
@@ -638,11 +714,11 @@ bool add_node_msg_new_addr(uint8_t node, uint8_t new_addr)
     * We need to:
     * 1. Make sure that the address is not already in use
     * 2. Make sure that the address is not the same as the current address
-    * 3. Check if the command was received OK, and then change the address in the node_list
-    * 4. If the command was not received OK, we need .... what? try again?... how many times?
+    * 3. Check if the command was received OK, and then change the address in the nodes.list
+    * 4. If the command was not received OK, we need ... what? try again?... how many times?
     * 
     * 
-    * Another question to consider.... why do we need to assign a new address to a node/button?
+    * Another question to consider... why do we need to assign a new address to a node/button?
      */
 
      return _add_cmd_to_node_msg(node, cmd_new_add, &new_addr, true);
@@ -805,18 +881,9 @@ const char * cmd_to_str(master_command_t cmd)
 //     return false; //Command not found
 // }
 
-void init_bcst_msg(int * exclude_nodes, int exclude_count)
+void init_bcst_msg(void)
 {
     uint32_t _bcst_mask = _inactive_nodes_mask(); //Start with no excluded nodes (apart from the active node)
-    if ((exclude_nodes != NULL) && (exclude_count > 0))
-    {
-        for (int i = 0; ((i < exclude_count) && (i < RGB_BTN_MAX_NODES)); i++)
-        {
-            if (exclude_nodes[i] < RGB_BTN_MAX_NODES) //Check if the node # is valid
-                _bcst_mask &= ~(1 << exclude_nodes[i]); //Clear the corresponding bit for this node
-        }
-    }
-
     comms_tx_msg_init(&bcst_msg, ADDR_BROADCAST); //Initialize the broadcast message
     comms_tx_msg_append(&bcst_msg, ADDR_BROADCAST, cmd_bcast_address_mask, (uint8_t *)&_bcst_mask, sizeof(uint32_t), true); //Append the cmd_bcast_address_mask command
 }
@@ -875,51 +942,25 @@ bool is_time_sync_busy(void)
     return sync_stopwatch.running;
 }
 
-bool bcst_rollcall(bool all)
-{
-    uint8_t data = 0xFF;
-
-    if (all)
-    {
-        data = 0x00; //If we are doing a roll-call for all nodes, we set the data to 0x00
-        memset(&rollcall, 0, sizeof(rollcall_t)); //Reset the roll-call list
-        memset(node_list, 0, sizeof(node_list)); //Reset all buttons to unregistered state
-    }
-
-    if (comms_tx_msg_append(&bcst_msg, ADDR_BROADCAST, cmd_roll_call, &data, sizeof(uint8_t), true))
-    {
-        //This is all that is needed... this command can be sent immediately
-        if (comms_tx_msg_send(&bcst_msg))
-        {
-            //The maximum time we could afford to wait for a response.
-            sys_poll_tmr_start(&rollcall.timer, (ADDR_BROADCAST * 2 * BUS_SILENCE_MIN_MS) + 0xFF + BUS_SILENCE_MIN_MS, false);
-            return true;
-        }
-    }
-    return false;
-}
-
 uint32_t _inactive_nodes_mask(void)
 {
     uint32_t mask = 0x00000000; //Start with all nodes inactive
-    for (int i = 0; i < RGB_BTN_MAX_NODES; i++)
-    {
-        if ((node_list[i].address != 0) && (node_list[i].active == false))
+    for (int i = 0; i < nodes.cnt; i++)
+        if (nodes.list[i].active == false)
             mask |= (1 << i); //Set the bit for this node
-    }
+
     return mask; //Return the mask of inactive nodes (which are valid)
 }
 
 int active_node_count(void)
 {
     int count = 0;
-    for (int i = 0; i < RGB_BTN_MAX_NODES; i++)
-    {
-        if ((node_list[i].address != 0) && (node_list[i].active == true))
+    for (int i = 0; i < nodes.cnt; i++)
+        if (nodes.list[i].active == true)
             count++; //Count the number of registered buttons
-    }
+
     if (count > 1)
-        iprintln(trNODE, "#Error - %d active nodes found", count);
+        iprintln(trNODE|trALWAYS, "#Error - %d active nodes found", count);
 
     return count;
 }
@@ -929,19 +970,14 @@ button_t * get_node_button_ptr(int slot)
     if (!is_node_valid(slot)) //Check if the slot is valid and has a registered button
         return NULL; //Skip this slot
 
-    if (node_list[slot].address == 0) //This slot is not in use
+    if (nodes.list[slot].address == 0) //This slot is not in use
         return NULL; //Skip this slot
 
 
-    return &node_list[slot].btn; //Return a poitner to the button for this node
+    return &nodes.list[slot].btn; //Return a poitner to the button for this node
 }
 
-int rc_response_count(void)
-{
-    return rollcall.cnt; //Return the number of slave nodes that responded to the roll-call
-}
-
-int add_rc_address(uint8_t addr)
+int _add_rc_address(uint8_t addr)
 {
     if (rollcall.cnt >= RGB_BTN_MAX_NODES)
     {
@@ -954,13 +990,15 @@ int add_rc_address(uint8_t addr)
             if (rollcall.list[i] == addr)
             {
                 iprintln(trNODE, "#Address 0x%02X already in roll-call list", addr);
-                break; //From for loop.... Address already in the list
+                break; //From for loop... Address already in the list
             }
 
             if (rollcall.list[i] == 0x00)
             {
                 //Empty slot found, so we can add the address here
                 rollcall.list[rollcall.cnt++] = addr; //Add the address to the list and increment the count
+                rollcall.list[rollcall.cnt] = 0x00; //Set the next slot to zero, so we can check for empty slots
+
                 break; //From for loop
             }
         }
@@ -968,7 +1006,7 @@ int add_rc_address(uint8_t addr)
     return rollcall.cnt; //Return the number of addresses in the roll-call list
 }
 
-bool waiting_for_rollcall(bool blocking)
+bool _waiting_for_rollcall(bool blocking)
 {
     //This call will block the calling task until the roll-call timer expires
 
@@ -979,11 +1017,11 @@ bool waiting_for_rollcall(bool blocking)
         
         uint64_t wait_time = rollcall.timer.ms_expire - sys_poll_tmr_ms();
         //We could still received roll-call responses, so we cannot register nodes yet
-        iprintln(trNODE, "Roll-call will complete in %lu.%03d s.", wait_time / 1000, (int)(wait_time % 1000));
+        // iprintln(trNODE, "#Roll-call will complete in %lu.%03d s.", wait_time / 1000, (int)(wait_time % 1000));
 
         while (!sys_poll_tmr_expired(&rollcall.timer))
         {
-            node_parse_rx_msg(); //Process any received messages, this will update the node_list with the responses
+            node_parse_rx_msg(); //Process any received messages, this will update the nodes.list with the responses
             vTaskDelay(pdMS_TO_TICKS((uint32_t)(MIN(100, BUS_SILENCE_MIN_MS + wait_time)))); //Wait a bit (max 100ms) before we check again
         }
     }
@@ -991,7 +1029,7 @@ bool waiting_for_rollcall(bool blocking)
     return false; //Roll-call is complete, we can register nodes now
 }
 
-bool node_parse_rx_msg(void)
+void node_parse_rx_msg(void)
 {
     comms_msg_t rx_msg;
     size_t rx_msg_size;
@@ -1027,7 +1065,7 @@ bool node_parse_rx_msg(void)
             {
                 _rollcall_handler(rx_msg.hdr.src); //Handle the roll-call response
                 //RVN - should we return from here? or continue processing the rest of the message?
-                return true;
+                return;
             }
             else
             {
@@ -1050,28 +1088,41 @@ bool node_parse_rx_msg(void)
     }
 
     //Check if we have any pending responses that timed out
-    return _check_all_pending_node_responses();
+    _check_all_pending_node_responses();
 }
 
-void register_new_buttons(void)
+bool nodes_register_all(void)
 {
-    uint8_t _addr = 0x00; //Start with the first address
+    if (!_bcst_rollcall(true))
+    {
+        iprintln(trNODE|trALWAYS, "#Failed to send rollcall");
+        return false; //Failed to send the roll-call message, so we can't register new buttons
+    }
+
+    iprintln(trNODE|trALWAYS, "#Registration will complete in %.03f s.", (rollcall.timer.ms_expire - sys_poll_tmr_ms()) / 1000.0);
+    // uint8_t _addr = 0x00; //Start with the first address
 
     //This call will block the console task until the roll-call timer expires, so we can register nodes
-    waiting_for_rollcall(true);
+    _waiting_for_rollcall(true);
 
-    for (int i = 0; i < RGB_BTN_MAX_NODES; i++)
+    for (int i = 0; i < rollcall.cnt; i++)
     {
-        _addr = rollcall.list[i];
-        if (_addr == 0) //This slot is empty, so we can not use it
-            continue; //Skip this slot, it is empty
-
-        else if (is_addr_registered(_addr))
-            continue; //Skip this address, it is already registered
-            
-        else if (_register_addr(_addr) == 0x00)
-            iprintln(trALWAYS, "Failed to register node 0x%02X in slot %d", (uint8_t)_addr, i);
+        if (_register_addr(rollcall.list[i]) != rollcall.list[i])
+            iprintln(trNODE|trALWAYS, "#Failed to register node 0x%02X", (uint8_t)rollcall.list[0]);
     }
+    iprintln(trNODE, "#Registered %d/%d nodes", node_count(), rollcall.cnt);
+    return (node_count() > 0)? true : false; //Return true if we have any registered nodes
+}
+
+void bcst_msg_clear_all(void)
+{
+    init_bcst_msg();
+    add_bcst_msg_set_blink(0); //Turn off blinking
+    add_bcst_msg_set_rgb(0, 0);
+    add_bcst_msg_set_rgb(1, 0);
+    add_bcst_msg_set_rgb(2, 0);
+    add_bcst_msg_set_dbgled(dbg_led_off); //Turn off the debug LED
+    bcst_msg_tx_now();
 }
 
 #undef PRINTF_TAG

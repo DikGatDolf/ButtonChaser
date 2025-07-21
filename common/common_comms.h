@@ -71,14 +71,19 @@ Macros
 // #define ACK     (0x06)
 // #define NAK     (0x15)
 
-#define RGB_BTN_MAX_NODES       (31)
-#define BUS_SILENCE_MIN_MS      (5)  /* ms */
+#define RGB_BTN_MAX_NODES               (31)
+#define BUS_SILENCE_MIN_MS              (5)  /* ms */
+#define ROLL_CALL_BASE_TIME_MS          (2 * BUS_SILENCE_MIN_MS)
+#define ROLL_CALL_TIMOUT_MS(_a, _r)     (((uint32_t)_a * ROLL_CALL_BASE_TIME_MS) + _r)
 
 #define REMOTE_CONSOLE_SUPPORTED (0) /* Enables/disables the remote console (which is still untested). Currently this equates to 650 bytes Flash and 2 bytes RAM */
 
 #define CMD_TYPE_BROADCAST  0x01
 #define CMD_TYPE_DIRECT     0x02
 #define CMD_TYPE_RESTRICTED 0x04
+
+#define CMD_SW_PAYLOAD_DEACTIVATE   (0x00)
+#define CMD_SW_PAYLOAD_ACTIVATE     (0x01)
 
 /******************************************************************************
 Struct & Unions
@@ -149,6 +154,14 @@ typedef enum command_e
 
     cmd_debug_0             = 0x80, /* Dummy command. just fills the data buffer */
 }master_command_t;
+
+typedef union {
+    uint8_t u8_val;
+    uint16_t u16_val;
+    uint32_t u32_val;
+    float f_val;
+    uint8_t data[sizeof(uint32_t)]; //Max size is 4 bytes (uint32_t)
+} cmd_payload_u;
 
 typedef enum response_e
 {

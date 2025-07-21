@@ -12,10 +12,10 @@ Author:     Rudolph van Niekerk
 
  /* ---------------- RVN / TODO / NOTES / MUSINGS ---------------- 
     * Consider making a table in common_comms.h that contains the command ID, 
-        the respective payload sized for rd and wr.... it could potentially 
+        the respective payload sized for rd and wr... it could potentially 
         simplify the code on the button significantly.
 
-    * Get rid of the "remote console" commands.... just use the "set" and "get" 
+    * Get rid of the "remote console" commands... just use the "set" and "get" 
         commands. The console commands take up valuable space on the button and 
         can be replaced by the "set" and "get" commands.
 
@@ -122,6 +122,7 @@ void _sys_handler_list(void);
 bool _sys_handler_read_node_from_str(const char * arg_str_in, uint8_t * node_inout, bool* help_requested);
 void _sys_handler_game(void);
 void _sys_handler_sync(void);
+void _sys_handler_rand(void);
 
 /*******************************************************************************
  Local variables
@@ -137,6 +138,7 @@ ConsoleMenuItem_t _task_main_menu_items[] =
     // {"list",    _sys_handler_list,    "Retrieves a list of all registered nodes"},
     {"game",    _sys_handler_game,    "Game related actions (start, stop, info, etc)"},
     // {"tasks",   _sys_handler_tasks,   "Displays the stack usage of all tasks or a specific task"},
+    {"rand",    _sys_handler_rand,    "Random number generator functions"},
     {"reset",   _sys_handler_reset,   "Perform a system reset"},
 };
 
@@ -217,11 +219,8 @@ void app_main(void)
     while (1)
     {
         //If a game is running, this is handled by the game task
-        if (!is_game_running())
-        {
-            if (!node_parse_rx_msg()) //Process any received messages, this will also update the node_list[x].btn fields with the responses
-                iprintln(trNODE, "#Error: No response from nodes (presumed dead)");
-        }
+        // if (!game_is_running())
+        //     node_parse_rx_msg(); //Process any received messages, this will also update the nodes.list[x].btn fields with the responses
 
         //else the game should be handing this for us
 
@@ -230,7 +229,7 @@ void app_main(void)
 
 		//iprintln(trALWAYS, "#Task Running");
 
-    	//We're not all that busy from this point onwards.... might as well check in every 1000ms.
+    	//We're not all that busy from this point onwards... might as well check in every 1000ms.
         //vTaskDelay(1000 / portTICK_PERIOD_MS);
         xTaskDelayUntil(&xLastWakeTime, MAX(1, pdMS_TO_TICKS(50)));
     }
@@ -419,15 +418,10 @@ void _sys_handler_tasks(void)
 
 void _sys_handler_reg(void)
 {
-    //These functions (_menu_handler....) are called from the console task, so they should 
+    //These functions (_menu_handler...) are called from the console task, so they should 
     // not send messages directly on the RS485 bus, but instead send messages to the Comms 
     // task via the msg_queue, using _tx_now()
     bool help_requested = false;
-    bool reset_all = false;
-    // int _slot = -1;
-    // int valid_args = 0;
-    // uint32_t value;
-    // bool got_arg;
 
     while (console_arg_cnt() > 0)
 	{
@@ -438,11 +432,10 @@ void _sys_handler_reg(void)
             break; //from while-loop
         }
 
-        if ((!strcasecmp("f", arg)) || (!strcasecmp("force", arg)))
-        {
-            reset_all = true;
-            continue;;
-        }
+        // if ((!strcasecmp("f", arg)) || (!strcasecmp("force", arg)))
+        // {
+        //     continue;;
+        // }
 
         iprintln(trALWAYS, "Invalid Argument (\"%s\")", arg);
         help_requested = true;
@@ -452,12 +445,7 @@ void _sys_handler_reg(void)
     if (!help_requested)
     {        
         //This call will block the console task until the roll-call timer expires, before we can register nodes
-        if (bcst_rollcall(reset_all))
-            iprintln(trALWAYS, "Sent rollcall to %s nodes", (reset_all)? "all" : "unregistered");
-        else
-            iprintln(trALWAYS, "Failed to send rollcall message");
-
-        register_new_buttons();
+        nodes_register_all();
 
     }
 
@@ -465,16 +453,17 @@ void _sys_handler_reg(void)
     {
         //                  01234567890123456789012345678901234567890123456789012345678901234567890123456789
         iprintln(trALWAYS, "");
-        iprintln(trALWAYS, "Usage: \"reg [f|force]\" - Sends a rollcalls and registers all responding ");
-        iprintln(trALWAYS, "                            buttons as nodes");
-        iprintln(trALWAYS, "    [f|force]:  clears all registered nodes before sending the rollcall");
-        iprintln(trALWAYS, "        If omitted, only unregistered (new) buttons will respond");
+        iprintln(trALWAYS, "Usage: \"reg\" - Sends a rollcall and registers all responding ");
+        // iprintln(trALWAYS, "Usage: \"reg [f|force]\" - Sends a rollcalls and registers all responding ");
+        // iprintln(trALWAYS, "                            buttons as nodes");
+        // iprintln(trALWAYS, "    [f|force]:  clears all registered nodes before sending the rollcall");
+        // iprintln(trALWAYS, "        If omitted, only unregistered (new) buttons will respond");
     }
 }
 
 void _sys_handler_bcst(void)
 {
-    //These functions (_menu_handler....) are called from the console task, so they should 
+    //These functions (_menu_handler...) are called from the console task, so they should 
     // not send messages directly on the RS485 bus, but instead send messages to the Comms 
     // task via the msg_queue, using _tx_now()
     bool help_requested = false;
@@ -602,7 +591,7 @@ void _sys_handler_bcst(void)
         else
         {
             //iprintln(trALWAYS, "Broadcasting to nodes with mask 0x%04X (%d nodes)", _mask, node_count());
-            init_bcst_msg(NULL, 0);
+            init_bcst_msg();
             bool msg_success = true;
             for (uint8_t i = 0; i < 8; i++)
             {
@@ -645,7 +634,7 @@ void _sys_handler_bcst(void)
 
 void _sys_handler_node_set(void)
 {
-    //These functions (_menu_handler....) are called from the console task, so they should 
+    //These functions (_menu_handler...) are called from the console task, so they should 
     // not send messages directly on the RS485 bus, but instead send messages to the Comms 
     // task via the msg_queue, using _tx_now()
     bool help_requested = false;
@@ -860,7 +849,7 @@ void _sys_handler_node_set(void)
 #define NODE_MAX_GET_CMDS 10 //Maximum number of GET commands we can request from a node
 void _sys_handler_node_get(void)
 {
-    //These functions (_menu_handler....) are called from the console task, so they should 
+    //These functions (_menu_handler...) are called from the console task, so they should 
     // not send messages directly on the RS485 bus, but instead send messages to the Comms 
     // task via the msg_queue, using _tx_now()
     bool help_requested = false;
@@ -1074,9 +1063,9 @@ bool _sys_handler_get_node_data(uint8_t node, uint16_t requests)
 
 void _sys_handler_display_node_data(uint8_t node, uint16_t requests)
 {
-    if (node >= RGB_BTN_MAX_NODES)
+    if (node >= node_count())
     {
-        iprintln(trALWAYS, "Invalid node number %d. Must be between 0 and %d", node, RGB_BTN_MAX_NODES - 1);
+        iprintln(trALWAYS, "Invalid node number %d. Must be between 0 and %d", node, node_count() - 1);
         return;
     }
     if (!is_node_valid(node))
@@ -1177,7 +1166,7 @@ void _sys_handler_list(void)
 
 void _sys_handler_sync(void)
 {
-    //These functions (_menu_handler....) are called from the console task, so they should 
+    //These functions (_menu_handler...) are called from the console task, so they should 
     // not send messages directly on the RS485 bus, but instead send messages to the Comms 
     // task via the msg_queue, using _tx_now()
     bool help_requested = false;
@@ -1242,7 +1231,7 @@ void _sys_handler_sync(void)
         {
             //Depending on whether we have a valid node address or not, we will either broadcast the command to all nodes, or send it to a specific node
             if (_node == 0xff)              //Broadcast the command to all nodes
-                init_bcst_msg(NULL, 0);
+                init_bcst_msg();
             else                            //Send the command to a specific node
                 init_node_msg(_node);
 
@@ -1315,7 +1304,7 @@ bool _sys_handler_read_node_from_str(const char * arg_str_in, uint8_t * node_ino
 
 void _sys_handler_game(void)
 {
-    //These functions (_menu_handler....) are called from the console task, so they should 
+    //These functions (_menu_handler...) are called from the console task, so they should 
     // not send messages directly on the RS485 bus, but instead send messages to the Comms 
     // task via the msg_queue, using _tx_now()
     bool help_requested = false;
@@ -1323,6 +1312,8 @@ void _sys_handler_game(void)
     bool got_start = false;
     bool got_stop = false;
     bool got_settings = false;
+    bool got_pause = false;
+    bool got_resume = false;
     int game_nr = -1;
     char * game_args[10];
     int game_arg_cnt = 0;
@@ -1331,7 +1322,7 @@ void _sys_handler_game(void)
 	{
         char *arg = console_arg_pop();
 
-        if ((got_start || got_settings) && (game_nr >= 0))
+        if ((got_start && (game_nr >= 0)) || got_settings)
         {
             //These are now considered to be paramters for the game to start, or change
             if (game_arg_cnt >= 10)
@@ -1367,9 +1358,9 @@ void _sys_handler_game(void)
         if ((!strcasecmp("stop", arg)) || (!strcasecmp("end", arg)))
         {
             //If we got a stop command, we cannot have a start or info command
-            if (got_start)
+            if (got_start || got_settings || got_pause || got_resume)
             {
-                iprintln(trALWAYS, "Invalid combination of actions. Please specify only one action (start, stop or info).");
+                iprintln(trALWAYS, "Invalid combination of actions. Please specify only one action.");
                 help_requested = true;
                 break;//from while-loop
             }
@@ -1379,9 +1370,9 @@ void _sys_handler_game(void)
         if ((!strcasecmp("start", arg)) || (!strcasecmp("go", arg)))
         {
             //If we got a start command, we cannot have a stop or info command
-            if (got_stop)
+            if (got_stop || got_settings || got_pause || got_resume)
             {
-                iprintln(trALWAYS, "Invalid combination of actions. Please specify only one action (start, stop or info).");
+                iprintln(trALWAYS, "Invalid combination of actions. Please specify only one action.");
                 help_requested = true;
                 break;//from while-loop
             }
@@ -1390,8 +1381,38 @@ void _sys_handler_game(void)
         }
         if ((!strcasecmp("set", arg)) || (!strcasecmp("settings", arg)) || (!strcasecmp("setting", arg)))
         {
+            if (got_stop || got_pause || got_resume)
+            {
+                iprintln(trALWAYS, "Invalid combination of actions. Please specify only one action.");
+                help_requested = true;
+                break;//from while-loop
+            }
             //If we got a start command, we cannot have a stop or info command
             got_settings = true;
+            continue; //Skip the rest of the loop and go to the next argument
+        }
+        if (!strcasecmp("pause", arg))
+        {
+            if (got_stop || got_settings || got_resume || got_start)
+            {
+                iprintln(trALWAYS, "Invalid combination of actions. Please specify only one action.");
+                help_requested = true;
+                break;//from while-loop
+            }
+            //If we got a start command, we cannot have a stop or info command
+            got_pause = true;
+            continue; //Skip the rest of the loop and go to the next argument
+        }
+        if (!strcasecmp("resume", arg))
+        {
+            if (got_stop || got_settings || got_pause || got_start)
+            {
+                iprintln(trALWAYS, "Invalid combination of actions. Please specify only one action.");
+                help_requested = true;
+                break;//from while-loop
+            }
+            //If we got a start command, we cannot have a stop or info command
+            got_resume = true;
             continue; //Skip the rest of the loop and go to the next argument
         }
 
@@ -1405,8 +1426,19 @@ void _sys_handler_game(void)
         //Deal with actions that require a game number, but maybe did not get one
         if (game_nr < 0)
         {
-            iprintln(trALWAYS, "Please specify a game number (0 to %d) to start", games_cnt() - 1);
-            return;
+            if (got_start)
+            {
+                iprintln(trALWAYS, "Please specify a game number (0 to %d) to start", games_cnt() - 1);
+                return;
+            }
+            //else ((got_stop || got_settings)
+            if  (current_game() < 0)
+            {
+                iprintln(trALWAYS, "No game is currently running. Please specify a game number (0 to %d) to start", games_cnt() - 1);
+                return;
+            }
+            game_nr = current_game(); //If we did not get a game number, we will use the current game
+            //Fall throught
         }
         //submit the game arguments to the game
         if ((game_arg_cnt > 0) && got_settings)
@@ -1418,46 +1450,55 @@ void _sys_handler_game(void)
                 iprint(trALWAYS, "\"%s%s\"", (i > 0)? ", " : "", game_args[i]);
             }
             iprintln(trALWAYS, "");
-            if (!parse_game_args(game_nr, (const char**)game_args, game_arg_cnt))
+            if (!game_parse_args(game_nr, (const char**)game_args, game_arg_cnt))
                 return;
         }
-        if (got_start && (game_nr >= 0))
+        if (got_start)
         {
             iprintln(trALWAYS, "Starting \"%s\" (%d)", game_name(game_nr), game_nr);
-            start_game(game_nr);
-            return;
+            game_start(game_nr);
+        }
+        //All remaining actions require a game to be running
+        else if (current_game() < 0)
+        {
+            iprintln(trALWAYS, "No game is currently running. Nothing to %s.", (got_pause) ? "pause" : (got_resume) ? "resume" : "stop");
         }
         //Deal with actions that DON'T require a game number, but might have gotten one
         else if (got_stop)
         {
-            if (current_game() < 0)
-            {
-                iprintln(trALWAYS, "No game is currently running.");
-                return;
-            }
-            if ((game_nr >= 0) && (game_nr != current_game()))
-            {
-                iprintln(trALWAYS, "Cannot stop \"%s\" (%d) as it is not currently running (%d).", game_name(game_nr), game_nr, current_game());
-                return; //Nothing to do further
-            }
-            if (game_nr < 0)
-                game_nr = current_game(); //If we did not get a game number, we will stop the current game
-
             //We can stop the game, so we will do it
             iprintln(trALWAYS, "Stopping \"%s\" (%d)", game_name(game_nr), game_nr);
-            end_game();
-            return; //Nothing to do further
+            game_end();
+        }
+        else if (got_pause)
+        {
+            //We can pause the game, so we will do it
+            iprintln(trALWAYS, "Pausing \"%s\" (%d)", game_name(game_nr), game_nr);
+            game_pause();
+        }
+        else if (got_resume)
+        {
+            if (!game_is_paused())
+            {
+                iprintln(trALWAYS, "Game \"%s\" (%d) is not paused. Nothing to resume.", game_name(game_nr), game_nr);
+                return; //Nothing to do further
+            }
+            //We can resume the game, so we will do it
+            iprintln(trALWAYS, "Resuming \"%s\" (%d)", game_name(game_nr), game_nr);
+            game_resume();
         }
         //All that is left is NO ACTIONS
         else if (game_nr >= 0)
         {
             iprintln(trALWAYS, "Game % 2d - %s", game_nr, game_name(game_nr));
-            return;
         }
-
-        iprintln(trALWAYS, "List of Games:");
-            for (int i = 0; i < games_cnt(); i++)
-                iprintln(trALWAYS, "  % 2d - %s", i, game_name(i));
+        else
+        {
+            iprintln(trALWAYS, "List of Games:");
+                for (int i = 0; i < games_cnt(); i++)
+                    iprintln(trALWAYS, "  % 2d - %s", i, game_name(i));    
+        }
+        return;
     }
 
     if (help_requested)
@@ -1466,10 +1507,103 @@ void _sys_handler_game(void)
         iprintln(trALWAYS, "");
         iprintln(trALWAYS, "Usage: \"game\" -  Displays a list of available games");
         iprintln(trALWAYS, "       \"game <#>\" - Displays info on the selected game");
-        iprintln(trALWAYS, "       \"game stop\" - Stops a currently running game");
         iprintln(trALWAYS, "       \"game <#> start [<param_1 ... param_n>]\" - Starts a game");
-        iprintln(trALWAYS, "       \"game <#> set [<param_1 ... param_n>]\" - Sets parameters for a game");
-        iprintln(trALWAYS, "         [<param_1 ... param_n>]\" - Optional game-specific parameters");
+        iprintln(trALWAYS, "       \"game stop\" - Stops a currently running game");
+        iprintln(trALWAYS, "       \"game set [<param_1 ... param_n>]\" - Sets parameters for a game");
+        iprintln(trALWAYS, "       \"game pause\" - Pauses a currently running game");
+        iprintln(trALWAYS, "       \"game resume\" - Resumes a currently paused game");
+        iprintln(trALWAYS, "          <#>:       Game number (0 to %d)", games_cnt() - 1);
+        iprintln(trALWAYS, "          <param_x>: Optional game-specific parameters (\"help\" for more info)");
+    }
+}
+
+#define MAX_RAND_REPEAT 1000
+void _sys_handler_rand(void)
+{
+    bool help_requested = false;
+    int _max = INT_MAX;
+    uint32_t _repeat = 1; //Default to 1 random number
+    bool got_max = false;
+    bool got_repeat = false;
+    uint32_t value = 0;
+
+    while (console_arg_cnt() > 0)
+	{
+        char *arg = console_arg_pop();
+
+        if ((!strcasecmp("?", arg)) || (!strcasecmp("help", arg)))
+        {    
+            help_requested = true;
+            break; //from while-loop
+        }
+
+        if (got_max && got_repeat)
+        {
+            //If we got both max and repeat, we cannot have any more arguments
+            iprintln(trALWAYS, "Ingoring \"%s\"...", arg);
+            continue; //From while-loop
+        }
+        if (str2uint32(&value, arg, 0))
+        {
+            if (!got_max)
+            {
+                if ((value < 1) || (value > INT_MAX))
+                {
+                    iprintln(trALWAYS, "Please specify a valid max value between (1 and %d) (got \"%s\")", INT_MAX, arg);
+                    help_requested = true;
+                    break; //From while-loop
+                }
+                _max = (int)value; //We got a valid max value
+                got_max = true; //We got a max value
+            }
+            else if (!got_repeat)
+            {
+                if ((value < 1) || (value > MAX_RAND_REPEAT))
+                {
+                    iprintln(trALWAYS, "Please specify a valid repeat count between(1 and %d) (got \"%s\")", MAX_RAND_REPEAT, arg);
+                    help_requested = true;
+                    break; //From while-loop
+                }
+                _repeat = (uint32_t)value; //We got a valid repeat count
+                got_repeat = true; //We got a repeat count
+            }
+            continue; //Skip the rest of the loop and go to the next argument
+        }
+
+        iprintln(trALWAYS, "Invalid Argument (\"%s\")", arg);
+        help_requested = true;
+        continue; //Skip the rest of the loop and go to the next argument
+    }
+
+    if (!help_requested)
+    {
+        if (_repeat == 1)
+        {
+            int random_value = rand() % (_max + 1); //Generate a random number between 0 and max_value
+            iprintln(trALWAYS, "Random number between 0 and %d = %d", _max, random_value);
+        }
+        else
+        {
+            uint32_t _total = 0;
+            iprintln(trALWAYS, "%d Random numbers between 0 and %d:", _repeat, _max);
+            for (int i = 0; i < _repeat; i++)
+            {
+                int random_value = rand() % (_max + 1); //Generate a random number between 0 and max_value
+                _total += (uint32_t)random_value; //Add the random value to the total
+                iprintln(trALWAYS, "%d) %d", i + 1, random_value);
+            }
+            iprintln(trALWAYS, "");
+            iprintln(trALWAYS, "Average: %.3f", _total / (float)_repeat);
+        }
+    }
+
+    if (help_requested)
+    {
+        //                  01234567890123456789012345678901234567890123456789012345678901234567890123456789
+        iprintln(trALWAYS, "");
+        iprintln(trALWAYS, "Usage: \"rand [<max>] [<repeat>]\" -  Generates <repeat> random numbers between 0 and <max>");
+        iprintln(trALWAYS, "          <max>:    The maximum possible random value (default: %d)", _max);
+        iprintln(trALWAYS, "          <repeat>: The number of random values to generate (default: 1)");
     }
 }
 

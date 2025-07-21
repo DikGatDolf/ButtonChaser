@@ -31,31 +31,27 @@ variables
 typedef struct
 {
     const char *name;
-	void (*main)(void);
-	void (*init)(void);
-	void (*teardown)(void);
-    bool (*arg_parse)(const char **arg_str_array, int arg_cnt);
+	void (*cb_main)(void);
+	void (*cb_init)(bool startup, bool new_game_params);
+	void (*cb_teardown)(void);
+    bool (*cb_arg_parse)(const char **arg_str_array, int arg_cnt, bool * new_game_params);
 } game_t;
-
-
-typedef enum
-{
-    game_idle,            // Waiting for a game to start
-    game_node_reg,        // Waiting for rollcall responses and subsequent node registration to complete
-    game_init,            // Initialising the game
-    game_running,         // A game is currently running
-    game_paused,          // A game is paused
-} game_state_e;
 
 /******************************************************************************
 Global (public) Function prototypes
 ******************************************************************************/
 
-void * start_game(int index);
+void * game_start(int index);
 
-void end_game(void);
+void game_end(void);
 
-bool is_game_running(void);
+bool game_pause(void);
+
+bool game_resume(void);
+
+bool game_is_running(void);
+
+bool game_is_paused(void);
 
 int current_game(void);
 
@@ -63,7 +59,7 @@ int games_cnt(void);
 
 const char * game_name(int index);
 
-bool parse_game_args(int game_index, const char **arg_str_array, int arg_cnt);
+bool game_parse_args(int game_index, const char **arg_str_array, int arg_cnt);
 
 #undef EXT
 #endif /* __task_game_H__ */
