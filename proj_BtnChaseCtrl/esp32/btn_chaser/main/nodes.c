@@ -148,6 +148,8 @@ uint8_t _register_addr(uint8_t addr);
 
 uint32_t _inactive_nodes_mask(void);
 
+void * _get_node_btn_data_generic(int slot, master_command_t cmd);
+
 /*******************************************************************************
  Local variables
  *******************************************************************************/
@@ -276,6 +278,11 @@ bool _bcst_append(uint8_t cmd, uint8_t * data)
     {
         iprintln(trNODE, "#Cannot append command %s (0x%02X) to broadcast message", cmd_to_str(cmd), cmd);
         return false; //Cannot append this command to the broadcast message
+    }
+
+    if (cmd == cmd_set_switch)
+    {
+        // Oooh.... this is a special case, since this command will activate ALL the nodes on the network
     }
 
     return comms_tx_msg_append(&bcst_msg, ADDR_BROADCAST, cmd, data, cmd_mosi_payload_size(cmd), false);
@@ -578,6 +585,34 @@ bool _bcst_rollcall(bool all)
         }
     }
     return false;
+}
+
+void * _get_node_btn_data_generic(int slot, master_command_t cmd)
+{
+    unsigned int member_offset = 0;
+
+    if (!is_node_valid(slot)) //Check if the slot is valid and has a registered button
+        return NULL;
+
+    switch (cmd)
+    {
+        case cmd_get_rgb_0:     member_offset = offsetof(button_t, rgb_colour[0]);      break;
+        case cmd_get_rgb_1:     member_offset = offsetof(button_t, rgb_colour[1]);      break;
+        case cmd_get_rgb_2:     member_offset = offsetof(button_t, rgb_colour[2]);      break;
+        case cmd_get_blink:     member_offset = offsetof(button_t, blink_ms);           break;
+        case cmd_get_reaction:  member_offset = offsetof(button_t, reaction_ms);        break;
+        case cmd_get_flags:     member_offset = offsetof(button_t, flags);              break;
+        case cmd_get_dbg_led:   member_offset = offsetof(button_t, dbg_led_state);      break;
+        case cmd_get_time:      member_offset = offsetof(button_t, time_ms);            break;
+        case cmd_get_sync:      member_offset = offsetof(button_t, time_factor);        break;
+        case cmd_get_version:   member_offset = offsetof(button_t, version);            break;
+        default:
+            //We don't have any data to save for these commands
+            return NULL; //Skip this response, we can't handle it
+            break;
+    }
+
+    return ((uint8_t *)&nodes.list[slot].btn) + (size_t)member_offset;
 }
 
 /*******************************************************************************
@@ -893,6 +928,8 @@ void bcst_msg_tx_now(void)
     //Apart from Roll-calls, broadcast messages are essentially "fire and forget" messages, so we don't need to wait for a response
     if (!comms_tx_msg_send(&bcst_msg))
         iprintln(trNODE, "#Error: Could not send broadcast (0x%02X)", bcst_msg.msg.hdr.id);
+
+    //If one of the commands was the "activate" command, we need to set the appropriate flag for all the currently inactive nodes... 
 }
 
 bool add_bcst_msg_set_rgb(uint8_t index, uint32_t rgb_col)
@@ -909,6 +946,13 @@ bool add_bcst_msg_set_blink(uint32_t period_ms)
 {
     return _bcst_append(cmd_set_blink, (uint8_t *)&period_ms);
 }
+
+// bool add_bcst_msg_activate(bool activate)
+// {
+//     uint8_t payload = activate? CMD_SW_PAYLOAD_ACTIVATE : CMD_SW_PAYLOAD_DEACTIVATE; //Default command to start the stopwatch
+//     //This is a very special case, as this will activate ALL the nodes on the network.... but we don't know if they were really activated... we just have to trust that they were.
+//     return _bcst_append(cmd_set_switch, &payload);
+// }
 
 bool add_bcst_msg_set_dbgled(uint8_t dbg_blink_state)
 {
@@ -970,12 +1014,46 @@ button_t * get_node_button_ptr(int slot)
     if (!is_node_valid(slot)) //Check if the slot is valid and has a registered button
         return NULL; //Skip this slot
 
-    if (nodes.list[slot].address == 0) //This slot is not in use
-        return NULL; //Skip this slot
-
-
     return &nodes.list[slot].btn; //Return a poitner to the button for this node
 }
+
+uint32_t get_node_btn_version(int slot)
+{
+    return (!is_node_valid(slot))? 0 : nodes.list[slot].btn.version; //Return the version of the button
+}
+uint32_t get_node_btn_colour(int slot, int col_index)
+{
+    return ((!is_node_valid(slot)) || (col_index < 0) || (col_index >= 3))? 0 : nodes.list[slot].btn.rgb_colour[col_index]; //Return the RGB colour for the button
+}
+uint32_t get_node_btn_blink_per_ms(int slot)
+{
+    return (!is_node_valid(slot))? 0 : nodes.list[slot].btn.blink_ms; //Return the blink period for the button
+}
+uint32_t get_node_btn_reaction_ms(int slot)
+{
+    return (!is_node_valid(slot))? 0 : nodes.list[slot].btn.reaction_ms; //Return the reaction period for the button
+}
+uint32_t get_node_btn_time_ms(int slot)
+{
+    return (!is_node_valid(slot))? 0 : nodes.list[slot].btn.time_ms; //Return the time period for the button
+}
+uint8_t get_node_btn_flags(int slot)
+{
+    return (!is_node_valid(slot))? 0 : nodes.list[slot].btn.flags; //Return the flags for the button
+}
+float get_node_btn_correction_factor(int slot)
+{
+    return (!is_node_valid(slot))? 0.0f : nodes.list[slot].btn.time_factor; //Return the correction factor for the button
+}
+bool get_node_btn_sw_state(int slot)
+{
+    return (!is_node_valid(slot))? false : nodes.list[slot].btn.sw_active; //Return the switch state for the button
+}
+dbg_blink_state_t get_node_btn_dbg_led_state(int slot)
+{
+    return (!is_node_valid(slot))? dbg_led_off : nodes.list[slot].btn.dbg_led_state; //Return the debug LED state for the button
+}
+
 
 int _add_rc_address(uint8_t addr)
 {

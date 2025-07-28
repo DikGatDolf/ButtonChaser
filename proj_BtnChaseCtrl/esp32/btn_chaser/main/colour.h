@@ -90,6 +90,18 @@ typedef enum
     /* Keep this at the end of the enum */
     // col_max    
 }eColour;
+
+typedef enum
+{
+    hueRed 		=   0,
+    hueOrange 	=  30,
+    hueYellow 	=  60,
+    hueLime 	= 120,
+    hueCyan 	= 180,
+    hueBlue 	= 240,
+    hueMagenta 	= 300,
+}eHue;
+
 /******************************************************************************
 Global (public) variables
 ******************************************************************************/
@@ -128,9 +140,21 @@ esp_err_t str2rgb(uint32_t *rgb, const char * str);
  * @param h Hue angle, 0-360
  * @param s Saturation percentage, 0-100
  * @param v Value percentage, 0-100
- * @param rgb Pointer to the 24-bit Red-Green-Blue value
  */
-void hsv2rgb(uint32_t h, uint32_t s, uint32_t v, uint32_t *rgb);
+uint32_t hsv2rgb(uint32_t h, uint32_t s, uint32_t v);
+
+/*! @brief Simple helper function, converting Hue (degrees) to RGB color space
+ * assuming maximum (100%) saturation and value. As a guide, the hue values 
+ * convert to the following colours:
+ *        0: Red
+ *       60: Yellow
+ *      180: Cyan
+ *      240: Blue
+ *      300: Magenta
+ * @param h Hue angle, 0-360
+ */
+uint32_t hue2rgb(uint32_t h);
+
 
 /*! @brief Simple helper function, converting RGB color space to HSV color space
  * Wiki: https://en.wikipedia.org/wiki/HSL_and_HSV

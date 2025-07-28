@@ -137,29 +137,29 @@ int32_t sys_poll_tmr_ms_get_error(void)
 void sys_poll_tmr_start(Timer_ms_t *t, uint32_t interval, bool auto_reload)
 {
 
-	t->enabled = false;
+	t->started = false;
 	t->ms_expire = _sys_poll_1_ms_ticker + (uint64_t)interval;
 	t->ms_period = interval;
 	t->expired = false;
 	t->reload_mode = auto_reload;
-	t->enabled = true;
+	t->started = true;
 }
 
 bool sys_poll_tmr_reset(Timer_ms_t *t)
 {
 	if (t->ms_period > 0)
 	{
-		t->enabled = false;
+		t->started = false;
 		t->ms_expire = _sys_poll_1_ms_ticker + (uint64_t)t->ms_period;
 		t->expired = false;
-		t->enabled = true;
+		t->started = true;
 	}
-	return t->enabled;
+	return t->started;
 }
 
 void sys_poll_tmr_stop(Timer_ms_t *t)
 {
-	t->enabled = false;
+	t->started = false;
 	//t->reload_mode = false;
 }
 
@@ -169,8 +169,8 @@ bool sys_poll_tmr_expired(Timer_ms_t *t)
 	uint64_t now_ms = _sys_poll_1_ms_ticker;
 	uint64_t overflow = 0;
 
-	//Is the timer enabled?
-	if (!(t->enabled))
+	//Is the timer started?
+	if (!(t->started))
 		return false;
 
     //Have we moved beyond the expiry time?
@@ -191,14 +191,14 @@ bool sys_poll_tmr_expired(Timer_ms_t *t)
 	return (t->expired);
 }
 
-bool sys_poll_tmr_enabled(Timer_ms_t *t)
+bool sys_poll_tmr_started(Timer_ms_t *t)
 {
-	return t->enabled;
+	return t->started;
 }
 
 bool sys_poll_tmr_is_running(Timer_ms_t *t)
 {
-	if (t->enabled) //Is the timer enabled?
+	if (t->started) //Is the timer started?
 		return (_sys_poll_1_ms_ticker < t->ms_expire)? true : false;
 
 	return false;

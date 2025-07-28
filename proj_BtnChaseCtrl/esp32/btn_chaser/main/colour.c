@@ -166,14 +166,25 @@ esp_err_t str2rgb(uint32_t *rgb, const char * str)
 
 }
 
-void hsv2rgb(uint32_t h, uint32_t s, uint32_t v, uint32_t *rgb)
+uint32_t hue2rgb(uint32_t h)
 {
-    uint32_t r = RED_from_WRGB(*rgb);
-    uint32_t g = GREEN_from_WRGB(*rgb);
-    uint32_t b = BLUE_from_WRGB(*rgb);
+    return hsv2rgb(h, SAT_MAX, VAL_MAX);
+}
 
+uint32_t hsv2rgb(uint32_t h, uint32_t s, uint32_t v)
+{
+    uint32_t r, g, b;
+
+    //Make sure the input values are within the limits
     h %= 360; // h -> [0,360]
-    uint32_t rgb_max = v * 2.55f;
+
+    if (s > SAT_MAX)
+        s = SAT_MAX; //Clamp to max
+
+    if (v > VAL_MAX)
+        v = VAL_MAX; //Clamp to max
+
+    uint32_t rgb_max = (v) * 2.55f;
     uint32_t rgb_min = rgb_max * (100 - s) / 100.0f;
 
     uint32_t i = h / 60;
@@ -214,7 +225,7 @@ void hsv2rgb(uint32_t h, uint32_t s, uint32_t v, uint32_t *rgb)
         b = rgb_max - rgb_adj;
         break;
     }
-    *rgb = AS_RGB(r, g, b);
+    return AS_RGB(r, g, b);
 }
 
 void rgb2hsv(uint32_t rgb, uint32_t *h, uint32_t *s, uint32_t *v)
@@ -312,7 +323,7 @@ esp_err_t parse_str_to_colour(uint32_t * colour_value, const char * str)
         if (err != ESP_OK)
             return err;
 
-        hsv2rgb(hue_value, sat_value, val_value, colour_value);
+        *colour_value = hsv2rgb(hue_value, sat_value, val_value);
         return ESP_OK;
     }
 

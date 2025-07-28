@@ -74,6 +74,15 @@ int active_node_count(void);
 
 button_t * get_node_button_ptr(int slot);
 
+uint32_t            get_node_btn_version(int slot);
+uint32_t            get_node_btn_colour(int slot, int col_index);
+uint32_t            get_node_btn_blink_per_ms(int slot);
+uint32_t            get_node_btn_reaction_ms(int slot);
+uint32_t            get_node_btn_time_ms(int slot);
+uint8_t             get_node_btn_flags(int slot);
+float               get_node_btn_correction_factor(int slot);
+bool                get_node_btn_sw_state(int slot);
+dbg_blink_state_t   get_node_btn_dbg_led_state(int slot);
 
 void node_parse_rx_msg(void);
 
@@ -113,6 +122,7 @@ bool node_msg_tx_now(uint8_t node);
 void init_bcst_msg(void);
 bool add_bcst_msg_set_rgb(uint8_t index, uint32_t rgb_col);
 bool add_bcst_msg_set_blink(uint32_t period_ms);
+// bool add_bcst_msg_activate(bool activate);
 bool add_bcst_msg_set_dbgled(uint8_t dbg_blink_state);
 bool add_bcst_msg_set_time_ms(uint32_t new_time_ms);
 bool add_bcst_msg_sync_reset(void);

@@ -349,7 +349,7 @@ void button_down(void)
 {
     //Button is down
     deactivate_button(flag_sw_stopped);
-    iprintln(trMAIN, "#Btn: Down");
+    //iprintln(trMAIN, "#Btn: Down");
 }
 
 void deactivate_button(uint8_t method)
@@ -555,7 +555,7 @@ void msg_process(void)
                         if (_can_respond) 
                         {
                             //cmd_payload.data[0] should already contain the incorrect value
-                            cmd_payload.data[1] = 1;
+                            cmd_payload.data[1] = CMD_SW_PAYLOAD_ACTIVATE;
                             dev_comms_response_append(_cmd, resp_err_range, (uint8_t *)&cmd_payload.u16_val, sizeof(uint16_t));
                         }
                         break; // from switch... continue with the next command

@@ -504,7 +504,7 @@ bool dev_comms_transmit_now(void)
         // }
         uint8_t * msg = (uint8_t *)&_comms.tx.msg;
         uint8_t msg_len = (sizeof(comms_msg_hdr_t) + _comms.tx.data_length + sizeof(uint8_t));
-        iprintln(trCOMMS, "#TX: %d bytes (%d)", msg_len, _comms.tx.msg.hdr.id);
+        //iprintln(trCOMMS, "#TX: %d bytes (%d)", msg_len, _comms.tx.msg.hdr.id);
         //iprintln(trCOMMS, "#TX: %d bytes (%d) - %d, %d ms", msg_len, _comms.tx.msg.hdr.id, _rx_state, hal_serial_rx_silence_ms());
     
         //Make sure any console prints are finished before we start sending... 
@@ -630,7 +630,7 @@ void dev_comms_blacklist_add(uint8_t new_addr)
     _comms.blacklist.addr[_comms.blacklist.cnt] = new_addr;
     _comms.blacklist.cnt++;    
 
-    iprintln(trCOMMS, "#Blacklist - Add 0x%02X (%d)", new_addr, _comms.blacklist.cnt);
+    //iprintln(trCOMMS, "#Blacklist - Add 0x%02X (%d)", new_addr, _comms.blacklist.cnt);
 }
 
 void dev_comms_blacklist_clear(void)

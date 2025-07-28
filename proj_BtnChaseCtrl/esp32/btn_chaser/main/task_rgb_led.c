@@ -29,6 +29,7 @@ includes
 #include "str_helper.h"
 #include "task_console.h"
 #include "drv_rgb_led_strip.h"
+#include "esp_random.h"
 
 #define __NOT_EXTERN__
 #include "task_rgb_led.h"
@@ -378,7 +379,7 @@ void _read_msg_queue(void)
                     sys_poll_tmr_stop(&_rgb_led.array[_led_nr].timer);
                     break;
                 case led_action_colour:
-                    iprintln(trLED, "#%s -> ON (colour: 0x%06X)", drv_rgb_led_strip_index2name(_led_nr), rx_msg.val_0);
+                    iprintln(trLED, "#%s -> ON (colour: %06X)", drv_rgb_led_strip_index2name(_led_nr), rx_msg.val_0);
                     //Val_0 is the colour
                     //Val_1 and Val_2 are not used
                     _rgb_led.array[_led_nr].col_1 = rx_msg.val_0;
@@ -387,7 +388,7 @@ void _read_msg_queue(void)
                     sys_poll_tmr_stop(&_rgb_led.array[_led_nr].timer);
                     break;
                 case led_action_blink:            
-                    iprintln(trLED, "#%s -> Set to Blink (0x%06X <-> 0x%06X) at %dms", drv_rgb_led_strip_index2name(_led_nr), rx_msg.val_0, (rx_msg.val_2 & 0x00FFFFFF), rx_msg.val_1);
+                    iprintln(trLED, "#%s -> Set to Blink (%06X <-> %06X) at %dms", drv_rgb_led_strip_index2name(_led_nr), rx_msg.val_0, (rx_msg.val_2 & 0x00FFFFFF), rx_msg.val_1);
                     //Val_0 is the 1st (primary) colour
                     //Val_1 is the period (in ms)
                     //Val_2 is the 2nd/alternating  colour
@@ -480,7 +481,7 @@ void _led_service(void)
                 uint32_t _total = (rgb_led->col_2 & 0x0000FFFF);
                 uint32_t _count = (rgb_led->col_2 >> 16) & 0x0000FFFF;
                 hue = (HUE_MAX *_count/_total)%HUE_MAX;
-                hsv2rgb(hue, SAT_MAX, VAL_MAX, &rgb_led->col_1);
+                rgb_led->col_1 = hue2rgb(hue);
                 drv_rgb_led_strip_set_colour(_led_nr, rgb_led->col_1);
                 //iprintln(trLED, "#Rainbow: %d/%d - H: %d -> 0x%06x)", _count, _total, hue, rgb_led->col_1);
                 _count++;
@@ -511,11 +512,11 @@ void _led_info_print(int _index)
             iprintln(trALWAYS, "%s LED - OFF", drv_rgb_led_strip_index2name(_index));
             break;
         case led_state_on:
-            iprintln(trALWAYS, "%s LED - ON (0x%06X)", drv_rgb_led_strip_index2name(_index), rgb_led->col_1, rgb_led->state);
+            iprintln(trALWAYS, "%s LED - ON (%06X)", drv_rgb_led_strip_index2name(_index), rgb_led->col_1, rgb_led->state);
             break;
         case led_state_blink:
             //Remember, the timer period is half the blink period (on/off)
-            iprintln(trALWAYS, "%s LED - Blinking (0x%06X <-> 0x%06X), %.2f Hz", drv_rgb_led_strip_index2name(_index), rgb_led->col_1, rgb_led->col_2, (500.0f/rgb_led->timer.ms_period));
+            iprintln(trALWAYS, "%s LED - Blinking (%06X <-> %06X), %.2f Hz", drv_rgb_led_strip_index2name(_index), rgb_led->col_1, rgb_led->col_2, (500.0f/rgb_led->timer.ms_period));
             break;
         case led_state_rainbow:
             //Remember, the bottom 16 bits of col_2 is the total count... x LED_UPDATE_INTERVAL_MS gives the period
@@ -685,9 +686,8 @@ void _led_handler_common_action(void/*rgb_led_action_cmd action*/)
             if (led_msg.val_0 == (uint32_t)-1)
             {
                 // No colour? We'll assign both using a very silly RNG based on the time since boot in us (mod 360)
-                uint32_t rand_hue = (uint32_t)(esp_timer_get_time()%360L);
-                hsv2rgb(rand_hue, SAT_MAX, VAL_MAX, &led_msg.val_0);
-                iprintln(trALWAYS, "No Colour specified, using 0x%06X", led_msg.val_0);
+                led_msg.val_0 = hue2rgb((uint32_t)(esp_random()%360L));
+                iprintln(trALWAYS, "No Colour specified, using %06X", led_msg.val_0);
             }
         }
         else if (action == led_action_blink)
@@ -695,19 +695,19 @@ void _led_handler_common_action(void/*rgb_led_action_cmd action*/)
             if (led_msg.val_0 == (uint32_t)-1)
             {
                 // No colour? We'll assign both using a very silly RNG based on the time since boot in us (mod 360)
-                uint32_t rand_hue = (uint32_t)(esp_timer_get_time()%360L);
-                hsv2rgb(rand_hue, SAT_MAX, VAL_MAX, &led_msg.val_0);
+                uint32_t rand_hue = (uint32_t)(esp_random()%360L);
+                led_msg.val_0 = hue2rgb(rand_hue);
                 //The second colour is the complementary colour on the other side (+180 degrees) of the colour wheel
-                hsv2rgb(rand_hue+(HUE_MAX/2), SAT_MAX, VAL_MAX, &led_msg.val_2);
-                iprintln(trALWAYS, "No Colours specified, using 0x%06X and 0x%06X", led_msg.val_0, led_msg.val_2);
+                led_msg.val_2 = hue2rgb(rand_hue+(HUE_MAX/2));
+                iprintln(trALWAYS, "No Colours specified, using %06X and %06X", led_msg.val_0, led_msg.val_2);
             }
             else if (led_msg.val_2 == (uint32_t)-1)
             {
                 uint32_t hue, sat, val;
                 rgb2hsv(led_msg.val_0, &hue, &sat, &val);
                 // No 2nd colour? We'll assign a complimentary colour from the one selected in val_0
-                hsv2rgb(hue+(HUE_MAX/2), sat, val, &led_msg.val_2);
-                iprintln(trALWAYS, "No Colour specified, using 0x%06X", led_msg.val_2);
+                led_msg.val_2 = hsv2rgb(hue+(HUE_MAX/2), sat, val);
+                iprintln(trALWAYS, "No Colour specified, using %06X", led_msg.val_2);
             }
         }        
 
@@ -898,14 +898,14 @@ void _led_handler_col_list(void)
             const char * col_name = NULL;
             uint32_t rgb_val = 0;
             uint32_t hue, sat, val;
-            hsv2rgb(i, SAT_MAX, VAL_MAX, &rgb_val);
+            rgb_val = hue2rgb(i);
             rgb2hsv(rgb_val, &hue, &sat, &val);
-            iprint(trALWAYS, " Hue: % 3d -> 0x%06X", i, rgb_val);
+            iprint(trALWAYS, " Hue: % 3d -> %06X", i, rgb_val);
             col_name = rgb2name(rgb_val);
-            iprint(trALWAYS, " - HSV: %3d, %3d, %3d", hue, sat, val);
+            // iprint(trALWAYS, " - Hue: %3d", hue);
             if (col_name != NULL)
                 iprint(trALWAYS, " (%s)", col_name);
-            iprint(trALWAYS, "\n");
+            iprintln(trALWAYS, "");
         }
         return;
     }
@@ -924,7 +924,7 @@ void _led_handler_col_list(void)
             {
                 uint32_t hue, sat, val;
                 rgb2hsv(rgb_val, &hue, &sat, &val);
-                iprintln(trALWAYS, " % 8s -> 0x%06X - HSV: %3d, %3d, %3d", col_name, rgb_val, hue, sat, val);
+                iprintln(trALWAYS, " % 8s -> %06X - HSV: %3d, %3d, %3d", col_name, rgb_val, hue, sat, val);
             }
             col_name = colour_list_item(++i);
         }
@@ -945,11 +945,11 @@ void _led_handler_col_list(void)
                 continue;   //Skip... already handled
             if (ESP_OK == parse_str_to_colour(&parse_value, arg))
             {
-                iprint(trALWAYS, " % 8s -> 0x%06X", arg, parse_value);
+                iprint(trALWAYS, " % 8s -> %06X", arg, parse_value);
                 const char *col_name = rgb2name(parse_value);
                 if (col_name != NULL)
                     iprint(trALWAYS, " (%s)", col_name);
-                iprint(trALWAYS, "\n");
+                iprintln(trALWAYS, "");
             }
         }
         return;
@@ -1110,15 +1110,12 @@ esp_err_t rgb_led_on(uint16_t address_mask, uint32_t rgb_colour)
 
     if (rgb_colour == (uint32_t)-1)
     {
-        uint32_t hue;
-        hue = (uint32_t)(esp_timer_get_time()%360L);
-        //Always use max saturation and value for "random" colours
-        hsv2rgb(hue, SAT_MAX, VAL_MAX, &rgb_colour);
+        rgb_colour = hue2rgb((uint32_t)(esp_random()%360L));
     }
     
     if (rgb_colour > RGB_MAX)
     {
-        iprintln(trLED, "#Invalid RGB value (%d: 0x%06X)", 1, rgb_colour);
+        iprintln(trLED, "#Invalid RGB value (%d: 0x%08X)", 1, rgb_colour);
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -1158,15 +1155,12 @@ esp_err_t rgb_led_blink(uint16_t address_mask, uint32_t period, uint32_t rgb_col
 
     if (rgb_colour_1 == (uint32_t)-1)
     {
-        uint32_t hue;
-        hue = (uint32_t)(esp_timer_get_time()%360L);
-        //Always use max saturation and value for "random" colours
-        hsv2rgb(hue, SAT_MAX, VAL_MAX, &rgb_colour_1);
+        rgb_colour_1 = hue2rgb((uint32_t)(esp_random()%360L));
     }
     
     if (rgb_colour_1 > RGB_MAX)
     {
-        iprintln(trLED, "#Invalid RGB value (%d: 0x%06X)", 1, rgb_colour_1);
+        iprintln(trLED, "#Invalid RGB value (%d: 0x%08X)", 1, rgb_colour_1);
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -1178,12 +1172,12 @@ esp_err_t rgb_led_blink(uint16_t address_mask, uint32_t period, uint32_t rgb_col
         //The complementary colour sits on the other side (+180 degrees) of the colour wheel
         hue = (hue + (HUE_MAX/2)) % HUE_MAX;
         //We retain the same satuaration and value
-        hsv2rgb(hue, sat, val, &rgb_colour_2);
+        rgb_colour_2 = hsv2rgb(hue, sat, val);
     }
 
     if (rgb_colour_2 > RGB_MAX)
     {
-        iprintln(trLED, "#Invalid RGB value (%d: 0x%06X)", 2, rgb_colour_2);
+        iprintln(trLED, "#Invalid RGB value (%d: 0x%08X)", 2, rgb_colour_2);
         return ESP_ERR_INVALID_ARG;
     }
 

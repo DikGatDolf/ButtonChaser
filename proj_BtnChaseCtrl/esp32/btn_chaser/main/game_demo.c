@@ -43,7 +43,7 @@ Macros and Constants
 #ifdef PRINTF_TAG
 #undef PRINTF_TAG
 #endif
-#define PRINTF_TAG ("Game-Demo") /* This must be undefined at the end of the file*/
+#define PRINTF_TAG ("Demo") /* This must be undefined at the end of the file*/
 
 /*******************************************************************************
 local defines 
@@ -74,9 +74,7 @@ Global (public) Functions
 void game_demo_main(void)
 {
     //This function is going to be called repeatedly within a task's while(1) loop.
-    uint32_t rgb = 0;
-    uint32_t hue = (HUE_MAX *_count/_total_cycles)%HUE_MAX;
-    hsv2rgb(hue, SAT_MAX, VAL_MAX, &rgb);
+    uint32_t rgb = hue2rgb((HUE_MAX *_count/_total_cycles)%HUE_MAX);
 
     // //Get the flags for each node
     // for (int i = 0; i < nodes_get_count(); i++)

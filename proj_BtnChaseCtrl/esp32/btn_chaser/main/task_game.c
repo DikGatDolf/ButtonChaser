@@ -34,6 +34,7 @@ includes
 #include "task_game.h"
 #undef __NOT_EXTERN__
 
+#include "game_memory.h"
 #include "game_random_chase.h"
 #include "game_demo.h"
 
@@ -42,8 +43,9 @@ Macros and Constants
  *******************************************************************************/
 const game_t games_list[] =
 {
-    {"Demo",            game_demo_main,         game_demo_init,         game_demo_teardown,         game_demo_arg_parser        },
-    {"Random Chase",    game_random_chase_main, game_random_chase_init, game_random_chase_teardown, game_random_chase_arg_parser},
+    {"Demo",    game_demo_main,         game_demo_init,         game_demo_teardown,         game_demo_arg_parser        },
+    {"Chaser",  game_random_chase_main, game_random_chase_init, game_random_chase_teardown, game_random_chase_arg_parser},
+    {"Memory",  game_memory_main,     game_memory_init,         game_memory_teardown,       game_memory_arg_parser      },
 };
 
 #ifdef PRINTF_TAG

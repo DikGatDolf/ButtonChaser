@@ -44,6 +44,7 @@ includes
 #include "esp_chip_info.h"
 #include "esp_flash.h"
 #include "esp_system.h"
+#include "esp_random.h"
 
 #include "defines.h"
 #include "sys_utils.h"
@@ -1517,14 +1518,16 @@ void _sys_handler_game(void)
     }
 }
 
-#define MAX_RAND_REPEAT 1000
+#define MAX_RAND_REPEAT             1000
+#define MAX_RAND_VALUE_DEFAULT      10000
 void _sys_handler_rand(void)
 {
     bool help_requested = false;
-    int _max = INT_MAX;
+    int _max = MAX_RAND_VALUE_DEFAULT;
     uint32_t _repeat = 1; //Default to 1 random number
     bool got_max = false;
     bool got_repeat = false;
+    bool got_esp = false;
     uint32_t value = 0;
 
     while (console_arg_cnt() > 0)
@@ -1535,6 +1538,12 @@ void _sys_handler_rand(void)
         {    
             help_requested = true;
             break; //from while-loop
+        }
+
+        if ((!strcasecmp("e", arg)) || (!strcasecmp("esp", arg)))
+        {    
+            got_esp = true;
+            continue; //with while-loop
         }
 
         if (got_max && got_repeat)
@@ -1579,7 +1588,12 @@ void _sys_handler_rand(void)
     {
         if (_repeat == 1)
         {
-            int random_value = rand() % (_max + 1); //Generate a random number between 0 and max_value
+            int random_value;
+            if (got_esp) //Use the ESP32's PRNG
+                random_value = esp_random() % (_max + 1); //Generate a random number between 0 and max_value
+            else//Use the standard C library's rand() function
+                random_value = rand() % (_max + 1); //Generate a random number between 0 and max_value
+
             iprintln(trALWAYS, "Random number between 0 and %d = %d", _max, random_value);
         }
         else
@@ -1588,7 +1602,11 @@ void _sys_handler_rand(void)
             iprintln(trALWAYS, "%d Random numbers between 0 and %d:", _repeat, _max);
             for (int i = 0; i < _repeat; i++)
             {
-                int random_value = rand() % (_max + 1); //Generate a random number between 0 and max_value
+                int random_value;
+                if (got_esp) //Use the ESP32's PRNG
+                    random_value = esp_random() % (_max + 1); //Generate a random number between 0 and max_value
+                else//Use the standard C library's rand() function
+                    random_value = rand() % (_max + 1); //Generate a random number between 0 and max_value
                 _total += (uint32_t)random_value; //Add the random value to the total
                 iprintln(trALWAYS, "%d) %d", i + 1, random_value);
             }
@@ -1601,9 +1619,10 @@ void _sys_handler_rand(void)
     {
         //                  01234567890123456789012345678901234567890123456789012345678901234567890123456789
         iprintln(trALWAYS, "");
-        iprintln(trALWAYS, "Usage: \"rand [<max>] [<repeat>]\" -  Generates <repeat> random numbers between 0 and <max>");
+        iprintln(trALWAYS, "Usage: \"rand [<max>] [<repeat>] [\"esp\"]\" -  Generates <repeat> random numbers between 0 and <max>");
         iprintln(trALWAYS, "          <max>:    The maximum possible random value (default: %d)", _max);
-        iprintln(trALWAYS, "          <repeat>: The number of random values to generate (default: 1)");
+        iprintln(trALWAYS, "          <repeat>: The number of random values to generate (default: %d)", _repeat);
+        iprintln(trALWAYS, "          \"esp\":   Use the ESP32's PRNG (default: std C library)");
     }
 }
 

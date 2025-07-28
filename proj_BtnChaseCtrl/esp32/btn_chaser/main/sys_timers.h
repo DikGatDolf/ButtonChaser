@@ -41,13 +41,13 @@ Struct & Unions
  *  sys_poll_tmr_stop()
  *  sys_poll_tmr_expired()
  *  sys_poll_tmr_is_running()
- *  sys_poll_tmr_enabled()
+ *  sys_poll_tmr_started()
  */
 typedef struct Timer_ms_t
 {
 	uint64_t ms_expire;   // 1ms ~ 500 million years
 	uint32_t ms_period;   // 1ms ~ 49 days.
-	bool enabled;
+	bool started;
 	bool expired;
 	bool reload_mode;
 } Timer_ms_t;
@@ -123,7 +123,7 @@ bool sys_poll_tmr_expired(Timer_ms_t *t);
  * @param t a pointer to a static Timer_ms_t 
  * @returns true if the timer is enabled, false otherwise
 */
-bool sys_poll_tmr_enabled(Timer_ms_t *t);
+bool sys_poll_tmr_started(Timer_ms_t *t);
 
 /** Check if a timer is running. 
  * NOTE: A timer running in auto-reload mode will ALWAYS appear to be running
